@@ -209,6 +209,22 @@ Mercado mais eficiente. Só avançar se as fases anteriores derem resultados pos
 ### Fase 6 — Dinheiro real
 Teto de perda definido antes. Stakes mínimos. Comparação sistemática real vs simulado.
 
+### Fase 7 (futura, condicional) — Expansão para outros desportos
+
+**Pré-condição obrigatória:** ≥ 3 meses de ROI positivo em dinheiro real no futebol, com ≥ 200 apostas registadas. Sem isto, não começar.
+
+**Ordem recomendada:**
+
+1. **Ténis** — mais simples. 1v1, sem empates, Elo com rating por superfície (terra, duro, relva). Dados grátis: Jeff Sackmann (GitHub) + tennis-data.co.uk. Mercados principais: vencedor, vencedor de set, total de games, handicap. Edge real existe em circuito Challenger e primeiras rondas de Grand Slam. Esforço estimado: ~2 semanas.
+
+2. **NBA** — mais complexo e mercado mais eficiente. Dados grátis: `nba_api` (Python). Modelo tipo SRS/Elo com ajuste de ritmo e descanso. O edge real está nos **player props** (pontos/ressaltos/assistências por jogador), não nos mercados principais. Verificar primeiro se a 22bet os oferece com liquidez. Esforço estimado: ~3 semanas.
+
+**O que se reaproveita** (quase toda a infraestrutura): config, logger, BD, bot Telegram, motor de EV, backtest walk-forward, dashboard.
+
+**O que é por desporto** (reescrito): fonte de dados, modelo probabilístico, lista de mercados, features relevantes.
+
+A ingestão e os modelos ficam em subpacotes separados: `apostas/ingestao/futebol/`, `apostas/ingestao/tenis/`, `apostas/ingestao/nba/` — e análogo em `apostas/modelos/`. A tabela `jogos` ganha a coluna `desporto` quando chegarmos a esse ponto.
+
 ---
 
 ## 6. Como adicionar um mercado novo
