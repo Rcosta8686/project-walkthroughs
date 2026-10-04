@@ -1,0 +1,77 @@
+# Ricardo Tips — configuração central
+# Altera com cuidado. Linhas que começam com '#' são comentários.
+
+# Ligas a seguir (nomes como aparecem na API-Football)
+ligas:
+  - nome: "Premier League"
+    pais: "England"
+    api_football_id: 39
+  - nome: "La Liga"
+    pais: "Spain"
+    api_football_id: 140
+  - nome: "Serie A"
+    pais: "Italy"
+    api_football_id: 135
+  - nome: "Bundesliga"
+    pais: "Germany"
+    api_football_id: 78
+  - nome: "Ligue 1"
+    pais: "France"
+    api_football_id: 61
+
+# Mercados ativos (fase 1: só golos)
+mercados:
+  golos:
+    ativo: true
+    linhas: [1.5, 2.5, 3.5]
+    lados: ["over", "under"]
+  cantos:
+    ativo: false
+    linhas: [8.5, 9.5, 10.5, 11.5]
+    lados: ["over", "under"]
+  cartoes:
+    ativo: false
+    linhas: [3.5, 4.5, 5.5]
+    lados: ["over", "under"]
+  resultado_final:
+    ativo: false
+
+# Parâmetros do modelo
+modelo:
+  epocas_treino: 5                  # últimas N épocas no treino
+  decay_meia_vida_dias: 365         # meia-vida do peso de cada jogo
+  janela_forma_recente_jogos: 10    # jogos recentes para contexto por partida
+  min_jogos_para_rating: 6          # equipas com menos jogos usam prior
+
+# Backtest
+backtest:
+  tipo: "walk_forward_semanal"
+  stake: 1.0                        # unidade por aposta (flat staking)
+  moeda: "unidades"
+  periodo_de_teste_epocas: 2        # últimas 2 épocas = conjunto de avaliação
+
+# Motor de value betting
+value_betting:
+  ev_minimo: 0.03                   # EV mínimo (3%) para sugerir aposta
+  bookmaker_referencia: "22bet"
+  bookmaker_fallback: "pinnacle"    # usado quando não há 22bet disponível
+  remover_overround: true           # devolver margem da casa antes de calcular EV
+
+# Alertas Telegram
+alertas:
+  canal: "telegram"
+  antes_do_jogo_horas: 2            # enviar sugestão ~2h antes do kickoff
+  verificar_a_cada_minutos: 15      # scheduler corre o analisar_jogos de X em X
+  pausado: false                    # podes alternar via comando /pausar no bot
+
+# Fuso horário
+timezone: "Europe/Zurich"
+
+# Base de dados
+dados:
+  caminho_bd: "dados/ricardo_tips.db"
+
+# Logging
+log:
+  nivel: "INFO"                     # DEBUG, INFO, WARNING, ERROR
+  caminho: "logs/ricardo_tips.log"

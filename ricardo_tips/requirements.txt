@@ -1,0 +1,35 @@
+# Dados e computação
+pandas>=2.1
+numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.3
+statsmodels>=0.14
+
+# Ingestão
+requests>=2.31
+aiohttp>=3.9
+beautifulsoup4>=4.12
+lxml>=4.9
+
+# Base de dados
+SQLAlchemy>=2.0
+
+# Configuração
+python-dotenv>=1.0
+PyYAML>=6.0
+
+# Alertas
+python-telegram-bot>=20.7
+
+# Dashboard
+Jinja2>=3.1
+plotly>=5.18
+
+# CLI e utilidades
+click>=8.1
+rich>=13.7
+tqdm>=4.66
+
+# Testes
+pytest>=7.4
+pytest-asyncio>=0.23
