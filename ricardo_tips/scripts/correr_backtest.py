@@ -1,14 +1,12 @@
 """Script: correr_backtest.py
 
-Corre o backtest walk-forward sobre os dados históricos e produz um
-relatório HTML com ROI, drawdown, CLV e número de apostas por época.
+Corre o backtest walk-forward sobre os dados históricos e imprime um
+relatório em texto no terminal.
 
 Uso:
-    python scripts/correr_backtest.py --mercado golos --linha 2.5
-    python scripts/correr_backtest.py --mercado golos --linha 2.5 --inicio 2022-07-01
-    python scripts/correr_backtest.py --todas-linhas
-
-O relatório fica em apostas/dashboard/output/backtest.html.
+    python scripts/correr_backtest.py
+    python scripts/correr_backtest.py --linha 2.5 --ev-minimo 0.03
+    python scripts/correr_backtest.py --epoca 2024 --linha 1.5
 
 Correr sempre que:
   - Mudas parâmetros do modelo em config.yaml
@@ -16,11 +14,58 @@ Correr sempre que:
   - Experimentas uma nova feature
 """
 
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from apostas.backtest import relatorio as fmt  # noqa: E402
+from apostas.backtest import walk_forward  # noqa: E402
+from apostas.utils.config import load_config  # noqa: E402
+from apostas.utils.logger import get_logger  # noqa: E402
+
+log = get_logger(__name__)
+
 
 def main() -> None:
-    raise NotImplementedError(
-        "Backtest ainda não implementado. Ver ARQUITETURA.md §4.4."
+    cfg = load_config()
+    parser = argparse.ArgumentParser(description="Backtest walk-forward.")
+    parser.add_argument(
+        "--epoca",
+        type=int,
+        default=2024,
+        help="Ano de início da época a testar (ex.: 2024 = 2024/25)",
     )
+    parser.add_argument(
+        "--linha",
+        type=float,
+        default=2.5,
+        help="Linha de golos (1.5, 2.5, 3.5)",
+    )
+    parser.add_argument(
+        "--ev-minimo",
+        type=float,
+        default=cfg["value_betting"]["ev_minimo"],
+        help="EV mínimo para considerar uma aposta",
+    )
+    parser.add_argument(
+        "--casa",
+        default="Avg_Closing",
+        help="Casa de apostas de referência (ex.: Avg_Closing, B365)",
+    )
+    args = parser.parse_args()
+
+    rel = walk_forward.correr(
+        epoca_teste=args.epoca,
+        linha=args.linha,
+        ev_minimo=args.ev_minimo,
+        casa_de_apostas_ref=args.casa,
+        meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
+    )
+    print(fmt.formatar(rel))
 
 
 if __name__ == "__main__":
