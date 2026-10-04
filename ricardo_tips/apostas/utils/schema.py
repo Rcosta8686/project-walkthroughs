@@ -44,12 +44,35 @@ class Equipa(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     nome: Mapped[str] = mapped_column(String(150), nullable=False)
     liga_id: Mapped[int] = mapped_column(ForeignKey("ligas.id"), nullable=False)
-    api_football_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    # Nullable: a ingestão football-data.co.uk cria equipas sem este id;
+    # é preenchido quando a ingestão API-Football as reconcilia por alias.
+    api_football_id: Mapped[int | None] = mapped_column(Integer, unique=True)
 
     liga: Mapped[Liga] = relationship(back_populates="equipas")
+    aliases: Mapped[list["EquipaAlias"]] = relationship(back_populates="equipa")
 
     __table_args__ = (
         UniqueConstraint("nome", "liga_id", name="uq_equipa_nome_liga"),
+    )
+
+
+class EquipaAlias(Base):
+    """Nomes alternativos para a mesma equipa, usados por diferentes fontes.
+
+    Ex.: "Manchester United" (API-Football) ↔ "Man United" (football-data.co.uk).
+    """
+
+    __tablename__ = "equipa_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    equipa_id: Mapped[int] = mapped_column(ForeignKey("equipas.id"), nullable=False, index=True)
+    alias: Mapped[str] = mapped_column(String(150), nullable=False)
+    fonte: Mapped[str] = mapped_column(String(30), nullable=False)  # api_football | football_data
+
+    equipa: Mapped[Equipa] = relationship(back_populates="aliases")
+
+    __table_args__ = (
+        UniqueConstraint("alias", "fonte", name="uq_alias_fonte"),
     )
 
 

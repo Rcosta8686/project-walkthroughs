@@ -63,6 +63,7 @@ def test_criar_schema_cria_todas_as_tabelas(tmp_path, monkeypatch):
     esperadas = {
         "ligas",
         "equipas",
+        "equipa_aliases",
         "jogos",
         "estatisticas_jogo",
         "odds_fecho",
