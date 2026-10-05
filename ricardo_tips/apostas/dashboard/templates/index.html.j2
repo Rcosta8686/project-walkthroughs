@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ricardo Tips — Backtest</title>
+    <style>{{ css|safe }}</style>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>Ricardo Tips</h1>
+        <p class="subtitulo">Backtest · gerado em {{ data_gerado }} · {{ relatorios|length }} modelo(s)</p>
+    </header>
+
+    {% if relatorios|length > 1 %}
+    <section class="comparacao">
+        <h2>Comparação direta</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Modelo</th>
+                    <th class="num">Apostas</th>
+                    <th class="num">Hit rate</th>
+                    <th class="num">Lucro</th>
+                    <th class="num">ROI</th>
+                    <th class="num">Max DD</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for rel in relatorios %}
+                <tr>
+                    <td><strong>{{ rel.modelo|upper }}</strong></td>
+                    <td class="num">{{ rel.n_apostas }}</td>
+                    <td class="num">{{ (rel.hit_rate * 100)|round(1) }}%</td>
+                    <td class="num {{ 'positivo' if rel.lucro >= 0 else 'negativo' }}">
+                        {{ '%+.2f'|format(rel.lucro) }} u
+                    </td>
+                    <td class="num {{ 'positivo' if rel.roi >= 0 else 'negativo' }}">
+                        {{ '%+.2f'|format(rel.roi * 100) }}%
+                    </td>
+                    <td class="num">{{ '%.2f'|format(rel.max_drawdown) }} u</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
+
+    {% for rel in relatorios %}
+    <section class="modelo">
+        <h2>Modelo {{ rel.modelo|upper }} — Over/Under {{ rel.linha }} golos</h2>
+        <p class="meta">
+            Época {{ rel.epoca_teste }} · Casa {{ rel.casa_de_apostas_ref }} ·
+            EV mínimo {{ (rel.ev_minimo * 100)|round(1) }}%
+        </p>
+
+        <div class="kpis">
+            <div class="kpi">
+                <div class="kpi__valor {{ 'positivo' if rel.roi >= 0 else 'negativo' }}">
+                    {{ '%+.2f'|format(rel.roi * 100) }}%
+                </div>
+                <div class="kpi__label">ROI</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi__valor {{ 'positivo' if rel.lucro >= 0 else 'negativo' }}">
+                    {{ '%+.2f'|format(rel.lucro) }}
+                </div>
+                <div class="kpi__label">Lucro (unidades)</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi__valor">{{ rel.n_apostas }}</div>
+                <div class="kpi__label">Apostas</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi__valor">{{ (rel.hit_rate * 100)|round(1) }}%</div>
+                <div class="kpi__label">Hit rate</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi__valor">{{ '%.2f'|format(rel.max_drawdown) }}</div>
+                <div class="kpi__label">Max drawdown</div>
+            </div>
+        </div>
+
+        <div class="grafico" id="bankroll-{{ loop.index }}"></div>
+        <script>
+            Plotly.newPlot('bankroll-{{ loop.index }}', [{
+                x: {{ rel.bankroll_x|tojson }},
+                y: {{ rel.bankroll_y|tojson }},
+                mode: 'lines',
+                line: {color: '{{ cores[loop.index0] }}', width: 2},
+                fill: 'tozeroy',
+                fillcolor: '{{ cores_fill[loop.index0] }}',
+                hovertemplate: '%{x}<br>Bankroll: %{y:.2f} u<extra></extra>'
+            }], {
+                margin: {t: 10, r: 10, b: 40, l: 50},
+                xaxis: {title: '', gridcolor: 'rgba(128,128,128,0.15)'},
+                yaxis: {title: 'Unidades', gridcolor: 'rgba(128,128,128,0.15)'},
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                font: {family: 'system-ui, sans-serif'},
+                height: 320
+            }, {responsive: true, displayModeBar: false});
+        </script>
+
+        <details class="por-liga">
+            <summary>ROI por liga</summary>
+            <table>
+                <thead>
+                    <tr><th>Liga ID</th><th class="num">Apostas</th><th class="num">ROI</th></tr>
+                </thead>
+                <tbody>
+                {% for lid, info in rel.por_liga.items() %}
+                    <tr>
+                        <td>{{ lid }}</td>
+                        <td class="num">{{ info.n }}</td>
+                        <td class="num {{ 'positivo' if info.roi >= 0 else 'negativo' }}">
+                            {{ '%+.2f'|format(info.roi * 100) }}%
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </details>
+
+        <details class="apostas">
+            <summary>Todas as {{ rel.n_apostas }} apostas (clica para expandir)</summary>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Lado</th>
+                        <th class="num">Prob</th>
+                        <th class="num">Odd</th>
+                        <th class="num">EV</th>
+                        <th>Resultado</th>
+                        <th class="num">Lucro</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for a in rel.apostas %}
+                    <tr>
+                        <td>{{ a.data.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ a.lado }}</td>
+                        <td class="num">{{ (a.prob_modelo * 100)|round(1) }}%</td>
+                        <td class="num">{{ '%.2f'|format(a.odd) }}</td>
+                        <td class="num">{{ '%+.2f'|format(a.ev * 100) }}%</td>
+                        <td>
+                            <span class="pill pill--{{ a.resultado }}">{{ a.resultado }}</span>
+                        </td>
+                        <td class="num {{ 'positivo' if a.lucro >= 0 else 'negativo' }}">
+                            {{ '%+.2f'|format(a.lucro) }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </details>
+    </section>
+    {% endfor %}
+
+    <footer>
+        <p>
+            {% if relatorios|length > 1 %}
+                Mocks têm margem embutida que o modelo recupera facilmente. Os números
+                reais ficam entre -2% (Poisson) e +0,8% (GAP) por aposta.
+            {% else %}
+                Modelo {{ relatorios[0].modelo|upper }}. Em dados reais, os números
+                serão mais modestos.
+            {% endif %}
+        </p>
+    </footer>
+</div>
+</body>
+</html>
