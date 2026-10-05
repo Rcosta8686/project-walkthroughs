@@ -49,6 +49,7 @@ class JogoHistoricoGAP:
 @dataclass
 class ParametrosGAP:
     peso_cantos: float
+    rho_dixon_coles: float = 0.0
     # Médias por liga
     media_atq_casa_liga: dict[int, float] = field(default_factory=dict)
     media_atq_fora_liga: dict[int, float] = field(default_factory=dict)
@@ -60,21 +61,36 @@ class ParametrosGAP:
     def_casa: dict[int, float] = field(default_factory=dict)
     def_fora: dict[int, float] = field(default_factory=dict)
     liga_por_equipa: dict[int, int] = field(default_factory=dict)
+    # Nº de jogos observados por equipa (usado para shrinkage adaptativo)
+    n_jogos_casa: dict[int, float] = field(default_factory=dict)
+    n_jogos_fora: dict[int, float] = field(default_factory=dict)
 
 
 class ModeloGAP:
-    """Modelo GAP ratings — ataque/defesa a partir de remates + cantos."""
+    """Modelo GAP ratings — ataque/defesa a partir de remates + cantos.
+
+    Opcionalmente aplica correção de Dixon-Coles aos resultados baixos
+    (0-0, 1-0, 0-1, 1-1) para corrigir o desvio empírico típico da Poisson
+    pura. Também aplica shrinkage mais forte a equipas recém-promovidas
+    (poucos jogos na liga).
+    """
 
     def __init__(
         self,
         meia_vida_dias: float = 365.0,
         peso_cantos: float = 0.5,
         prior_jogos: int = 3,
+        rho_dixon_coles: float = 0.0,
+        shrinkage_threshold: int = 5,
     ):
         self.meia_vida_dias = meia_vida_dias
         self.peso_cantos = peso_cantos
         self.prior_jogos = prior_jogos
-        self.parametros = ParametrosGAP(peso_cantos=peso_cantos)
+        self.rho_dixon_coles = rho_dixon_coles
+        self.shrinkage_threshold = shrinkage_threshold
+        self.parametros = ParametrosGAP(
+            peso_cantos=peso_cantos, rho_dixon_coles=rho_dixon_coles,
+        )
 
     def _metrica(self, remates: int, cantos: int) -> float:
         return remates + self.peso_cantos * cantos
@@ -156,7 +172,8 @@ class ModeloGAP:
             atq_f_sofrido[j.fora_id] += w * atq_c
             peso_fora_equipa[j.fora_id] += w
 
-        prior = float(self.prior_jogos)
+        prior_base = float(self.prior_jogos)
+        threshold = float(self.shrinkage_threshold)
         atq_casa: dict[int, float] = {}
         def_casa: dict[int, float] = {}
         atq_fora: dict[int, float] = {}
@@ -170,10 +187,14 @@ class ModeloGAP:
             w_c = peso_casa_equipa.get(equipa_id, 0.0)
             w_f = peso_fora_equipa.get(equipa_id, 0.0)
 
-            atq_c_eq = (atq_c_soma.get(equipa_id, 0.0) + prior * mc) / (w_c + prior)
-            def_c_eq = (atq_c_sofrido.get(equipa_id, 0.0) + prior * mf) / (w_c + prior)
-            atq_f_eq = (atq_f_soma.get(equipa_id, 0.0) + prior * mf) / (w_f + prior)
-            def_f_eq = (atq_f_sofrido.get(equipa_id, 0.0) + prior * mc) / (w_f + prior)
+            # Shrinkage adaptativo: equipas com poucos jogos ganham prior maior
+            prior_c = _prior_adaptativo(w_c, prior_base, threshold)
+            prior_f = _prior_adaptativo(w_f, prior_base, threshold)
+
+            atq_c_eq = (atq_c_soma.get(equipa_id, 0.0) + prior_c * mc) / (w_c + prior_c)
+            def_c_eq = (atq_c_sofrido.get(equipa_id, 0.0) + prior_c * mf) / (w_c + prior_c)
+            atq_f_eq = (atq_f_soma.get(equipa_id, 0.0) + prior_f * mf) / (w_f + prior_f)
+            def_f_eq = (atq_f_sofrido.get(equipa_id, 0.0) + prior_f * mc) / (w_f + prior_f)
 
             atq_casa[equipa_id] = atq_c_eq / mc if mc > 0 else 1.0
             def_casa[equipa_id] = def_c_eq / mf if mf > 0 else 1.0
@@ -182,6 +203,7 @@ class ModeloGAP:
 
         self.parametros = ParametrosGAP(
             peso_cantos=self.peso_cantos,
+            rho_dixon_coles=self.rho_dixon_coles,
             media_atq_casa_liga=media_atq_c,
             media_atq_fora_liga=media_atq_f,
             taxa_golos_por_atq_casa=taxa_c,
@@ -191,6 +213,8 @@ class ModeloGAP:
             def_casa=def_casa,
             def_fora=def_fora,
             liga_por_equipa=liga_de,
+            n_jogos_casa=dict(peso_casa_equipa),
+            n_jogos_fora=dict(peso_fora_equipa),
         )
 
     # ─── Predict ──────────────────────────────────────────────────────
@@ -214,10 +238,20 @@ class ModeloGAP:
         lam_c, lam_f = self.lambdas(casa_id, fora_id)
         pmf_c = [_poisson_pmf(k, lam_c) for k in range(max_golos + 1)]
         pmf_f = [_poisson_pmf(k, lam_f) for k in range(max_golos + 1)]
+
+        rho = self.rho_dixon_coles
         total = [0.0] * (max_golos * 2 + 1)
+        soma = 0.0
         for i, pc in enumerate(pmf_c):
             for j, pf in enumerate(pmf_f):
-                total[i + j] += pc * pf
+                p = pc * pf
+                if rho != 0.0:
+                    p *= _tau_dixon_coles(i, j, lam_c, lam_f, rho)
+                total[i + j] += p
+                soma += p
+        # Dixon-Coles quebra a soma=1; renormaliza
+        if soma > 0 and abs(soma - 1.0) > 1e-9:
+            total = [x / soma for x in total]
         return total
 
     def prob_over(self, casa_id: int, fora_id: int, linha: float) -> float:
@@ -228,3 +262,29 @@ class ModeloGAP:
 
 def _poisson_pmf(k: int, lam: float) -> float:
     return (lam ** k) * math.exp(-lam) / math.factorial(k)
+
+
+def _tau_dixon_coles(x: int, y: int, lam: float, mu: float, rho: float) -> float:
+    """Fator de ajuste de Dixon-Coles para resultados baixos.
+
+    Modifica a independência Poisson pura para refletir que empates 0-0
+    e 1-1 são empiricamente mais frequentes do que a Poisson pura prevê.
+    """
+    if x == 0 and y == 0:
+        return max(0.0, 1.0 - lam * mu * rho)
+    if x == 0 and y == 1:
+        return 1.0 + lam * rho
+    if x == 1 and y == 0:
+        return 1.0 + mu * rho
+    if x == 1 and y == 1:
+        return max(0.0, 1.0 - rho)
+    return 1.0
+
+
+def _prior_adaptativo(w_atual: float, prior_base: float, threshold: float) -> float:
+    """Prior maior (mais shrinkage) para equipas com poucas observações."""
+    if w_atual >= threshold:
+        return prior_base
+    # Interpolação linear: 1 jogo → prior = 3× base; threshold → base.
+    extra = (threshold - w_atual) / threshold
+    return prior_base * (1.0 + 2.0 * extra)

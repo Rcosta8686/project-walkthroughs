@@ -41,6 +41,8 @@ def identificar_sugestoes(
     referencia: datetime | None = None,
     janela_horas: tuple[float, float] = (0.0, 24.0),
     modelo: str = "gap",
+    peso_cantos: float = 0.5,
+    rho_dixon_coles: float = 0.1,
 ) -> list[SugestaoExpandida]:
     """Varre jogos agendados na janela e grava Sugestao para os de EV positivo."""
     cfg = load_config()
@@ -74,7 +76,7 @@ def identificar_sugestoes(
             if len(historicos) < 10:
                 continue
 
-            modelo_obj = _criar_modelo(modelo, meia_vida, 0.5)
+            modelo_obj = _criar_modelo(modelo, meia_vida, peso_cantos, rho_dixon_coles)
             modelo_obj.fit(historicos, referencia=jogo.data_utc)
 
             try:

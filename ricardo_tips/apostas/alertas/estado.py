@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from apostas.utils.config import project_root
+from apostas.utils import config as _config
 from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -23,7 +23,7 @@ _DEFAULT: dict[str, Any] = {
 
 
 def _caminho() -> Path:
-    return project_root() / "dados" / "estado_bot.json"
+    return _config.project_root() / "dados" / "estado_bot.json"
 
 
 def ler() -> dict[str, Any]:

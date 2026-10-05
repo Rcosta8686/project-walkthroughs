@@ -103,6 +103,7 @@ def correr(
     stake: float = 1.0,
     modelo: str = "gap",
     peso_cantos: float = 0.5,
+    rho_dixon_coles: float = 0.0,
 ) -> RelatorioBacktest:
     if modelo not in MODELOS_DISPONIVEIS:
         raise ValueError(
@@ -136,7 +137,7 @@ def correr(
             if len(historicos) < 10:
                 continue  # amostra pequena de mais
 
-            modelo_obj = _criar_modelo(modelo, meia_vida_dias, peso_cantos)
+            modelo_obj = _criar_modelo(modelo, meia_vida_dias, peso_cantos, rho_dixon_coles)
             modelo_obj.fit(historicos, referencia=jogo.data_utc)
 
             try:
@@ -186,11 +187,17 @@ def correr(
     return rel
 
 
-def _criar_modelo(modelo: str, meia_vida_dias: float, peso_cantos: float):
+def _criar_modelo(
+    modelo: str, meia_vida_dias: float, peso_cantos: float, rho_dixon_coles: float = 0.0,
+):
     if modelo == "poisson":
         return ModeloPoisson(meia_vida_dias=meia_vida_dias)
     if modelo == "gap":
-        return ModeloGAP(meia_vida_dias=meia_vida_dias, peso_cantos=peso_cantos)
+        return ModeloGAP(
+            meia_vida_dias=meia_vida_dias,
+            peso_cantos=peso_cantos,
+            rho_dixon_coles=rho_dixon_coles,
+        )
     raise ValueError(f"Modelo desconhecido: {modelo}")
 
 

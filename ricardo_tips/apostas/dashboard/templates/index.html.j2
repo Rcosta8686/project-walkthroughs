@@ -104,6 +104,45 @@
             }, {responsive: true, displayModeBar: false});
         </script>
 
+        {% if rel.calibracao_bins %}
+        <div class="calibracao">
+            <h3>Calibração</h3>
+            <p class="meta">
+                Brier score: <strong>{{ rel.brier }}</strong> · Log-loss: <strong>{{ rel.log_loss }}</strong>
+                <br><small>Menor é melhor. Barras azuis = probabilidade declarada; laranjas = taxa real.</small>
+            </p>
+            <div class="grafico" id="calib-{{ loop.index }}"></div>
+            <script>
+                Plotly.newPlot('calib-{{ loop.index }}', [
+                    {
+                        x: {{ rel.calibracao_labels|tojson }},
+                        y: {{ rel.calibracao_esperado|tojson }},
+                        type: 'bar',
+                        name: 'Modelo (prob média)',
+                        marker: {color: '{{ cores[loop.index0] }}'}
+                    },
+                    {
+                        x: {{ rel.calibracao_labels|tojson }},
+                        y: {{ rel.calibracao_real|tojson }},
+                        type: 'bar',
+                        name: 'Real (hit rate)',
+                        marker: {color: '#f59e0b'}
+                    }
+                ], {
+                    margin: {t: 10, r: 10, b: 40, l: 50},
+                    xaxis: {title: 'Faixa de probabilidade', gridcolor: 'rgba(128,128,128,0.15)'},
+                    yaxis: {title: '%', gridcolor: 'rgba(128,128,128,0.15)'},
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    font: {family: 'system-ui, sans-serif'},
+                    height: 280,
+                    barmode: 'group',
+                    legend: {orientation: 'h', y: -0.2}
+                }, {responsive: true, displayModeBar: false});
+            </script>
+        </div>
+        {% endif %}
+
         <details class="por-liga">
             <summary>ROI por liga</summary>
             <table>

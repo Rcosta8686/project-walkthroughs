@@ -75,6 +75,12 @@ def main() -> None:
         default=0.5,
         help="Peso dos cantos vs remates no modelo GAP (0..1)",
     )
+    parser.add_argument(
+        "--rho",
+        type=float,
+        default=0.1,
+        help="Correção Dixon-Coles para resultados baixos (0 = desligado; típico ~0.1)",
+    )
     args = parser.parse_args()
 
     modelos = [args.modelo] if args.modelo else list(walk_forward.MODELOS_DISPONIVEIS)
@@ -89,6 +95,7 @@ def main() -> None:
             casa_de_apostas_ref=args.casa,
             meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
             peso_cantos=args.peso_cantos,
+            rho_dixon_coles=args.rho,
         )
         print(fmt.formatar(rel))
         relatorios.append(rel)

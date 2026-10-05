@@ -227,6 +227,21 @@ details.apostas table {
     border-left: 3px solid var(--acento);
 }
 
+/* Calibração */
+.calibracao {
+    background: var(--fundo);
+    border: 1px solid var(--borda);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.calibracao h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
 footer {
     margin-top: 32px;
     padding-top: 20px;

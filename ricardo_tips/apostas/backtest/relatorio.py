@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from apostas.backtest.calibracao import brier_score, calibrar, log_loss
 from apostas.backtest.walk_forward import RelatorioBacktest
 
 
@@ -72,6 +73,22 @@ def formatar(rel: RelatorioBacktest) -> str:
             f"  Liga {lid:2d} | {len(apostas):3d} apostas | ROI {roi * 100:+6.2f}%"
         )
     linhas.append("")
+
+    # Calibração
+    bins = calibrar(rel.apostas)
+    if bins:
+        linhas.append("  ── Calibração ────────────────────────────────────────────────")
+        linhas.append(f"  {'Prob bin':<16} {'N':>5} {'Modelo':>8} {'Real':>8} {'ROI':>8}")
+        for b in bins:
+            linhas.append(
+                f"  {b.prob_min * 100:3.0f}-{b.prob_max * 100:3.0f}%           "
+                f"{b.n_apostas:5d} "
+                f"{b.prob_media_modelo * 100:7.1f}% {b.hit_rate_real * 100:7.1f}% "
+                f"{b.roi * 100:+7.2f}%"
+            )
+        linhas.append(f"  Brier score: {brier_score(rel.apostas):.4f} · "
+                      f"Log-loss: {log_loss(rel.apostas):.4f}")
+        linhas.append("")
 
     linhas.append("  ── Nota ──────────────────────────────────────────────────────")
     if rel.modelo == "poisson":

@@ -14,14 +14,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from apostas.utils.config import get_env, project_root
+from apostas.utils import config as _config
+from apostas.utils.config import get_env
 from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 
 def caminho_outbox() -> Path:
-    return project_root() / "dados" / "telegram_outbox.log"
+    return _config.project_root() / "dados" / "telegram_outbox.log"
 
 
 class ClienteTelegram:

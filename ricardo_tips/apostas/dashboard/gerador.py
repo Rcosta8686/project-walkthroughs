@@ -14,6 +14,7 @@ from typing import Iterable
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from apostas.backtest.calibracao import brier_score, calibrar, log_loss
 from apostas.backtest.walk_forward import ApostaSimulada, RelatorioBacktest
 from apostas.utils.config import project_root
 from apostas.utils.logger import get_logger
@@ -50,6 +51,7 @@ def _enriquecer(rel: RelatorioBacktest) -> dict:
         lucro = sum(a.lucro for a in apostas)
         por_liga[lid] = _ResumoLiga(n=len(apostas), roi=lucro / stake if stake else 0)
 
+    bins = calibrar(rel.apostas)
     return {
         "modelo": rel.modelo,
         "linha": rel.linha,
@@ -65,6 +67,14 @@ def _enriquecer(rel: RelatorioBacktest) -> dict:
         "bankroll_y": bankroll_y,
         "por_liga": por_liga,
         "apostas": sorted(rel.apostas, key=lambda a: a.data),
+        "calibracao_bins": bins,
+        "calibracao_labels": [
+            f"{int(b.prob_min * 100)}-{int(b.prob_max * 100)}%" for b in bins
+        ],
+        "calibracao_esperado": [round(b.prob_media_modelo * 100, 1) for b in bins],
+        "calibracao_real": [round(b.hit_rate_real * 100, 1) for b in bins],
+        "brier": round(brier_score(rel.apostas), 4),
+        "log_loss": round(log_loss(rel.apostas), 4),
     }
 
 

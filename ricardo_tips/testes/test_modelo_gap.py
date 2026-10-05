@@ -78,6 +78,48 @@ def test_gap_equipa_forte_prevista_marcar_mais():
     assert lam_1_vs_3[0] > lam_3_vs_1[0]
 
 
+def test_dixon_coles_altera_resultados_baixos():
+    """Com rho > 0, P(0-0) e P(1-1) devem aumentar vs. rho = 0."""
+    sem_dc = ModeloGAP(rho_dixon_coles=0.0)
+    com_dc = ModeloGAP(rho_dixon_coles=0.15)
+    sem_dc.fit(_jogos_sinteticos_gap())
+    com_dc.fit(_jogos_sinteticos_gap())
+
+    # Com DC, probabilidade de empate 0-0 é maior
+    def p_resultado(modelo, i, j):
+        import math as m
+        from apostas.modelos.gap import _poisson_pmf, _tau_dixon_coles
+        lc, lf = modelo.lambdas(1, 2)
+        p = _poisson_pmf(i, lc) * _poisson_pmf(j, lf)
+        if modelo.rho_dixon_coles != 0:
+            p *= _tau_dixon_coles(i, j, lc, lf, modelo.rho_dixon_coles)
+        return p
+
+    p00_sem = p_resultado(sem_dc, 0, 0)
+    p00_com = p_resultado(com_dc, 0, 0)
+    assert p00_com < p00_sem  # tau para (0,0) é < 1 com rho positivo
+
+
+def test_dixon_coles_distribuicao_continua_a_somar_1():
+    """A renormalização mantém a distribuição válida."""
+    modelo = ModeloGAP(rho_dixon_coles=0.15)
+    modelo.fit(_jogos_sinteticos_gap())
+    dist = modelo.prob_total_golos(1, 2, max_golos=15)
+    assert math.isclose(sum(dist), 1.0, abs_tol=1e-5)
+
+
+def test_shrinkage_adaptativo_aproxima_equipas_pouco_vistas():
+    """Equipa com só 1 jogo deve ter ratings mais próximos de 1.0 que a média."""
+    from apostas.modelos.gap import _prior_adaptativo
+    base = 3.0
+    threshold = 5.0
+    # Com 1 jogo: prior maior → mais shrinkage
+    assert _prior_adaptativo(1.0, base, threshold) > base
+    # Com threshold ou mais: prior base
+    assert _prior_adaptativo(5.0, base, threshold) == base
+    assert _prior_adaptativo(100.0, base, threshold) == base
+
+
 # ─── Backtest com modelo GAP ─────────────────────────────────────────
 
 @pytest.fixture
