@@ -15,6 +15,7 @@ def formatar(rel: RelatorioBacktest) -> str:
     linhas.append("  RELATÓRIO DE BACKTEST — Ricardo Tips")
     linhas.append("═" * 70)
     linhas.append("")
+    linhas.append(f"  Modelo:               {rel.modelo.upper()}")
     linhas.append(f"  Mercado:              Over/Under {rel.linha} golos")
     linhas.append(f"  Época de teste:       {rel.epoca_teste}")
     linhas.append(f"  Casa de apostas:      {rel.casa_de_apostas_ref}")
@@ -73,9 +74,12 @@ def formatar(rel: RelatorioBacktest) -> str:
     linhas.append("")
 
     linhas.append("  ── Nota ──────────────────────────────────────────────────────")
-    linhas.append("  Este é o modelo BASELINE (golos apenas). ROI próximo de -5%")
-    linhas.append("  ou de zero é esperado — a vantagem real vem com GAP ratings")
-    linhas.append("  de remates e cantos, implementadas quando a Sportmonks")
-    linhas.append("  estiver ligada.")
+    if rel.modelo == "poisson":
+        linhas.append("  Modelo baseline (apenas golos). Usar GAP ratings")
+        linhas.append("  (remates + cantos) deve dar melhor edge — ver flag --modelo gap.")
+    else:
+        linhas.append("  Modelo GAP ratings (Wheatcroft 2020). Testar em dados reais;")
+        linhas.append("  em simulação os resultados podem ser otimistas por o")
+        linhas.append("  gerador de dados ser Poisson com margem embutida.")
     linhas.append("═" * 70)
     return "\n".join(linhas)

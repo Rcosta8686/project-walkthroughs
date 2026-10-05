@@ -5,7 +5,8 @@ relatório em texto no terminal.
 
 Uso:
     python scripts/correr_backtest.py
-    python scripts/correr_backtest.py --linha 2.5 --ev-minimo 0.03
+    python scripts/correr_backtest.py --modelo gap --linha 2.5
+    python scripts/correr_backtest.py --modelo poisson --linha 2.5
     python scripts/correr_backtest.py --epoca 2024 --linha 1.5
 
 Correr sempre que:
@@ -34,6 +35,12 @@ def main() -> None:
     cfg = load_config()
     parser = argparse.ArgumentParser(description="Backtest walk-forward.")
     parser.add_argument(
+        "--modelo",
+        choices=walk_forward.MODELOS_DISPONIVEIS,
+        default="gap",
+        help="Modelo a usar: gap (remates+cantos) ou poisson (baseline só golos)",
+    )
+    parser.add_argument(
         "--epoca",
         type=int,
         default=2024,
@@ -56,14 +63,22 @@ def main() -> None:
         default="Avg_Closing",
         help="Casa de apostas de referência (ex.: Avg_Closing, B365)",
     )
+    parser.add_argument(
+        "--peso-cantos",
+        type=float,
+        default=0.5,
+        help="Peso dos cantos vs remates no modelo GAP (0..1)",
+    )
     args = parser.parse_args()
 
     rel = walk_forward.correr(
+        modelo=args.modelo,
         epoca_teste=args.epoca,
         linha=args.linha,
         ev_minimo=args.ev_minimo,
         casa_de_apostas_ref=args.casa,
         meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
+        peso_cantos=args.peso_cantos,
     )
     print(fmt.formatar(rel))
 
