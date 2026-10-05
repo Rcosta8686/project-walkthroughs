@@ -29,7 +29,7 @@ mercados:
     linhas: [1.5, 2.5, 3.5]
     lados: ["over", "under"]
   cantos:
-    ativo: false
+    ativo: true
     linhas: [8.5, 9.5, 10.5, 11.5]
     lados: ["over", "under"]
   cartoes:

@@ -17,7 +17,8 @@ def formatar(rel: RelatorioBacktest) -> str:
     linhas.append("═" * 70)
     linhas.append("")
     linhas.append(f"  Modelo:               {rel.modelo.upper()}")
-    linhas.append(f"  Mercado:              Over/Under {rel.linha} golos")
+    unidade = "cantos" if rel.mercado == "cantos" else "golos"
+    linhas.append(f"  Mercado:              Over/Under {rel.linha} {unidade}")
     linhas.append(f"  Época de teste:       {rel.epoca_teste}")
     linhas.append(f"  Casa de apostas:      {rel.casa_de_apostas_ref}")
     linhas.append(f"  EV mínimo:            {rel.ev_minimo * 100:.1f}%")

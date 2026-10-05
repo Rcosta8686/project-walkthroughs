@@ -17,6 +17,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
+from apostas.modelos.cantos import JogoHistoricoCantos, ModeloCantos
 from apostas.modelos.gap import JogoHistoricoGAP, ModeloGAP
 from apostas.modelos.poisson import JogoHistorico, ModeloPoisson
 from apostas.modelos.value import ev as calcular_ev
@@ -26,7 +27,8 @@ from apostas.utils.schema import EstatisticasJogo, Jogo, OddsFecho
 
 log = get_logger(__name__)
 
-MODELOS_DISPONIVEIS = ("poisson", "gap")
+MODELOS_DISPONIVEIS = ("poisson", "gap", "cantos")
+MERCADOS_DISPONIVEIS = ("golos", "cantos")
 
 
 @dataclass
@@ -54,6 +56,7 @@ class RelatorioBacktest:
     meia_vida_dias: float
     epoca_teste: int
     modelo: str = "poisson"
+    mercado: str = "golos"
 
     apostas: list[ApostaSimulada] = field(default_factory=list)
     bankroll: list[tuple[datetime, float]] = field(default_factory=list)
@@ -104,11 +107,18 @@ def correr(
     modelo: str = "gap",
     peso_cantos: float = 0.5,
     rho_dixon_coles: float = 0.0,
+    mercado: str = "golos",
 ) -> RelatorioBacktest:
     if modelo not in MODELOS_DISPONIVEIS:
         raise ValueError(
             f"Modelo '{modelo}' desconhecido. Usa um de: {MODELOS_DISPONIVEIS}"
         )
+    if mercado not in MERCADOS_DISPONIVEIS:
+        raise ValueError(
+            f"Mercado '{mercado}' desconhecido. Usa um de: {MERCADOS_DISPONIVEIS}"
+        )
+    if mercado == "cantos" and modelo != "cantos":
+        modelo = "cantos"  # força o modelo adequado para o mercado
 
     rel = RelatorioBacktest(
         linha=linha,
@@ -117,6 +127,7 @@ def correr(
         meia_vida_dias=meia_vida_dias,
         epoca_teste=epoca_teste,
         modelo=modelo,
+        mercado=mercado,
     )
     bankroll_corrente = 0.0
 
@@ -146,11 +157,16 @@ def correr(
                 continue  # equipa desconhecida pelo modelo
             p_under = 1.0 - p_over
 
-            odd_over = _odd(s, jogo.id, "golos", linha, "over", casa_de_apostas_ref)
-            odd_under = _odd(s, jogo.id, "golos", linha, "under", casa_de_apostas_ref)
+            odd_over = _odd(s, jogo.id, mercado, linha, "over", casa_de_apostas_ref)
+            odd_under = _odd(s, jogo.id, mercado, linha, "under", casa_de_apostas_ref)
 
-            golos_total = (jogo.golos_casa or 0) + (jogo.golos_fora or 0)
-            foi_over = golos_total > linha
+            if mercado == "golos":
+                valor_total = (jogo.golos_casa or 0) + (jogo.golos_fora or 0)
+            else:  # cantos — tira da tabela estatisticas_jogo
+                valor_total = _total_cantos(s, jogo)
+                if valor_total is None:
+                    continue
+            foi_over = valor_total > linha
 
             for lado, p_modelo, odd in (("over", p_over, odd_over), ("under", p_under, odd_under)):
                 if odd is None:
@@ -198,7 +214,23 @@ def _criar_modelo(
             peso_cantos=peso_cantos,
             rho_dixon_coles=rho_dixon_coles,
         )
+    if modelo == "cantos":
+        return ModeloCantos(meia_vida_dias=meia_vida_dias)
     raise ValueError(f"Modelo desconhecido: {modelo}")
+
+
+def _total_cantos(s, jogo: Jogo) -> int | None:
+    stats = s.scalars(
+        select(EstatisticasJogo).where(EstatisticasJogo.jogo_id == jogo.id)
+    ).all()
+    if len(stats) < 2:
+        return None
+    total = 0
+    for st in stats:
+        if st.cantos is None:
+            return None
+        total += st.cantos
+    return total
 
 
 def _historicos_antes_de(s, data: datetime, liga_id: int, modelo: str) -> list:
@@ -226,7 +258,7 @@ def _historicos_antes_de(s, data: datetime, liga_id: int, modelo: str) -> list:
             for j in rows
         ]
 
-    # modelo == "gap" → precisa de remates e cantos por jogo
+    # modelos "gap" e "cantos" → precisam de stats por jogo
     jogo_ids = [j.id for j in rows]
     if not jogo_ids:
         return []
@@ -237,6 +269,26 @@ def _historicos_antes_de(s, data: datetime, liga_id: int, modelo: str) -> list:
     for st in stats_rows:
         stats_por_jogo.setdefault(st.jogo_id, {})[st.equipa_id] = st
 
+    if modelo == "cantos":
+        out_c: list[JogoHistoricoCantos] = []
+        for j in rows:
+            por_equipa = stats_por_jogo.get(j.id)
+            if not por_equipa:
+                continue
+            st_c = por_equipa.get(j.casa_id)
+            st_f = por_equipa.get(j.fora_id)
+            if st_c is None or st_f is None:
+                continue
+            if st_c.cantos is None or st_f.cantos is None:
+                continue
+            out_c.append(JogoHistoricoCantos(
+                data=j.data_utc, liga_id=j.liga_id,
+                casa_id=j.casa_id, fora_id=j.fora_id,
+                cantos_casa=st_c.cantos, cantos_fora=st_f.cantos,
+            ))
+        return out_c
+
+    # modelo == "gap"
     out: list[JogoHistoricoGAP] = []
     for j in rows:
         por_equipa = stats_por_jogo.get(j.id)

@@ -42,6 +42,12 @@ def main() -> None:
         help="Modelo a correr. Se omitido, corre AMBOS e compara no dashboard.",
     )
     parser.add_argument(
+        "--mercado",
+        choices=walk_forward.MERCADOS_DISPONIVEIS,
+        default="golos",
+        help="Mercado: golos ou cantos (default: golos)",
+    )
+    parser.add_argument(
         "--sem-dashboard",
         action="store_true",
         help="Não gerar HTML; só imprimir no terminal.",
@@ -83,14 +89,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    modelos = [args.modelo] if args.modelo else list(walk_forward.MODELOS_DISPONIVEIS)
+    if args.mercado == "cantos":
+        modelos = ["cantos"]  # único modelo para cantos
+    elif args.modelo:
+        modelos = [args.modelo]
+    else:
+        modelos = [m for m in walk_forward.MODELOS_DISPONIVEIS if m != "cantos"]
+
+    # Default de linha para cantos é diferente
+    linha = args.linha if args.linha != 2.5 or args.mercado == "golos" else 9.5
 
     relatorios = []
     for modelo in modelos:
         rel = walk_forward.correr(
             modelo=modelo,
+            mercado=args.mercado,
             epoca_teste=args.epoca,
-            linha=args.linha,
+            linha=linha,
             ev_minimo=args.ev_minimo,
             casa_de_apostas_ref=args.casa,
             meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
