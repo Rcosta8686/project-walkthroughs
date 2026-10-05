@@ -7,6 +7,8 @@ dados/*.db
 dados/*.sqlite
 dados/raw/
 dados/processed/
+dados/estado_bot.json
+dados/telegram_outbox.log
 !dados/.gitkeep
 
 # Dashboard gerado
