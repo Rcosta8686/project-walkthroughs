@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import random
+from datetime import datetime, timedelta
 from io import StringIO
 
 # Equipas por código de liga (football-data)
@@ -90,7 +91,7 @@ def gerar_csv(codigo_liga: str, epoca: int) -> str:
     equipas = _EQUIPAS_FD[codigo_liga]
 
     linhas = [",".join(_COLUNAS)]
-    data_base = 1  # dia 1 de agosto
+    inicio = datetime(epoca, 8, 1)  # mesma referência usada no mock Sportmonks
     for jornada, (casa, fora) in enumerate(_round_robin(equipas), start=1):
         casa_nome, atk_c, def_c = casa
         fora_nome, atk_f, def_f = fora
@@ -135,9 +136,10 @@ def gerar_csv(codigo_liga: str, epoca: int) -> str:
         ao_c = round(1.03 / p_over, 2)
         au_c = round(1.03 / p_under, 2)
 
-        # Datas espaçadas por jornada
-        data_dia = min(28, data_base + (jornada - 1) * 2)
-        data = f"{data_dia:02d}/{((jornada - 1) // 14) + 8:02d}/{(epoca + ((jornada - 1) // 14) // 5) % 100:02d}"
+        # Mesma fórmula de datas que o mock Sportmonks (dia 1 de agosto + jornada*3 dias),
+        # para que a reconciliação de jogos entre as duas fontes funcione.
+        kickoff = inicio + timedelta(days=(jornada - 1) * 3)
+        data = kickoff.strftime("%d/%m/%Y")
 
         linhas.append(",".join(str(x) for x in [
             codigo_liga, data, casa_nome, fora_nome,

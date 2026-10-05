@@ -64,17 +64,19 @@ def test_sincronizar_cria_jogos_e_odds(bd_com_ligas):
         assert n_ou == 180
 
 
-def test_sincronizar_cria_equipas_em_falta(bd_com_ligas):
-    """Equipas do football-data têm nomes diferentes (ex.: 'Man United') —
-    são criadas como novos registos (sportmonks_id = NULL)."""
+def test_sincronizar_reutiliza_equipas_via_aliases(bd_com_ligas):
+    """Nomes football-data (ex.: 'Man United') são resolvidos para a equipa
+    Sportmonks ('Manchester United') via tabela equipa_aliases — não deve
+    criar equipas duplicadas."""
     resultado = football_data_uk.sincronizar(epocas=[2023])
-    assert resultado.equipas_criadas > 0
+    assert resultado.equipas_criadas == 0
 
     with db_mod.abrir_sessao() as s:
+        # Todas as 36 equipas Sportmonks continuam a ter sportmonks_id preenchido
         sem_sm_id = s.scalars(
             select(Equipa).where(Equipa.sportmonks_id.is_(None))
         ).all()
-        assert len(sem_sm_id) > 0
+        assert len(sem_sm_id) == 0
 
 
 def test_sincronizar_e_idempotente(bd_com_ligas):

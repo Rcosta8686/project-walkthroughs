@@ -10,7 +10,7 @@ Em modo `producao` descarrega o CSV real e põe em cache local.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 
@@ -19,10 +19,11 @@ import requests
 from sqlalchemy import select
 
 from apostas.ingestao import _mocks_fd
+from apostas.ingestao import aliases as _aliases
 from apostas.utils.config import get_env, project_root
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
-from apostas.utils.schema import Equipa, Jogo, Liga, OddsFecho
+from apostas.utils.schema import Equipa, EquipaAlias, Jogo, Liga, OddsFecho
 
 log = get_logger(__name__)
 
@@ -101,18 +102,40 @@ def _parse_data(valor: str) -> datetime:
 
 
 def _get_or_create_equipa(s, nome: str, liga: Liga, resultado: ResultadoIngestaoFD) -> Equipa:
-    """Procura por nome exato ou por alias; cria se não existir."""
+    """Procura por nome exato, por alias registado, por mapa estático; cria se não existir."""
+    # 1) Nome exato (= equipa Sportmonks com este nome, ou equipa football-data já criada)
     equipa = s.scalar(
         select(Equipa).where(Equipa.nome == nome, Equipa.liga_id == liga.id)
     )
     if equipa is not None:
         return equipa
-    # Nova equipa (sem sportmonks_id — preenchido depois pela ingestão Sportmonks)
+
+    # 2) Alias registado na BD (fonte football_data)
+    alias = s.scalar(
+        select(EquipaAlias).where(
+            EquipaAlias.alias == nome,
+            EquipaAlias.fonte == _aliases.FONTE_FOOTBALL_DATA,
+        )
+    )
+    if alias is not None:
+        return s.get(Equipa, alias.equipa_id)
+
+    # 3) Alias no mapa estático (equipa Sportmonks sem alias ainda registado)
+    canonico = _aliases.nome_canonico_de(nome, _aliases.FONTE_FOOTBALL_DATA)
+    if canonico is not None:
+        equipa = s.scalar(
+            select(Equipa).where(Equipa.nome == canonico, Equipa.liga_id == liga.id)
+        )
+        if equipa is not None:
+            s.add(EquipaAlias(equipa_id=equipa.id, alias=nome, fonte=_aliases.FONTE_FOOTBALL_DATA))
+            return equipa
+
+    # 4) Nova equipa (sem sportmonks_id — reconciliação futura via alias)
     equipa = Equipa(nome=nome, liga_id=liga.id, sportmonks_id=None)
     s.add(equipa)
     s.flush()
     resultado.equipas_criadas += 1
-    log.debug("Criada equipa %s na liga %s", nome, liga.nome)
+    log.debug("Criada equipa %s na liga %s (sem match Sportmonks)", nome, liga.nome)
     return equipa
 
 
@@ -224,30 +247,56 @@ def _processar_dataframe(
         casa = _get_or_create_equipa(s, row["HomeTeam"], liga, resultado)
         fora = _get_or_create_equipa(s, row["AwayTeam"], liga, resultado)
 
-        # Chave sintética para evitar duplicados (API-Football dá um id oficial;
-        # football-data não — usamos hash determinístico de liga+data+equipas).
-        chave = _chave_jogo_fd(liga.id, row["Date"], casa.id, fora.id)
-        existente = s.scalar(select(Jogo).where(Jogo.id_externo == chave))
-        if existente is not None:
-            resultado.jogos_existentes += 1
-            jogo = existente
-        else:
-            jogo = Jogo(
-                id_externo=chave,
-                liga_id=liga.id,
-                epoca=epoca,
-                data_utc=row["Date"],
-                casa_id=casa.id,
-                fora_id=fora.id,
-                golos_casa=int(row["FTHG"]) if pd.notna(row.get("FTHG")) else None,
-                golos_fora=int(row["FTAG"]) if pd.notna(row.get("FTAG")) else None,
-                estado="terminado" if pd.notna(row.get("FTHG")) else "agendado",
-            )
-            s.add(jogo)
-            s.flush()
-            resultado.jogos_criados += 1
-
+        jogo = _get_or_create_jogo(s, liga, epoca, row, casa, fora, resultado)
         _inserir_odds(s, jogo, row, resultado)
+
+
+def _get_or_create_jogo(
+    s, liga: Liga, epoca: int, row, casa: Equipa, fora: Equipa,
+    resultado: ResultadoIngestaoFD,
+) -> Jogo:
+    """Prefere ligar odds a um Jogo já existente (vindo da Sportmonks) para
+    o mesmo (liga, equipas, mesmo dia). Caso contrário cria novo."""
+    data_jogo = row["Date"]
+
+    # 1) Procurar jogo já existente para a mesma dupla no mesmo dia (±36h de folga)
+    inicio = datetime(data_jogo.year, data_jogo.month, data_jogo.day)
+    fim = inicio + timedelta(days=1, hours=12)
+    existente = s.scalar(
+        select(Jogo).where(
+            Jogo.liga_id == liga.id,
+            Jogo.casa_id == casa.id,
+            Jogo.fora_id == fora.id,
+            Jogo.data_utc >= inicio - timedelta(hours=12),
+            Jogo.data_utc <= fim,
+        )
+    )
+    if existente is not None:
+        resultado.jogos_existentes += 1
+        return existente
+
+    # 2) Chave determinística (fallback para jogos só do football-data)
+    chave = _chave_jogo_fd(liga.id, data_jogo, casa.id, fora.id)
+    pelo_externo = s.scalar(select(Jogo).where(Jogo.id_externo == chave))
+    if pelo_externo is not None:
+        resultado.jogos_existentes += 1
+        return pelo_externo
+
+    jogo = Jogo(
+        id_externo=chave,
+        liga_id=liga.id,
+        epoca=epoca,
+        data_utc=data_jogo,
+        casa_id=casa.id,
+        fora_id=fora.id,
+        golos_casa=int(row["FTHG"]) if pd.notna(row.get("FTHG")) else None,
+        golos_fora=int(row["FTAG"]) if pd.notna(row.get("FTAG")) else None,
+        estado="terminado" if pd.notna(row.get("FTHG")) else "agendado",
+    )
+    s.add(jogo)
+    s.flush()
+    resultado.jogos_criados += 1
+    return jogo
 
 
 def _chave_jogo_fd(liga_id: int, data: datetime, casa_id: int, fora_id: int) -> int:

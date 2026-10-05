@@ -10,11 +10,12 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from apostas.ingestao import aliases as _aliases
 from apostas.ingestao.sportmonks import ClienteSportmonks, cliente
 from apostas.utils.config import load_config
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
-from apostas.utils.schema import Equipa, Liga
+from apostas.utils.schema import Equipa, EquipaAlias, Liga
 
 log = get_logger(__name__)
 
@@ -110,4 +111,25 @@ def _sincronizar_equipas(
 
         equipa = Equipa(sportmonks_id=sm_id, nome=nome, liga_id=liga.id)
         s.add(equipa)
+        s.flush()
         resultado.equipas_criadas += 1
+
+        # Regista todos os aliases conhecidos para esta equipa
+        _registar_aliases(s, equipa)
+
+
+def _registar_aliases(s, equipa: Equipa) -> None:
+    """Insere na tabela equipa_aliases os aliases conhecidos para esta equipa."""
+    # Alias para a própria Sportmonks (nome canónico)
+    _add_alias_se_novo(s, equipa.id, equipa.nome, _aliases.FONTE_SPORTMONKS)
+    # Aliases para o football-data.co.uk
+    for alias in _aliases.aliases_de(equipa.nome, _aliases.FONTE_FOOTBALL_DATA):
+        _add_alias_se_novo(s, equipa.id, alias, _aliases.FONTE_FOOTBALL_DATA)
+
+
+def _add_alias_se_novo(s, equipa_id: int, alias: str, fonte: str) -> None:
+    existente = s.scalar(
+        select(EquipaAlias).where(EquipaAlias.alias == alias, EquipaAlias.fonte == fonte)
+    )
+    if existente is None:
+        s.add(EquipaAlias(equipa_id=equipa_id, alias=alias, fonte=fonte))
