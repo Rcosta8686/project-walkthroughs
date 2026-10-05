@@ -39,14 +39,14 @@ def main() -> None:
 
     criar_schema()
 
-    # 1) Ligas e equipas via API-Football (ou mock)
+    # 1) Ligas e equipas via Sportmonks (ou mock)
     res_lf = ligas_equipas.sincronizar()
     print(
         f"✓ Ligas: {res_lf.ligas_criadas} novas, "
         f"{res_lf.ligas_existentes} já existentes."
     )
     print(
-        f"✓ Equipas (API-Football): {res_lf.equipas_criadas} novas, "
+        f"✓ Equipas (Sportmonks): {res_lf.equipas_criadas} novas, "
         f"{res_lf.equipas_existentes} já existentes."
     )
 

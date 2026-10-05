@@ -26,7 +26,7 @@ Base académica: Edward Wheatcroft, *"A profitable model for predicting the over
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   API-Football  │     │football-data.co │     │  22bet (manual) │
+│   Sportmonks    │     │football-data.co │     │  22bet (manual) │
 │  (stats, line- │     │ (odds de fecho  │     │ (odds correntes │
 │   ups, lesões) │     │  históricas)    │     │ introduzidas    │
 └────────┬────────┘     └────────┬────────┘     │  por ti)        │
@@ -74,7 +74,7 @@ Base académica: Edward Wheatcroft, *"A profitable model for predicting the over
 ### 4.1. Ingestão (`apostas/ingestao/`)
 
 **Responsabilidades**
-- Buscar à **API-Football** (plano Pro no RapidAPI, ~€29/mês): fixtures, line-ups, lesões, remates, cantos, cartões, substituições.
+- Buscar à **Sportmonks Football API v3**: fixtures, line-ups, lesões, remates, cantos, cartões, substituições. Plano com as 6 ligas (Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Liga Portugal).
 - Buscar ao **football-data.co.uk** (gratuito): resultados e odds de fecho históricas de várias casas (B365, PS, PH, VC, …) — usamos para o backtest.
 - Gravar tudo normalizado em SQLite (`dados/ricardo_tips.db`).
 
@@ -251,12 +251,12 @@ A ingestão e os modelos ficam em subpacotes separados: `apostas/ingestao/futebo
 
 | Serviço | Para quê | Custo |
 |---------|----------|-------|
-| API-Football (RapidAPI, Pro) | Stats em tempo real, line-ups, lesões | ~€29/mês |
+| Sportmonks Football API v3 | Stats em tempo real, line-ups, lesões, 6 ligas | depende do plano (~€15–€50/mês) |
 | football-data.co.uk | Odds de fecho históricas | Grátis |
 | Telegram Bot API | Alertas | Grátis |
 | 22bet | Casa de apostas efetiva | Comissão implícita no spread |
 
-Total mensal: **~€29**. Dentro do orçamento de €50/mês acordado.
+Total mensal: dentro do orçamento de €50/mês acordado.
 
 ---
 

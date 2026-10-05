@@ -8,7 +8,7 @@ Ferramenta pessoal de apoio a apostas de futebol baseada em dados — não em pa
 
 ## O que é
 
-- Lê dados de jogos passados das 5 principais ligas europeias (Premier League, La Liga, Serie A, Bundesliga, Ligue 1).
+- Lê dados de jogos passados das 5 principais ligas europeias (Premier League, La Liga, Serie A, Bundesliga, Ligue 1) **e da Liga Portugal**.
 - Constrói classificações de "pressão ofensiva/defensiva" a partir de **remates e cantos** (não dos golos marcados).
 - Compara as probabilidades do modelo com as odds do mercado (referência: 22bet).
 - Quando o valor esperado (EV) de uma aposta é positivo o suficiente, envia-te um alerta no Telegram.
@@ -71,7 +71,7 @@ copy .env.example .env
 ```
 
 Abre `.env` no Bloco de Notas e preenche:
-- **API_FOOTBALL_KEY** — regista-te em <https://rapidapi.com/api-sports/api/api-football> e subscreve o plano Pro (~€29/mês). Copia a tua chave para aqui.
+- **SPORTMONKS_API_TOKEN** — regista-te em <https://my.sportmonks.com/>, subscreve o plano que inclui as 6 ligas, gera um token em "My API > Create new token" e copia-o para aqui.
 - **TELEGRAM_BOT_TOKEN** — fala com <https://t.me/BotFather> no Telegram, escreve `/newbot`, segue as instruções, copia o token.
 - **TELEGRAM_CHAT_ID** — fala com <https://t.me/userinfobot>, copia o número que ele te manda.
 

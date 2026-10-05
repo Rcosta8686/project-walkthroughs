@@ -1,23 +1,26 @@
 # Ricardo Tips — configuração central
 # Altera com cuidado. Linhas que começam com '#' são comentários.
 
-# Ligas a seguir (nomes como aparecem na API-Football)
+# Ligas a seguir (IDs da Sportmonks)
 ligas:
   - nome: "Premier League"
     pais: "England"
-    api_football_id: 39
+    sportmonks_id: 8
   - nome: "La Liga"
     pais: "Spain"
-    api_football_id: 140
+    sportmonks_id: 564
   - nome: "Serie A"
     pais: "Italy"
-    api_football_id: 135
+    sportmonks_id: 384
   - nome: "Bundesliga"
     pais: "Germany"
-    api_football_id: 78
+    sportmonks_id: 82
   - nome: "Ligue 1"
     pais: "France"
-    api_football_id: 61
+    sportmonks_id: 301
+  - nome: "Liga Portugal"
+    pais: "Portugal"
+    sportmonks_id: 462
 
 # Mercados ativos (fase 1: só golos)
 mercados:

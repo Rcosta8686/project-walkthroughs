@@ -6,7 +6,7 @@ Padrão de uso::
     from apostas.utils.schema import Liga
 
     with abrir_sessao() as s:
-        s.add(Liga(nome="Premier League", pais="England", api_football_id=39))
+        s.add(Liga(nome="Premier League", pais="England", sportmonks_id=8))
 """
 
 from __future__ import annotations

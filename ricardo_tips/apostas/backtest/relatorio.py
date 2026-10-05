@@ -75,7 +75,7 @@ def formatar(rel: RelatorioBacktest) -> str:
     linhas.append("  ── Nota ──────────────────────────────────────────────────────")
     linhas.append("  Este é o modelo BASELINE (golos apenas). ROI próximo de -5%")
     linhas.append("  ou de zero é esperado — a vantagem real vem com GAP ratings")
-    linhas.append("  de remates e cantos, implementadas quando a API-Football")
+    linhas.append("  de remates e cantos, implementadas quando a Sportmonks")
     linhas.append("  estiver ligada.")
     linhas.append("═" * 70)
     return "\n".join(linhas)

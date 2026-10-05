@@ -24,9 +24,9 @@ def test_config_tem_chaves_obrigatorias():
         assert chave in cfg, f"Chave '{chave}' em falta em config.yaml"
 
 
-def test_config_tem_cinco_ligas():
+def test_config_tem_seis_ligas():
     cfg = config_mod.load_config()
-    assert len(cfg["ligas"]) == 5
+    assert len(cfg["ligas"]) == 6
     nomes = {liga["nome"] for liga in cfg["ligas"]}
     assert nomes == {
         "Premier League",
@@ -34,6 +34,7 @@ def test_config_tem_cinco_ligas():
         "Serie A",
         "Bundesliga",
         "Ligue 1",
+        "Liga Portugal",
     }
 
 
@@ -85,7 +86,7 @@ def test_sessao_commit(tmp_path, monkeypatch):
     from apostas.utils.schema import Liga
 
     with db_mod.abrir_sessao() as s:
-        s.add(Liga(nome="Teste", pais="PT", api_football_id=999))
+        s.add(Liga(nome="Teste", pais="PT", sportmonks_id=999))
 
     with db_mod.abrir_sessao() as s:
         encontrado = s.query(Liga).filter_by(nome="Teste").one()

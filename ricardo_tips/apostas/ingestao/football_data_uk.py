@@ -33,6 +33,7 @@ CODIGOS_LIGA = {
     "Serie A": "I1",
     "Bundesliga": "D1",
     "Ligue 1": "F1",
+    "Liga Portugal": "P1",
 }
 
 _BASE_URL = "https://www.football-data.co.uk/mmz4281"
@@ -106,8 +107,8 @@ def _get_or_create_equipa(s, nome: str, liga: Liga, resultado: ResultadoIngestao
     )
     if equipa is not None:
         return equipa
-    # Nova equipa (sem api_football_id — preenchido depois pela outra ingestão)
-    equipa = Equipa(nome=nome, liga_id=liga.id, api_football_id=None)
+    # Nova equipa (sem sportmonks_id — preenchido depois pela ingestão Sportmonks)
+    equipa = Equipa(nome=nome, liga_id=liga.id, sportmonks_id=None)
     s.add(equipa)
     s.flush()
     resultado.equipas_criadas += 1
@@ -226,13 +227,13 @@ def _processar_dataframe(
         # Chave sintética para evitar duplicados (API-Football dá um id oficial;
         # football-data não — usamos hash determinístico de liga+data+equipas).
         chave = _chave_jogo_fd(liga.id, row["Date"], casa.id, fora.id)
-        existente = s.scalar(select(Jogo).where(Jogo.api_football_id == chave))
+        existente = s.scalar(select(Jogo).where(Jogo.id_externo == chave))
         if existente is not None:
             resultado.jogos_existentes += 1
             jogo = existente
         else:
             jogo = Jogo(
-                api_football_id=chave,
+                id_externo=chave,
                 liga_id=liga.id,
                 epoca=epoca,
                 data_utc=row["Date"],

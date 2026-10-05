@@ -9,7 +9,7 @@ import pytest
 
 from apostas.backtest import walk_forward
 from apostas.ingestao import football_data_uk, ligas_equipas
-from apostas.ingestao.api_football import cliente
+from apostas.ingestao.sportmonks import cliente
 from apostas.modelos import value
 from apostas.modelos.poisson import JogoHistorico, ModeloPoisson
 from apostas.utils import config as config_mod

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from apostas.ingestao import _mocks_fd, football_data_uk, ligas_equipas
-from apostas.ingestao.api_football import cliente
+from apostas.ingestao.sportmonks import cliente
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
 from apostas.utils.schema import Equipa, Jogo, OddsFecho
@@ -43,14 +43,14 @@ def test_mock_csv_reprodutivel():
 def test_sincronizar_cria_jogos_e_odds(bd_com_ligas):
     resultado = football_data_uk.sincronizar(epocas=[2023])
     assert resultado.erros == []
-    assert resultado.jogos_criados == 5 * 30  # 5 ligas × 30 jogos
+    assert resultado.jogos_criados == 6 * 30  # 6 ligas × 30 jogos
     assert resultado.odds_criadas > 0
 
     with db_mod.abrir_sessao() as s:
         total_jogos = s.scalar(select(func.count(Jogo.id)))
         total_odds = s.scalar(select(func.count(OddsFecho.id)))
-        assert total_jogos == 150
-        assert total_odds > 500  # várias odds por jogo (1x2 + OU 2.5 × 2 casas)
+        assert total_jogos == 180
+        assert total_odds > 600  # várias odds por jogo (1x2 + OU 2.5 × 2 casas)
 
         # Odd Over 2.5 Avg Closing deve estar presente para a maioria dos jogos
         n_ou = s.scalar(
@@ -61,20 +61,20 @@ def test_sincronizar_cria_jogos_e_odds(bd_com_ligas):
                 OddsFecho.casa_de_apostas == "Avg_Closing",
             )
         )
-        assert n_ou == 150
+        assert n_ou == 180
 
 
 def test_sincronizar_cria_equipas_em_falta(bd_com_ligas):
     """Equipas do football-data têm nomes diferentes (ex.: 'Man United') —
-    são criadas como novos registos (api_football_id = NULL)."""
+    são criadas como novos registos (sportmonks_id = NULL)."""
     resultado = football_data_uk.sincronizar(epocas=[2023])
     assert resultado.equipas_criadas > 0
 
     with db_mod.abrir_sessao() as s:
-        sem_api_id = s.scalars(
-            select(Equipa).where(Equipa.api_football_id.is_(None))
+        sem_sm_id = s.scalars(
+            select(Equipa).where(Equipa.sportmonks_id.is_(None))
         ).all()
-        assert len(sem_api_id) > 0
+        assert len(sem_sm_id) > 0
 
 
 def test_sincronizar_e_idempotente(bd_com_ligas):

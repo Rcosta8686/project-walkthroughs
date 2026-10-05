@@ -32,7 +32,7 @@ class Liga(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     nome: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     pais: Mapped[str] = mapped_column(String(100), nullable=False)
-    api_football_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    sportmonks_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
 
     equipas: Mapped[list["Equipa"]] = relationship(back_populates="liga")
     jogos: Mapped[list["Jogo"]] = relationship(back_populates="liga")
@@ -45,8 +45,8 @@ class Equipa(Base):
     nome: Mapped[str] = mapped_column(String(150), nullable=False)
     liga_id: Mapped[int] = mapped_column(ForeignKey("ligas.id"), nullable=False)
     # Nullable: a ingestão football-data.co.uk cria equipas sem este id;
-    # é preenchido quando a ingestão API-Football as reconcilia por alias.
-    api_football_id: Mapped[int | None] = mapped_column(Integer, unique=True)
+    # é preenchido quando a ingestão Sportmonks as reconcilia por alias.
+    sportmonks_id: Mapped[int | None] = mapped_column(Integer, unique=True)
 
     liga: Mapped[Liga] = relationship(back_populates="equipas")
     aliases: Mapped[list["EquipaAlias"]] = relationship(back_populates="equipa")
@@ -59,7 +59,7 @@ class Equipa(Base):
 class EquipaAlias(Base):
     """Nomes alternativos para a mesma equipa, usados por diferentes fontes.
 
-    Ex.: "Manchester United" (API-Football) ↔ "Man United" (football-data.co.uk).
+    Ex.: "Manchester United" (Sportmonks) ↔ "Man United" (football-data.co.uk).
     """
 
     __tablename__ = "equipa_aliases"
@@ -67,7 +67,7 @@ class EquipaAlias(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     equipa_id: Mapped[int] = mapped_column(ForeignKey("equipas.id"), nullable=False, index=True)
     alias: Mapped[str] = mapped_column(String(150), nullable=False)
-    fonte: Mapped[str] = mapped_column(String(30), nullable=False)  # api_football | football_data
+    fonte: Mapped[str] = mapped_column(String(30), nullable=False)  # sportmonks | football_data
 
     equipa: Mapped[Equipa] = relationship(back_populates="aliases")
 
@@ -80,7 +80,9 @@ class Jogo(Base):
     __tablename__ = "jogos"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    api_football_id: Mapped[int] = mapped_column(
+    # ID vindo da fonte externa que ingeriu o jogo (Sportmonks ou chave
+    # sintética do football-data.co.uk — ver `_chave_jogo_fd`).
+    id_externo: Mapped[int] = mapped_column(
         Integer, nullable=False, unique=True, index=True
     )
     liga_id: Mapped[int] = mapped_column(ForeignKey("ligas.id"), nullable=False)
