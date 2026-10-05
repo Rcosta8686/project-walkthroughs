@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from apostas.ingestao import football_data_uk, ligas_equipas  # noqa: E402
+from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas  # noqa: E402
 from apostas.utils.config import get_env  # noqa: E402
 from apostas.utils.db import criar_schema  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
@@ -50,20 +50,30 @@ def main() -> None:
         f"{res_lf.equipas_existentes} já existentes."
     )
 
-    # 2) Jogos e odds de fecho via football-data.co.uk (grátis)
+    # 2) Jogos + estatísticas (remates, cantos, cartões) via Sportmonks
+    res_sm = jogos_sportmonks.sincronizar(epocas_atras=2)
+    print(
+        f"✓ Jogos (Sportmonks): {res_sm.jogos_criados} novos, "
+        f"{res_sm.jogos_existentes} já existentes, "
+        f"{res_sm.stats_criados} estatísticas criadas."
+    )
+    if res_sm.equipas_em_falta:
+        print(
+            f"  ⚠ {res_sm.equipas_em_falta} fixtures ignorados por equipas em falta na BD."
+        )
+    for erro in res_sm.erros:
+        print(f"⚠ {erro}")
+
+    # 3) Odds de fecho históricas via football-data.co.uk (grátis)
     res_fd = football_data_uk.sincronizar(epocas=[2023, 2024])
     print(
-        f"✓ Jogos: {res_fd.jogos_criados} novos, "
-        f"{res_fd.jogos_existentes} já existentes."
-    )
-    print(
-        f"✓ Odds: {res_fd.odds_criadas} novas, "
+        f"✓ Odds (football-data): {res_fd.odds_criadas} novas, "
         f"{res_fd.odds_existentes} já existentes."
     )
-    if res_fd.equipas_criadas:
+    if res_fd.jogos_criados:
         print(
-            f"  (criadas {res_fd.equipas_criadas} equipas adicionais com "
-            "nomes do football-data — serão reconciliadas depois)"
+            f"  (criados {res_fd.jogos_criados} jogos adicionais do football-data; "
+            "estes têm odds mas podem não ter stats detalhadas)"
         )
     for erro in res_fd.erros:
         print(f"⚠ {erro}")
