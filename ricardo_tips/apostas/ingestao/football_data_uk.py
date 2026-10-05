@@ -23,7 +23,7 @@ from apostas.ingestao import aliases as _aliases
 from apostas.utils.config import get_env, project_root
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
-from apostas.utils.schema import Equipa, EquipaAlias, Jogo, Liga, OddsFecho
+from apostas.utils.schema import Equipa, EquipaAlias, EstatisticasJogo, Jogo, Liga, OddsFecho
 
 log = get_logger(__name__)
 
@@ -47,6 +47,8 @@ class ResultadoIngestaoFD:
     odds_criadas: int = 0
     odds_existentes: int = 0
     equipas_criadas: int = 0
+    stats_criados: int = 0
+    stats_atualizados: int = 0
     erros: list[str] = field(default_factory=list)
 
 
@@ -229,11 +231,14 @@ def sincronizar(
                 _processar_dataframe(s, df, liga, epoca, resultado)
 
     log.info(
-        "football-data: %d jogos (%d novos), %d odds (%d novas), %d equipas novas, %d erros",
+        "football-data: %d jogos (%d novos), %d odds (%d novas), "
+        "%d stats criadas, %d stats atualizadas, %d equipas novas, %d erros",
         resultado.jogos_criados + resultado.jogos_existentes,
         resultado.jogos_criados,
         resultado.odds_criadas + resultado.odds_existentes,
         resultado.odds_criadas,
+        resultado.stats_criados,
+        resultado.stats_atualizados,
         resultado.equipas_criadas,
         len(resultado.erros),
     )
@@ -249,6 +254,7 @@ def _processar_dataframe(
 
         jogo = _get_or_create_jogo(s, liga, epoca, row, casa, fora, resultado)
         _inserir_odds(s, jogo, row, resultado)
+        _upsert_estatisticas(s, jogo, row, casa.id, fora.id, resultado)
 
 
 def _get_or_create_jogo(
@@ -297,6 +303,80 @@ def _get_or_create_jogo(
     s.flush()
     resultado.jogos_criados += 1
     return jogo
+
+
+def _upsert_estatisticas(
+    s, jogo: Jogo, row, casa_id: int, fora_id: int,
+    resultado: ResultadoIngestaoFD,
+) -> None:
+    """Grava remates/cantos/cartões/faltas por equipa, se o CSV tiver essas colunas.
+
+    Nem todas as épocas antigas do football-data têm estes dados — o parser
+    é tolerante: se a coluna não existir, salta.
+    """
+    valores_casa = _valores_estatisticas(row, lado="H")
+    valores_fora = _valores_estatisticas(row, lado="A")
+
+    for equipa_id, valores in ((casa_id, valores_casa), (fora_id, valores_fora)):
+        if not valores:
+            continue
+        existente = s.scalar(
+            select(EstatisticasJogo).where(
+                EstatisticasJogo.jogo_id == jogo.id,
+                EstatisticasJogo.equipa_id == equipa_id,
+            )
+        )
+        if existente is None:
+            s.add(EstatisticasJogo(jogo_id=jogo.id, equipa_id=equipa_id, **valores))
+            resultado.stats_criados += 1
+        else:
+            atualizou = False
+            for k, v in valores.items():
+                if getattr(existente, k) is None and v is not None:
+                    setattr(existente, k, v)
+                    atualizou = True
+            if atualizou:
+                resultado.stats_atualizados += 1
+
+
+# Mapeamento das colunas do football-data.co.uk → campos de EstatisticasJogo.
+# Prefixo "H" = casa, "A" = fora. S=shots, ST=shots on target, C=corners,
+# F=fouls, Y=yellow cards, R=red cards.
+_COLUNAS_STATS = {
+    "H": {
+        "remates": "HS",
+        "remates_a_baliza": "HST",
+        "cantos": "HC",
+        "faltas": "HF",
+        "cartoes_amarelos": "HY",
+        "cartoes_vermelhos": "HR",
+    },
+    "A": {
+        "remates": "AS",
+        "remates_a_baliza": "AST",
+        "cantos": "AC",
+        "faltas": "AF",
+        "cartoes_amarelos": "AY",
+        "cartoes_vermelhos": "AR",
+    },
+}
+
+
+def _valores_estatisticas(row, lado: str) -> dict:
+    """Devolve o dict pronto para passar ao construtor de EstatisticasJogo."""
+    mapeamento = _COLUNAS_STATS[lado]
+    valores: dict = {}
+    for campo, coluna in mapeamento.items():
+        if coluna not in row.index:
+            continue
+        valor = row[coluna]
+        if pd.isna(valor):
+            continue
+        try:
+            valores[campo] = int(valor)
+        except (TypeError, ValueError):
+            continue
+    return valores
 
 
 def _chave_jogo_fd(liga_id: int, data: datetime, casa_id: int, fora_id: int) -> int:

@@ -85,3 +85,21 @@ def test_sincronizar_e_idempotente(bd_com_ligas):
     assert segundo.jogos_criados == 0
     assert segundo.jogos_existentes == primeiro.jogos_criados
     assert segundo.odds_criadas == 0
+    assert segundo.stats_criados == 0
+
+
+def test_sincronizar_grava_estatisticas_do_csv(bd_com_ligas):
+    """O CSV sintético (como o real) tem HS/HC/HY etc.; devem ser lidos."""
+    from apostas.utils.schema import EstatisticasJogo
+    from sqlalchemy import func
+
+    res = football_data_uk.sincronizar(epocas=[2023])
+    assert res.stats_criados > 0
+    with db_mod.abrir_sessao() as s:
+        total = s.scalar(select(func.count(EstatisticasJogo.id)))
+        assert total > 0
+        # Verificar que remates e cantos ficaram lá
+        amostra = s.scalars(select(EstatisticasJogo).limit(5)).all()
+        for st in amostra:
+            assert st.remates is not None
+            assert st.cantos is not None

@@ -64,16 +64,19 @@ def main() -> None:
     for erro in res_sm.erros:
         print(f"⚠ {erro}")
 
-    # 3) Odds de fecho históricas via football-data.co.uk (grátis)
+    # 3) Odds de fecho + remates/cantos/cartões via football-data.co.uk (grátis)
     res_fd = football_data_uk.sincronizar(epocas=[2023, 2024])
     print(
         f"✓ Odds (football-data): {res_fd.odds_criadas} novas, "
         f"{res_fd.odds_existentes} já existentes."
     )
+    print(
+        f"✓ Estatísticas (football-data): {res_fd.stats_criados} criadas, "
+        f"{res_fd.stats_atualizados} atualizadas."
+    )
     if res_fd.jogos_criados:
         print(
-            f"  (criados {res_fd.jogos_criados} jogos adicionais do football-data; "
-            "estes têm odds mas podem não ter stats detalhadas)"
+            f"  (criados {res_fd.jogos_criados} jogos adicionais do football-data)"
         )
     for erro in res_fd.erros:
         print(f"⚠ {erro}")
