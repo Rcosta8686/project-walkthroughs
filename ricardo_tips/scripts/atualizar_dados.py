@@ -21,21 +21,36 @@ MODO no .env — ver .env.example.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas  # noqa: E402
-from apostas.utils.config import get_env  # noqa: E402
+from apostas.utils.config import get_env, load_config  # noqa: E402
 from apostas.utils.db import criar_schema  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 
 log = get_logger(__name__)
 
 
+def _epocas_a_puxar(n_anteriores: int = 2) -> list[int]:
+    """Devolve [época_atual - n_anteriores, ..., época_atual].
+
+    Convenção: época 2026 = temporada 2026/27 (começa em agosto 2026).
+    Se hoje é antes de agosto, a época atual é o ano - 1.
+    """
+    hoje = datetime.utcnow()
+    epoca_atual = hoje.year if hoje.month >= 7 else hoje.year - 1
+    return list(range(epoca_atual - n_anteriores, epoca_atual + 1))
+
+
 def main() -> None:
     modo = get_env("MODO", "desenvolvimento")
-    log.info("A correr em modo: %s", modo)
+    cfg = load_config()
+    n_prev = int(cfg.get("modelo", {}).get("epocas_treino", 3)) - 1
+    epocas = _epocas_a_puxar(n_anteriores=n_prev)
+    log.info("A correr em modo: %s · épocas a puxar: %s", modo, epocas)
 
     criar_schema()
 
@@ -65,7 +80,7 @@ def main() -> None:
         print(f"⚠ {erro}")
 
     # 3) Odds de fecho + remates/cantos/cartões via football-data.co.uk (grátis)
-    res_fd = football_data_uk.sincronizar(epocas=[2023, 2024])
+    res_fd = football_data_uk.sincronizar(epocas=epocas)
     print(
         f"✓ Odds (football-data): {res_fd.odds_criadas} novas, "
         f"{res_fd.odds_existentes} já existentes."
