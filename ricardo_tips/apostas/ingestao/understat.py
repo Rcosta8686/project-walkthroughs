@@ -45,6 +45,10 @@ LIGAS_UNDERSTAT = {
 
 _BASE_URL = "https://understat.com/league"
 _PAD_HTML_RE = re.compile(r"var\s+(\w+)\s*=\s*JSON\.parse\('([^']+)'\)")
+# Nomes possíveis do array de jogos no HTML da Understat.
+# Na página de liga chama-se "datesData"; nos mocks e algumas páginas antigas
+# "matchesData". Aceitamos os dois.
+_NOMES_MATCHES = {"datesData", "matchesData"}
 
 
 @dataclass
@@ -78,33 +82,72 @@ def _obter_html(liga: str, ano: int, modo: str) -> str:
 
 
 def _parse_matches_json(html: str) -> list[dict]:
-    """Extrai o array `matchesData` do HTML da Understat."""
+    """Extrai o array de jogos (datesData/matchesData) do HTML da Understat."""
+    encontrados = []
     for nome, valor_escapado in _PAD_HTML_RE.findall(html):
-        if nome != "matchesData":
+        if nome not in _NOMES_MATCHES:
             continue
+        encontrados.append(nome)
         # Understat escapa com \x{HH} notation
         decoded = valor_escapado.encode("utf-8").decode("unicode_escape")
         try:
             return json.loads(decoded)
         except json.JSONDecodeError as exc:
-            log.warning("Falha a parsear matchesData: %s", exc)
+            log.warning("Falha a parsear %s: %s", nome, exc)
             return []
+    if not encontrados:
+        log.warning(
+            "HTML Understat sem bloco datesData/matchesData "
+            "(estrutura da página mudou?)"
+        )
     return []
 
 
 _CACHE_ALIAS_UNDERSTAT = {
-    # Nome Understat → nome canónico (Sportmonks). Poucos casos específicos.
-    "Manchester United": "Manchester United",
-    "Manchester City": "Manchester City",
+    # Nome Understat → nome canónico (como aparece na BD vindo do football-data).
+    # Pedir ao utilizador os que faltarem (ver output "equipas sem match").
+
+    # Premier League
     "Newcastle United": "Newcastle",
-    "Paris Saint Germain": "Paris Saint Germain",
-    "Atletico Madrid": "Atletico Madrid",
-    "Real Sociedad": "Real Sociedad",
-    "Betis": "Real Betis",
-    "Athletic Club": "Athletic Club",
+    "Tottenham": "Tottenham",
+    "Wolverhampton Wanderers": "Wolves",
+    "Nottingham Forest": "Nott'm Forest",
+    "Brighton": "Brighton",
+    "Leicester": "Leicester",
+    "Sheffield United": "Sheffield United",
+    "Bournemouth": "Bournemouth",
+
+    # La Liga
+    "Real Betis": "Betis",
+    "Athletic Club": "Ath Bilbao",
+    "Atletico Madrid": "Ath Madrid",
+    "Real Sociedad": "Sociedad",
+    "Celta Vigo": "Celta",
+    "Deportivo Alaves": "Alaves",
+
+    # Serie A
+    "AC Milan": "Milan",
+    "AS Roma": "Roma",
+    "Hellas Verona": "Verona",
+
+    # Bundesliga
     "RasenBallsport Leipzig": "RB Leipzig",
-    "Eintracht Frankfurt": "Eintracht Frankfurt",
-    "Freiburg": "SC Freiburg",
+    "Bayer Leverkusen": "Leverkusen",
+    "Borussia Dortmund": "Dortmund",
+    "Borussia M.Gladbach": "M'gladbach",
+    "Eintracht Frankfurt": "Ein Frankfurt",
+    "SC Freiburg": "Freiburg",
+    "VfL Wolfsburg": "Wolfsburg",
+    "FC Koeln": "FC Koln",
+
+    # Ligue 1
+    "Paris Saint Germain": "Paris SG",
+    "Olympique Marseille": "Marseille",
+    "Olympique Lyonnais": "Lyon",
+    "Stade Rennais": "Rennes",
+    "AS Saint-Etienne": "St Etienne",
+    "Clermont Foot": "Clermont",
+    "RC Lens": "Lens",
 }
 
 

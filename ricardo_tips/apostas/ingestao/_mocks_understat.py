@@ -47,12 +47,14 @@ def gerar_html(liga_slug: str, ano: int) -> str:
     payload = json.dumps(matches)
     # Simula o escape single-quote style do Understat
     escaped = payload.replace("\\", "\\\\").replace("'", "\\'")
+    # O Understat real embute os jogos num bloco `datesData` nas páginas
+    # de liga; a página de equipa usa `matchesData`. O parser aceita ambos.
     html = f"""<!DOCTYPE html>
 <html>
 <head><title>Understat mock</title></head>
 <body>
 <script>
-    var matchesData = JSON.parse('{escaped}');
+    var datesData = JSON.parse('{escaped}');
 </script>
 </body>
 </html>"""
