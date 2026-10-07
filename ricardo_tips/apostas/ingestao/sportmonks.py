@@ -55,7 +55,10 @@ class ClienteSportmonks:
         url = f"{_BASE_URL}{path}"
         log.info("GET %s params=%s", url, {k: v for k, v in params.items() if k != "api_token"})
         resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
+        if not resp.ok:
+            # Mascara o token em qualquer mensagem de erro antes de propagar
+            msg = f"HTTP {resp.status_code} em {path} (status: {resp.reason})"
+            raise requests.HTTPError(msg)
         return resp.json()
 
 
