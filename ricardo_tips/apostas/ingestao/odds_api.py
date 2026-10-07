@@ -1,0 +1,298 @@
+"""Ingestão de odds pré-jogo em tempo real via The Odds API.
+
+Documentação: https://the-odds-api.com/liveapi/guides/v4/
+
+Modelo de preços (plano FREE):
+  500 credits/mês. Cada chamada a /sports/{sport}/odds consome
+  (regions × markets) créditos. Com regions=eu + markets=h2h,totals =
+  2 créditos/sport × 6 ligas = 12 créditos por puxada diária →
+  ~41 puxadas/mês → mais que suficiente para 1x por dia.
+
+Guarda as odds em ``odds_correntes`` (não em ``odds_fecho``) porque
+mudam ao longo do tempo. A análise live prefere estas às históricas.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+import requests
+from sqlalchemy import select
+
+from apostas.ingestao import _mocks_odds_api
+from apostas.utils.config import get_env
+from apostas.utils.db import abrir_sessao
+from apostas.utils.logger import get_logger
+from apostas.utils.schema import Equipa, Jogo, Liga, OddsCorrentes
+
+log = get_logger(__name__)
+
+_BASE_URL = "https://api.the-odds-api.com/v4"
+
+# Mapeamento liga do config → chave de sport na Odds API
+LIGAS_ODDS_API = {
+    "Premier League": "soccer_epl",
+    "La Liga": "soccer_spain_la_liga",
+    "Serie A": "soccer_italy_serie_a",
+    "Bundesliga": "soccer_germany_bundesliga",
+    "Ligue 1": "soccer_france_ligue_one",
+    "Liga Portugal": "soccer_portugal_primeira_liga",
+}
+
+# Nomes vindos da Odds API → nomes como estão no football-data (BD)
+_ALIAS_ODDS_API = {
+    # EPL
+    "Manchester United": "Man United",
+    "Manchester City": "Man City",
+    "Newcastle United": "Newcastle",
+    "Nottingham Forest": "Nott'm Forest",
+    "Wolverhampton Wanderers": "Wolves",
+    "Tottenham Hotspur": "Tottenham",
+    "Brighton and Hove Albion": "Brighton",
+    "West Ham United": "West Ham",
+    "Leicester City": "Leicester",
+    # La Liga
+    "Paris Saint-Germain": "Paris SG",
+    "Atlético Madrid": "Ath Madrid",
+    "Athletic Club": "Ath Bilbao",
+    "Real Sociedad": "Sociedad",
+    "Real Betis": "Betis",
+    "Celta de Vigo": "Celta",
+    "Rayo Vallecano": "Vallecano",
+    # Serie A
+    "AC Milan": "Milan",
+    "AS Roma": "Roma",
+    "Hellas Verona": "Verona",
+    # Bundesliga
+    "Bayern München": "Bayern Munich",
+    "Borussia Dortmund": "Dortmund",
+    "Bayer Leverkusen": "Leverkusen",
+    "Eintracht Frankfurt": "Ein Frankfurt",
+    "Borussia Mönchengladbach": "M'gladbach",
+    "VfL Wolfsburg": "Wolfsburg",
+    "1. FC Köln": "FC Koln",
+    "SC Freiburg": "Freiburg",
+    # Ligue 1
+    "Olympique Marseille": "Marseille",
+    "Olympique Lyonnais": "Lyon",
+    "AS Saint-Étienne": "St Etienne",
+    "Stade Rennais": "Rennes",
+    # Liga Portugal
+    "FC Porto": "FC Porto",
+    "SL Benfica": "Benfica",
+    "Sporting CP": "Sp Lisbon",
+    "SC Braga": "Braga",
+    "Vitória SC": "Guimaraes",
+}
+
+
+@dataclass
+class ResultadoOddsApi:
+    jogos_atualizados: int = 0
+    odds_criadas: int = 0
+    odds_atualizadas: int = 0
+    jogos_sem_match: int = 0
+    equipas_sem_match: set = field(default_factory=set)
+    erros: list[str] = field(default_factory=list)
+    credits_restantes: int | None = None
+
+
+def sincronizar(
+    bookmakers: str = "pinnacle",
+    regions: str = "eu",
+    modo: str | None = None,
+) -> ResultadoOddsApi:
+    """Puxa odds de pré-jogo para as ligas configuradas e grava em odds_correntes."""
+    modo = modo or (get_env("MODO", "desenvolvimento") or "desenvolvimento").lower()
+    resultado = ResultadoOddsApi()
+
+    with abrir_sessao() as s:
+        for nome_liga, sport_key in LIGAS_ODDS_API.items():
+            liga = s.scalar(select(Liga).where(Liga.nome == nome_liga))
+            if liga is None:
+                resultado.erros.append(f"Liga '{nome_liga}' não existe na BD.")
+                continue
+            try:
+                jogos = _puxar_odds_sport(sport_key, bookmakers, regions, modo, resultado)
+            except Exception as exc:  # noqa: BLE001
+                resultado.erros.append(f"{nome_liga}: {exc}")
+                continue
+            for jogo_json in jogos:
+                _processar_jogo(s, jogo_json, liga, resultado)
+
+    log.info(
+        "The Odds API: %d jogos com odds novas/actualizadas, %d sem match, %d equipas sem match. "
+        "Credits restantes: %s",
+        resultado.jogos_atualizados, resultado.jogos_sem_match,
+        len(resultado.equipas_sem_match),
+        resultado.credits_restantes,
+    )
+    return resultado
+
+
+def _puxar_odds_sport(
+    sport: str, bookmakers: str, regions: str, modo: str,
+    resultado: ResultadoOddsApi,
+) -> list[dict]:
+    if modo == "desenvolvimento":
+        return _mocks_odds_api.jogos_sport(sport)
+
+    key = get_env("ODDS_API_KEY", required=True)
+    url = f"{_BASE_URL}/sports/{sport}/odds"
+    params = {
+        "apiKey": key,
+        "regions": regions,
+        "markets": "h2h,totals",
+        "oddsFormat": "decimal",
+        "bookmakers": bookmakers,
+    }
+    log.info("GET %s/sports/%s/odds (bookmakers=%s)", _BASE_URL, sport, bookmakers)
+    resp = requests.get(url, params=params, timeout=30)
+    if not resp.ok:
+        raise requests.HTTPError(f"HTTP {resp.status_code} em /sports/{sport}/odds")
+
+    # Guarda créditos restantes (vem no header)
+    requests_remaining = resp.headers.get("x-requests-remaining")
+    if requests_remaining is not None:
+        try:
+            resultado.credits_restantes = int(requests_remaining)
+        except ValueError:
+            pass
+
+    return resp.json()
+
+
+def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi) -> None:
+    nome_casa = _canoniza(jogo_json.get("home_team", ""))
+    nome_fora = _canoniza(jogo_json.get("away_team", ""))
+    data_str = jogo_json.get("commence_time")
+    if not nome_casa or not nome_fora or not data_str:
+        return
+
+    casa = s.scalar(
+        select(Equipa).where(Equipa.nome == nome_casa, Equipa.liga_id == liga.id)
+    )
+    fora = s.scalar(
+        select(Equipa).where(Equipa.nome == nome_fora, Equipa.liga_id == liga.id)
+    )
+    if casa is None:
+        resultado.equipas_sem_match.add(jogo_json.get("home_team", ""))
+        return
+    if fora is None:
+        resultado.equipas_sem_match.add(jogo_json.get("away_team", ""))
+        return
+
+    data = _parse_commence_time(data_str)
+    if data is None:
+        return
+
+    # Procurar jogo (±36h)
+    inicio = data - timedelta(hours=36)
+    fim = data + timedelta(hours=36)
+    jogo = s.scalar(
+        select(Jogo).where(
+            Jogo.liga_id == liga.id,
+            Jogo.casa_id == casa.id,
+            Jogo.fora_id == fora.id,
+            Jogo.data_utc >= inicio,
+            Jogo.data_utc <= fim,
+        )
+    )
+    if jogo is None:
+        resultado.jogos_sem_match += 1
+        return
+
+    bookmakers = jogo_json.get("bookmakers", [])
+    atualizou = False
+    for bm in bookmakers:
+        casa_apostas = bm.get("key", "unknown")
+        for mercado in bm.get("markets", []):
+            if _grava_mercado(s, jogo, mercado, casa_apostas, nome_casa, nome_fora, resultado):
+                atualizou = True
+    if atualizou:
+        resultado.jogos_atualizados += 1
+
+
+def _grava_mercado(
+    s, jogo: Jogo, mercado: dict, casa_apostas: str,
+    nome_casa: str, nome_fora: str, resultado: ResultadoOddsApi,
+) -> bool:
+    tipo = mercado.get("key")
+    outcomes = mercado.get("outcomes", [])
+    atualizou = False
+
+    if tipo == "h2h":
+        # Resultado final (1X2)
+        for o in outcomes:
+            lado = _lado_1x2(o.get("name"), nome_casa, nome_fora)
+            if lado is None:
+                continue
+            if _upsert_odd(s, jogo.id, "1x2", None, lado, float(o["price"]), casa_apostas, resultado):
+                atualizou = True
+
+    elif tipo == "totals":
+        # Over/Under golos
+        for o in outcomes:
+            nome = (o.get("name") or "").lower()
+            if nome not in ("over", "under"):
+                continue
+            linha = float(o.get("point", 2.5))
+            if _upsert_odd(s, jogo.id, "golos", linha, nome, float(o["price"]), casa_apostas, resultado):
+                atualizou = True
+    return atualizou
+
+
+def _upsert_odd(
+    s, jogo_id: int, tipo: str, linha: float | None, lado: str,
+    odd: float, casa_apostas: str, resultado: ResultadoOddsApi,
+) -> bool:
+    existente = s.scalar(
+        select(OddsCorrentes).where(
+            OddsCorrentes.jogo_id == jogo_id,
+            OddsCorrentes.mercado == tipo,
+            OddsCorrentes.linha == linha,
+            OddsCorrentes.lado == lado,
+            OddsCorrentes.casa_de_apostas == casa_apostas,
+        )
+    )
+    if existente is None:
+        s.add(OddsCorrentes(
+            jogo_id=jogo_id, mercado=tipo, linha=linha, lado=lado,
+            odd=odd, casa_de_apostas=casa_apostas,
+        ))
+        resultado.odds_criadas += 1
+        return True
+    # Actualiza se o preço mudou significativamente (>0.5%)
+    if abs(existente.odd - odd) / existente.odd > 0.005:
+        existente.odd = odd
+        existente.timestamp = datetime.utcnow()
+        resultado.odds_atualizadas += 1
+        return True
+    return False
+
+
+def _lado_1x2(nome: str | None, nome_casa: str, nome_fora: str) -> str | None:
+    if nome is None:
+        return None
+    nome_lower = nome.lower()
+    if nome_lower == "draw":
+        return "empate"
+    if nome == nome_casa or _canoniza(nome) == nome_casa:
+        return "casa"
+    if nome == nome_fora or _canoniza(nome) == nome_fora:
+        return "fora"
+    return None
+
+
+def _canoniza(nome_odds_api: str) -> str:
+    return _ALIAS_ODDS_API.get(nome_odds_api, nome_odds_api)
+
+
+def _parse_commence_time(s: str) -> datetime | None:
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None

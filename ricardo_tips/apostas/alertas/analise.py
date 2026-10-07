@@ -22,7 +22,7 @@ from apostas.modelos.value import ev as calcular_ev
 from apostas.utils.config import load_config
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
-from apostas.utils.schema import Equipa, Jogo, Liga, OddsFecho, Sugestao
+from apostas.utils.schema import Equipa, Jogo, Liga, OddsCorrentes, OddsFecho, Sugestao
 
 log = get_logger(__name__)
 
@@ -139,6 +139,19 @@ def sugestoes_na_janela(
 def _odd_referencia(
     s, jogo_id: int, linha: float, lado: str, casa: str
 ) -> float | None:
+    """Prefere odds correntes (The Odds API) às de fecho históricas."""
+    corrente = s.scalar(
+        select(OddsCorrentes).where(
+            OddsCorrentes.jogo_id == jogo_id,
+            OddsCorrentes.mercado == "golos",
+            OddsCorrentes.linha == linha,
+            OddsCorrentes.lado == lado,
+            OddsCorrentes.casa_de_apostas == "pinnacle",
+        ).order_by(OddsCorrentes.timestamp.desc())
+    )
+    if corrente is not None:
+        return corrente.odd
+
     o = s.scalar(
         select(OddsFecho).where(
             OddsFecho.jogo_id == jogo_id,

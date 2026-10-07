@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from apostas.ingestao import football_data_uk, ligas_equipas, understat  # noqa: E402
+from apostas.ingestao import football_data_uk, ligas_equipas, odds_api, understat  # noqa: E402
 from apostas.utils.config import get_env, load_config  # noqa: E402
 from apostas.utils.db import criar_schema  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
@@ -87,6 +87,24 @@ def main() -> None:
         print(f"  Equipas Understat sem match: {sorted(res_us.equipas_sem_match)[:10]}")
     for erro in res_us.erros:
         print(f"⚠ Understat: {erro}")
+
+    # 4) Odds pré-jogo em tempo real via The Odds API (opcional — só corre
+    # se ODDS_API_KEY estiver definido no .env)
+    if get_env("ODDS_API_KEY"):
+        res_oa = odds_api.sincronizar()
+        print(
+            f"✓ Odds correntes (The Odds API): {res_oa.odds_criadas} novas, "
+            f"{res_oa.odds_atualizadas} atualizadas, "
+            f"{res_oa.jogos_sem_match} jogos sem match."
+        )
+        if res_oa.credits_restantes is not None:
+            print(f"  Credits Odds API restantes este mês: {res_oa.credits_restantes}")
+        if res_oa.equipas_sem_match:
+            print(f"  Equipas Odds API sem match: {sorted(res_oa.equipas_sem_match)[:10]}")
+        for erro in res_oa.erros:
+            print(f"⚠ Odds API: {erro}")
+    else:
+        print("  (The Odds API: desactivado — define ODDS_API_KEY no .env para activar)")
 
 
 if __name__ == "__main__":
