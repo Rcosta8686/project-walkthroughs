@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from apostas.ingestao import understat, ligas_equipas
-from apostas.ingestao.sportmonks import cliente
+# removed: Sportmonks import
 from apostas.modelos.gap import JogoHistoricoGAP, ModeloGAP
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
@@ -74,7 +74,7 @@ def bd_com_ligas(tmp_path, monkeypatch):
     monkeypatch.setenv("MODO", "desenvolvimento")
     db_mod.reset_engine()
     db_mod.criar_schema()
-    ligas_equipas.sincronizar(cli=cliente(modo="desenvolvimento"))
+    ligas_equipas.sincronizar()
     yield bd
     db_mod.reset_engine()
 

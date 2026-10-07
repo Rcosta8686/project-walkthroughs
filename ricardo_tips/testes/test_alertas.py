@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from apostas.alertas import analise, bot, estado, mensagens, telegram_cliente
-from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas
-from apostas.ingestao.sportmonks import cliente as sportmonks_cliente
+from apostas.ingestao import football_data_uk, ligas_equipas
+# removed: Sportmonks import as sportmonks_cliente
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
 from apostas.utils.schema import ApostaReal, Equipa, Jogo, Liga, Sugestao
@@ -90,8 +90,7 @@ def bd_populada(tmp_path, monkeypatch):
     monkeypatch.setenv("MODO", "desenvolvimento")
     db_mod.reset_engine()
     db_mod.criar_schema()
-    ligas_equipas.sincronizar(cli=sportmonks_cliente(modo="desenvolvimento"))
-    jogos_sportmonks.sincronizar(epocas_atras=2)
+    ligas_equipas.sincronizar()
     football_data_uk.sincronizar(epocas=[2023, 2024])
     # Marca os jogos de 2024 como "agendados" para a análise live os ver
     with db_mod.abrir_sessao() as s:

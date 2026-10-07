@@ -9,8 +9,8 @@ import pytest
 from apostas.backtest import walk_forward
 from apostas.backtest.walk_forward import ApostaSimulada, RelatorioBacktest
 from apostas.dashboard import gerador
-from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas
-from apostas.ingestao.sportmonks import cliente
+from apostas.ingestao import football_data_uk, ligas_equipas
+# removed: Sportmonks import
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
 
@@ -72,8 +72,7 @@ def bd_populada(tmp_path, monkeypatch):
     monkeypatch.setenv("MODO", "desenvolvimento")
     db_mod.reset_engine()
     db_mod.criar_schema()
-    ligas_equipas.sincronizar(cli=cliente(modo="desenvolvimento"))
-    jogos_sportmonks.sincronizar(epocas_atras=2)
+    ligas_equipas.sincronizar()
     football_data_uk.sincronizar(epocas=[2023, 2024])
     yield bd
     db_mod.reset_engine()

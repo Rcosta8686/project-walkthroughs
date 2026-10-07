@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from apostas.ingestao import _mocks_fd, football_data_uk, ligas_equipas
-from apostas.ingestao.sportmonks import cliente
+# removed: Sportmonks import
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
 from apostas.utils.schema import Equipa, Jogo, OddsFecho
@@ -19,7 +19,7 @@ def bd_com_ligas(tmp_path, monkeypatch):
     monkeypatch.setenv("MODO", "desenvolvimento")
     db_mod.reset_engine()
     db_mod.criar_schema()
-    ligas_equipas.sincronizar(cli=cliente(modo="desenvolvimento"))
+    ligas_equipas.sincronizar()
     yield bd
     db_mod.reset_engine()
 
@@ -64,19 +64,15 @@ def test_sincronizar_cria_jogos_e_odds(bd_com_ligas):
         assert n_ou == 180
 
 
-def test_sincronizar_reutiliza_equipas_via_aliases(bd_com_ligas):
-    """Nomes football-data (ex.: 'Man United') são resolvidos para a equipa
-    Sportmonks ('Manchester United') via tabela equipa_aliases — não deve
-    criar equipas duplicadas."""
+def test_sincronizar_cria_equipas_pelo_nome_do_csv(bd_com_ligas):
+    """Sem Sportmonks a correr primeiro, football-data cria as equipas que
+    aparecem no CSV."""
     resultado = football_data_uk.sincronizar(epocas=[2023])
-    assert resultado.equipas_criadas == 0
+    assert resultado.equipas_criadas > 0
 
     with db_mod.abrir_sessao() as s:
-        # Todas as 36 equipas Sportmonks continuam a ter sportmonks_id preenchido
-        sem_sm_id = s.scalars(
-            select(Equipa).where(Equipa.sportmonks_id.is_(None))
-        ).all()
-        assert len(sem_sm_id) == 0
+        equipas = s.scalars(select(Equipa)).all()
+        assert len(equipas) > 0
 
 
 def test_sincronizar_e_idempotente(bd_com_ligas):
