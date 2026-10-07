@@ -117,6 +117,10 @@ class EstatisticasJogo(Base):
     cartoes_amarelos: Mapped[int | None] = mapped_column(Integer)
     cartoes_vermelhos: Mapped[int | None] = mapped_column(Integer)
     faltas: Mapped[int | None] = mapped_column(Integer)
+    # Expected Goals (xG) do Understat — sinal muito melhor que shot counts
+    xg: Mapped[float | None] = mapped_column(Float)
+    # Expected Goals Against — xG do adversário neste jogo
+    xga: Mapped[float | None] = mapped_column(Float)
 
     __table_args__ = (
         UniqueConstraint("jogo_id", "equipa_id", name="uq_stats_jogo_equipa"),

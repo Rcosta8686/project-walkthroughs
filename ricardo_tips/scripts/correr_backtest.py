@@ -83,6 +83,12 @@ def main() -> None:
         help="Peso dos cantos vs remates no modelo GAP (0..1)",
     )
     parser.add_argument(
+        "--metrica",
+        choices=("shots_corners", "xg"),
+        default="shots_corners",
+        help="Métrica do GAP: shots_corners (football-data) ou xg (Understat).",
+    )
+    parser.add_argument(
         "--rho",
         type=float,
         default=0.1,
@@ -112,6 +118,7 @@ def main() -> None:
             meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
             peso_cantos=args.peso_cantos,
             rho_dixon_coles=args.rho,
+            metrica_gap=args.metrica,
         )
         print(fmt.formatar(rel))
         relatorios.append(rel)

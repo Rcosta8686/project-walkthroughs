@@ -44,6 +44,8 @@ class JogoHistoricoGAP:
     cantos_fora: int
     golos_casa: int
     golos_fora: int
+    xg_casa: float | None = None
+    xg_fora: float | None = None
 
 
 @dataclass
@@ -82,18 +84,33 @@ class ModeloGAP:
         prior_jogos: int = 3,
         rho_dixon_coles: float = 0.0,
         shrinkage_threshold: int = 5,
+        metrica: str = "shots_corners",  # ou "xg"
     ):
+        if metrica not in {"shots_corners", "xg"}:
+            raise ValueError(f"Métrica desconhecida: {metrica}")
         self.meia_vida_dias = meia_vida_dias
         self.peso_cantos = peso_cantos
         self.prior_jogos = prior_jogos
         self.rho_dixon_coles = rho_dixon_coles
         self.shrinkage_threshold = shrinkage_threshold
+        self.metrica = metrica
         self.parametros = ParametrosGAP(
             peso_cantos=peso_cantos, rho_dixon_coles=rho_dixon_coles,
         )
 
-    def _metrica(self, remates: int, cantos: int) -> float:
-        return remates + self.peso_cantos * cantos
+    def _metrica_casa(self, j: "JogoHistoricoGAP") -> float:
+        if self.metrica == "xg":
+            if j.xg_casa is None:
+                return 0.0
+            return float(j.xg_casa)
+        return j.remates_casa + self.peso_cantos * j.cantos_casa
+
+    def _metrica_fora(self, j: "JogoHistoricoGAP") -> float:
+        if self.metrica == "xg":
+            if j.xg_fora is None:
+                return 0.0
+            return float(j.xg_fora)
+        return j.remates_fora + self.peso_cantos * j.cantos_fora
 
     # ─── Fit ──────────────────────────────────────────────────────────
     def fit(
@@ -119,9 +136,17 @@ class ModeloGAP:
         total_golos_fora_liga: dict[int, float] = defaultdict(float)
         peso_total_liga: dict[int, float] = defaultdict(float)
 
-        for j, w in zip(jogos, pesos):
-            atq_c = self._metrica(j.remates_casa, j.cantos_casa)
-            atq_f = self._metrica(j.remates_fora, j.cantos_fora)
+        # Se métrica=xg, filtra jogos que não têm xG (evita viés)
+        jogos_pesos = [
+            (j, w) for j, w in zip(jogos, pesos)
+            if self.metrica != "xg" or (j.xg_casa is not None and j.xg_fora is not None)
+        ]
+        if not jogos_pesos:
+            raise ValueError(f"Nenhum jogo com métrica '{self.metrica}' disponível.")
+
+        for j, w in jogos_pesos:
+            atq_c = self._metrica_casa(j)
+            atq_f = self._metrica_fora(j)
             total_atq_casa_liga[j.liga_id] += w * atq_c
             total_atq_fora_liga[j.liga_id] += w * atq_f
             total_golos_casa_liga[j.liga_id] += w * j.golos_casa
@@ -157,9 +182,9 @@ class ModeloGAP:
         peso_fora_equipa: dict[int, float] = defaultdict(float)
         liga_de: dict[int, int] = {}
 
-        for j, w in zip(jogos, pesos):
-            atq_c = self._metrica(j.remates_casa, j.cantos_casa)
-            atq_f = self._metrica(j.remates_fora, j.cantos_fora)
+        for j, w in jogos_pesos:
+            atq_c = self._metrica_casa(j)
+            atq_f = self._metrica_fora(j)
 
             liga_de.setdefault(j.casa_id, j.liga_id)
             liga_de.setdefault(j.fora_id, j.liga_id)

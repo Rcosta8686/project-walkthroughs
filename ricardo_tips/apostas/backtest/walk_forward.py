@@ -108,6 +108,7 @@ def correr(
     peso_cantos: float = 0.5,
     rho_dixon_coles: float = 0.0,
     mercado: str = "golos",
+    metrica_gap: str = "shots_corners",
 ) -> RelatorioBacktest:
     if modelo not in MODELOS_DISPONIVEIS:
         raise ValueError(
@@ -148,8 +149,13 @@ def correr(
             if len(historicos) < 10:
                 continue  # amostra pequena de mais
 
-            modelo_obj = _criar_modelo(modelo, meia_vida_dias, peso_cantos, rho_dixon_coles)
-            modelo_obj.fit(historicos, referencia=jogo.data_utc)
+            modelo_obj = _criar_modelo(
+                modelo, meia_vida_dias, peso_cantos, rho_dixon_coles, metrica_gap,
+            )
+            try:
+                modelo_obj.fit(historicos, referencia=jogo.data_utc)
+            except ValueError:
+                continue  # histórico insuficiente para esta métrica
 
             try:
                 p_over = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
@@ -204,7 +210,8 @@ def correr(
 
 
 def _criar_modelo(
-    modelo: str, meia_vida_dias: float, peso_cantos: float, rho_dixon_coles: float = 0.0,
+    modelo: str, meia_vida_dias: float, peso_cantos: float,
+    rho_dixon_coles: float = 0.0, metrica_gap: str = "shots_corners",
 ):
     if modelo == "poisson":
         return ModeloPoisson(meia_vida_dias=meia_vida_dias)
@@ -213,6 +220,7 @@ def _criar_modelo(
             meia_vida_dias=meia_vida_dias,
             peso_cantos=peso_cantos,
             rho_dixon_coles=rho_dixon_coles,
+            metrica=metrica_gap,
         )
     if modelo == "cantos":
         return ModeloCantos(meia_vida_dias=meia_vida_dias)
@@ -312,6 +320,8 @@ def _historicos_antes_de(s, data: datetime, liga_id: int, modelo: str) -> list:
                 cantos_fora=st_f.cantos or 0,
                 golos_casa=j.golos_casa,
                 golos_fora=j.golos_fora,
+                xg_casa=st_c.xg,
+                xg_fora=st_f.xg,
             )
         )
     return out

@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas  # noqa: E402
+from apostas.ingestao import football_data_uk, jogos_sportmonks, ligas_equipas, understat  # noqa: E402
 from apostas.utils.config import get_env, load_config  # noqa: E402
 from apostas.utils.db import criar_schema  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
@@ -95,6 +95,18 @@ def main() -> None:
         )
     for erro in res_fd.erros:
         print(f"⚠ {erro}")
+
+    # 4) xG via Understat (grátis, Top-5 ligas) — anota EstatisticasJogo
+    res_us = understat.sincronizar(epocas=epocas)
+    print(
+        f"✓ xG (Understat): {res_us.jogos_atualizados} jogos atualizados, "
+        f"{res_us.jogos_sem_match} sem match, "
+        f"{len(res_us.equipas_sem_match)} equipas sem match."
+    )
+    if res_us.equipas_sem_match:
+        print(f"  Equipas Understat sem match: {sorted(res_us.equipas_sem_match)[:5]}...")
+    for erro in res_us.erros:
+        print(f"⚠ Understat: {erro}")
 
 
 if __name__ == "__main__":
