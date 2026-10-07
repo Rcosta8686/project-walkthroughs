@@ -74,6 +74,8 @@ _COLUNAS = [
     "HS", "AS", "HST", "AST", "HC", "AC", "HY", "AY", "HR", "AR",
     "B365H", "B365D", "B365A",
     "B365>2.5", "B365<2.5",
+    "PSCH", "PSCD", "PSCA",
+    "PC>2.5", "PC<2.5",
     "AvgCH", "AvgCD", "AvgCA",
     "AvgC>2.5", "AvgC<2.5",
 ]
@@ -135,6 +137,12 @@ def gerar_csv(codigo_liga: str, epoca: int) -> str:
         o_u = round(ou_margem / p_under, 2)
         ao_c = round(1.03 / p_over, 2)
         au_c = round(1.03 / p_under, 2)
+        # Pinnacle closing — mais tight (margem 1.02)
+        pc_h = round(1.02 / probs[0], 2)
+        pc_d = round(1.02 / probs[1], 2)
+        pc_a = round(1.02 / probs[2], 2)
+        pc_o = round(1.02 / p_over, 2)
+        pc_u = round(1.02 / p_under, 2)
 
         # Mesma fórmula de datas que o mock Sportmonks (dia 1 de agosto + jornada*3 dias),
         # para que a reconciliação de jogos entre as duas fontes funcione.
@@ -148,6 +156,8 @@ def gerar_csv(codigo_liga: str, epoca: int) -> str:
             cantos_casa, cantos_fora, ca_casa, ca_fora, cv_casa, cv_fora,
             o_h, o_d, o_a,
             o_o, o_u,
+            pc_h, pc_d, pc_a,
+            pc_o, pc_u,
             ac_h, ac_d, ac_a,
             ao_c, au_c,
         ]))

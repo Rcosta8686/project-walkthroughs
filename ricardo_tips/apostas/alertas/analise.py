@@ -49,7 +49,7 @@ def identificar_sugestoes(
     ev_minimo = float(cfg["value_betting"]["ev_minimo"])
     linhas_cfg = cfg["mercados"]["golos"]["linhas"]
     lados_cfg = cfg["mercados"]["golos"]["lados"]
-    casa_ref = "Avg_Closing"
+    casa_ref = "Pinnacle_Closing"
     meia_vida = float(cfg["modelo"]["decay_meia_vida_dias"])
 
     ref = referencia or datetime.utcnow()

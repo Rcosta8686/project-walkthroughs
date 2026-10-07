@@ -144,7 +144,8 @@ def _get_or_create_equipa(s, nome: str, liga: Liga, resultado: ResultadoIngestao
 _COLUNAS_1X2 = {
     "B365H": "B365", "B365D": "B365", "B365A": "B365",
     "BWH": "BW", "BWD": "BW", "BWA": "BW",
-    "PSH": "PS", "PSD": "PS", "PSA": "PS",
+    "PSH": "Pinnacle", "PSD": "Pinnacle", "PSA": "Pinnacle",
+    "PSCH": "Pinnacle_Closing", "PSCD": "Pinnacle_Closing", "PSCA": "Pinnacle_Closing",
     "AvgCH": "Avg_Closing", "AvgCD": "Avg_Closing", "AvgCA": "Avg_Closing",
 }
 _LADO_1X2 = {"H": "casa", "D": "empate", "A": "fora"}
@@ -152,6 +153,10 @@ _LADO_1X2 = {"H": "casa", "D": "empate", "A": "fora"}
 _COLUNAS_OU25 = {
     "B365>2.5": ("B365", "over", 2.5),
     "B365<2.5": ("B365", "under", 2.5),
+    "P>2.5": ("Pinnacle", "over", 2.5),
+    "P<2.5": ("Pinnacle", "under", 2.5),
+    "PC>2.5": ("Pinnacle_Closing", "over", 2.5),
+    "PC<2.5": ("Pinnacle_Closing", "under", 2.5),
     "AvgC>2.5": ("Avg_Closing", "over", 2.5),
     "AvgC<2.5": ("Avg_Closing", "under", 2.5),
 }

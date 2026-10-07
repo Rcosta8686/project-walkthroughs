@@ -72,8 +72,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--casa",
-        default="Avg_Closing",
-        help="Casa de apostas de referência (ex.: Avg_Closing, B365)",
+        default="Pinnacle_Closing",
+        help="Casa de apostas de referência (ex.: Pinnacle_Closing, Avg_Closing, B365). "
+             "Pinnacle é o 'sharp book' — benchmark académico de edge real.",
     )
     parser.add_argument(
         "--peso-cantos",
