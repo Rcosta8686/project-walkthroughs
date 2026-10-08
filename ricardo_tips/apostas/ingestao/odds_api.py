@@ -341,10 +341,13 @@ def _puxar_odds_sport(
         "oddsFormat": "decimal",
         "bookmakers": bookmakers,
     }
-    log.info("GET %s/sports/%s/odds (bookmakers=%s)", _BASE_URL, sport, bookmakers)
+    log.info("GET %s/sports/%s/odds (regions=%s, %d bookmakers)",
+             _BASE_URL, sport, regions, len(bookmakers.split(",")))
     resp = requests.get(url, params=params, timeout=30)
     if not resp.ok:
-        raise requests.HTTPError(f"HTTP {resp.status_code} em /sports/{sport}/odds")
+        raise requests.HTTPError(
+            f"HTTP {resp.status_code} em /sports/{sport}/odds: {resp.text[:300]}"
+        )
 
     # Guarda créditos restantes (vem no header)
     requests_remaining = resp.headers.get("x-requests-remaining")
@@ -354,7 +357,17 @@ def _puxar_odds_sport(
         except ValueError:
             pass
 
-    return resp.json()
+    data = resp.json()
+    # Debug: quantos jogos vieram e quantos com bookmakers
+    n_jogos = len(data) if isinstance(data, list) else 0
+    com_bms = sum(1 for j in data if j.get("bookmakers")) if n_jogos else 0
+    bms_vistos = set()
+    for j in data if n_jogos else []:
+        for bm in j.get("bookmakers", []):
+            bms_vistos.add(bm.get("key", ""))
+    log.info("  → %s: %d jogos (%d com bookmakers), casas vistas: %s",
+             sport, n_jogos, com_bms, sorted(bms_vistos))
+    return data
 
 
 def _id_externo_odds_api(jogo_json: dict) -> int:
