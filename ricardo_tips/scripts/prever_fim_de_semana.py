@@ -52,20 +52,29 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--referencia", help="Data de referência (YYYY-MM-DD). Default: agora.")
     parser.add_argument("--modelo", default="gap", choices=("gap", "poisson"))
+    parser.add_argument(
+        "--mercado", default="todos",
+        choices=("golos", "1x2", "todos"),
+        help="Mercado a analisar. 'todos' = golos + 1x2 (default).",
+    )
     args = parser.parse_args()
 
     ref = datetime.fromisoformat(args.referencia) if args.referencia else datetime.utcnow()
     horas_inicio, horas_fim = _janela_fim_de_semana(ref)
 
+    mercados = ("golos", "1x2") if args.mercado == "todos" else (args.mercado,)
+
     log.info(
-        "Previsões para fim-de-semana a partir de %s (janela: +%.1fh a +%.1fh, modelo=%s)",
-        ref, horas_inicio, horas_fim, args.modelo,
+        "Previsões para fim-de-semana a partir de %s "
+        "(janela: +%.1fh a +%.1fh, modelo=%s, mercados=%s)",
+        ref, horas_inicio, horas_fim, args.modelo, mercados,
     )
 
     sugestoes = analise.identificar_sugestoes(
         referencia=ref,
         janela_horas=(horas_inicio, horas_fim),
         modelo=args.modelo,
+        mercados=mercados,
     )
 
     if not sugestoes:
@@ -89,14 +98,18 @@ def main() -> None:
         print(f"── {liga_nome} ──────────────────────────────────────────")
         for s in sorted(items, key=lambda x: (x.jogo.data_utc, -x.sugestao.ev)):
             data = s.jogo.data_utc.strftime("%a %d/%m %H:%M")
-            lado = s.sugestao.lado.upper()
-            linha = s.sugestao.linha
             prob = s.sugestao.prob_modelo * 100
             odd = s.sugestao.odd_referencia
             ev = s.sugestao.ev * 100
+            if s.sugestao.mercado == "golos":
+                aposta = f"{s.sugestao.lado.upper()} {s.sugestao.linha}"
+            else:  # 1x2
+                etiqueta = {"casa": "1 (casa)", "empate": "X (empate)",
+                            "fora": "2 (fora)"}[s.sugestao.lado]
+                aposta = f"1X2 {etiqueta}"
             print(
                 f"  {data}  {s.casa.nome:<22} vs {s.fora.nome:<22}  "
-                f"{lado} {linha}  @ {odd:.2f}  "
+                f"{aposta:<16} @ {odd:.2f}  "
                 f"(prob={prob:.1f}%, EV=+{ev:.1f}%)"
             )
         print()

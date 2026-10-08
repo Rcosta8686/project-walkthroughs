@@ -176,6 +176,25 @@ class ModeloPoisson:
         limiar = math.floor(linha) + 1  # ex.: linha=2.5 → precisa de >= 3
         return sum(dist[limiar:])
 
+    def prob_1x2(
+        self, casa_id: int, fora_id: int, max_golos: int = 10,
+    ) -> tuple[float, float, float]:
+        """Devolve (P(casa), P(empate), P(fora)) usando a matriz de resultados."""
+        lam_c, lam_f = self.lambdas(casa_id, fora_id)
+        pmf_c = [_poisson_pmf(k, lam_c) for k in range(max_golos + 1)]
+        pmf_f = [_poisson_pmf(k, lam_f) for k in range(max_golos + 1)]
+        p_casa = p_empate = p_fora = 0.0
+        for i, pc in enumerate(pmf_c):
+            for j, pf in enumerate(pmf_f):
+                p = pc * pf
+                if i > j:
+                    p_casa += p
+                elif i == j:
+                    p_empate += p
+                else:
+                    p_fora += p
+        return p_casa, p_empate, p_fora
+
 
 def _poisson_pmf(k: int, lam: float) -> float:
     return (lam ** k) * math.exp(-lam) / math.factorial(k)

@@ -87,6 +87,16 @@ def test_prob_total_golos_soma_perto_de_1():
     assert math.isclose(sum(dist), 1.0, abs_tol=1e-5)
 
 
+def test_poisson_prob_1x2_soma_1():
+    modelo = ModeloPoisson()
+    modelo.fit(_jogos_sinteticos())
+    p_casa, p_empate, p_fora = modelo.prob_1x2(1, 2)
+    assert 0 <= p_casa <= 1
+    assert 0 <= p_empate <= 1
+    assert 0 <= p_fora <= 1
+    assert math.isclose(p_casa + p_empate + p_fora, 1.0, abs_tol=1e-5)
+
+
 def test_fit_requer_jogos():
     with pytest.raises(ValueError):
         ModeloPoisson().fit([])

@@ -284,6 +284,34 @@ class ModeloGAP:
         limiar = math.floor(linha) + 1
         return sum(dist[limiar:])
 
+    def prob_1x2(
+        self, casa_id: int, fora_id: int, max_golos: int = 10,
+    ) -> tuple[float, float, float]:
+        """P(casa, empate, fora) usando matriz de resultados + Dixon-Coles."""
+        lam_c, lam_f = self.lambdas(casa_id, fora_id)
+        pmf_c = [_poisson_pmf(k, lam_c) for k in range(max_golos + 1)]
+        pmf_f = [_poisson_pmf(k, lam_f) for k in range(max_golos + 1)]
+        rho = self.rho_dixon_coles
+        p_casa = p_empate = p_fora = 0.0
+        soma = 0.0
+        for i, pc in enumerate(pmf_c):
+            for j, pf in enumerate(pmf_f):
+                p = pc * pf
+                if rho != 0.0:
+                    p *= _tau_dixon_coles(i, j, lam_c, lam_f, rho)
+                soma += p
+                if i > j:
+                    p_casa += p
+                elif i == j:
+                    p_empate += p
+                else:
+                    p_fora += p
+        if soma > 0 and abs(soma - 1.0) > 1e-9:
+            p_casa /= soma
+            p_empate /= soma
+            p_fora /= soma
+        return p_casa, p_empate, p_fora
+
 
 def _poisson_pmf(k: int, lam: float) -> float:
     return (lam ** k) * math.exp(-lam) / math.factorial(k)

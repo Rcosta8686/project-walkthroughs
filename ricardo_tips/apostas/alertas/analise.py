@@ -43,8 +43,12 @@ def identificar_sugestoes(
     modelo: str = "gap",
     peso_cantos: float = 0.5,
     rho_dixon_coles: float = 0.1,
+    mercados: tuple[str, ...] = ("golos", "1x2"),
 ) -> list[SugestaoExpandida]:
-    """Varre jogos agendados na janela e grava Sugestao para os de EV positivo."""
+    """Varre jogos agendados na janela e grava Sugestao para os de EV positivo.
+
+    `mercados`: tuplo com 'golos' e/ou '1x2'. Default: ambos.
+    """
     cfg = load_config()
     ev_minimo = float(cfg["value_betting"]["ev_minimo"])
     linhas_cfg = cfg["mercados"]["golos"]["linhas"]
@@ -79,34 +83,66 @@ def identificar_sugestoes(
             modelo_obj = _criar_modelo(modelo, meia_vida, peso_cantos, rho_dixon_coles)
             modelo_obj.fit(historicos, referencia=jogo.data_utc)
 
-            try:
-                probs_cache: dict[float, tuple[float, float]] = {}
-                for linha in linhas_cfg:
-                    p_over = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
-                    probs_cache[linha] = (p_over, 1.0 - p_over)
-            except KeyError:
-                continue  # equipa desconhecida
+            # ─── Mercado: over/under golos ─────────────────────────────
+            if "golos" in mercados:
+                try:
+                    probs_cache: dict[float, tuple[float, float]] = {}
+                    for linha in linhas_cfg:
+                        p_over = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
+                        probs_cache[linha] = (p_over, 1.0 - p_over)
+                except KeyError:
+                    continue  # equipa desconhecida
 
-            for linha in linhas_cfg:
-                p_over, p_under = probs_cache[linha]
-                for lado, prob in (("over", p_over), ("under", p_under)):
-                    if lado not in lados_cfg:
-                        continue
-                    odd = _odd_referencia(s, jogo.id, linha, lado, casa_ref)
+                for linha in linhas_cfg:
+                    p_over, p_under = probs_cache[linha]
+                    for lado, prob in (("over", p_over), ("under", p_under)):
+                        if lado not in lados_cfg:
+                            continue
+                        odd = _odd_referencia(s, jogo.id, linha, lado, casa_ref,
+                                              mercado="golos")
+                        if odd is None:
+                            continue
+                        ev = calcular_ev(prob, odd)
+                        if ev < ev_minimo:
+                            continue
+                        nova = _gravar_sugestao_se_nova(
+                            s, jogo, "golos", linha, lado, prob, odd, ev,
+                        )
+                        if nova is not None:
+                            liga = s.get(Liga, jogo.liga_id)
+                            casa = s.get(Equipa, jogo.casa_id)
+                            fora = s.get(Equipa, jogo.fora_id)
+                            novas.append(SugestaoExpandida(
+                                sugestao=nova, jogo=jogo, liga=liga,
+                                casa=casa, fora=fora,
+                            ))
+
+            # ─── Mercado: resultado final 1X2 ──────────────────────────
+            if "1x2" in mercados and hasattr(modelo_obj, "prob_1x2"):
+                try:
+                    p_casa, p_empate, p_fora = modelo_obj.prob_1x2(
+                        jogo.casa_id, jogo.fora_id,
+                    )
+                except KeyError:
+                    continue
+                for lado, prob in (("casa", p_casa), ("empate", p_empate), ("fora", p_fora)):
+                    odd = _odd_referencia(s, jogo.id, None, lado, casa_ref,
+                                          mercado="1x2")
                     if odd is None:
                         continue
                     ev = calcular_ev(prob, odd)
                     if ev < ev_minimo:
                         continue
                     nova = _gravar_sugestao_se_nova(
-                        s, jogo, linha, lado, prob, odd, ev,
+                        s, jogo, "1x2", None, lado, prob, odd, ev,
                     )
                     if nova is not None:
                         liga = s.get(Liga, jogo.liga_id)
                         casa = s.get(Equipa, jogo.casa_id)
                         fora = s.get(Equipa, jogo.fora_id)
                         novas.append(SugestaoExpandida(
-                            sugestao=nova, jogo=jogo, liga=liga, casa=casa, fora=fora,
+                            sugestao=nova, jogo=jogo, liga=liga,
+                            casa=casa, fora=fora,
                         ))
 
     log.info("Identificadas %d sugestões novas.", len(novas))
@@ -137,13 +173,14 @@ def sugestoes_na_janela(
 
 
 def _odd_referencia(
-    s, jogo_id: int, linha: float, lado: str, casa: str
+    s, jogo_id: int, linha: float | None, lado: str, casa: str,
+    mercado: str = "golos",
 ) -> float | None:
     """Prefere odds correntes (The Odds API) às de fecho históricas."""
     corrente = s.scalar(
         select(OddsCorrentes).where(
             OddsCorrentes.jogo_id == jogo_id,
-            OddsCorrentes.mercado == "golos",
+            OddsCorrentes.mercado == mercado,
             OddsCorrentes.linha == linha,
             OddsCorrentes.lado == lado,
             OddsCorrentes.casa_de_apostas == "pinnacle",
@@ -155,7 +192,7 @@ def _odd_referencia(
     o = s.scalar(
         select(OddsFecho).where(
             OddsFecho.jogo_id == jogo_id,
-            OddsFecho.mercado == "golos",
+            OddsFecho.mercado == mercado,
             OddsFecho.linha == linha,
             OddsFecho.lado == lado,
             OddsFecho.casa_de_apostas == casa,
@@ -165,12 +202,13 @@ def _odd_referencia(
 
 
 def _gravar_sugestao_se_nova(
-    s, jogo: Jogo, linha: float, lado: str, prob: float, odd: float, ev: float,
+    s, jogo: Jogo, mercado: str, linha: float | None, lado: str,
+    prob: float, odd: float, ev: float,
 ) -> Sugestao | None:
     existente = s.scalar(
         select(Sugestao).where(
             Sugestao.jogo_id == jogo.id,
-            Sugestao.mercado == "golos",
+            Sugestao.mercado == mercado,
             Sugestao.linha == linha,
             Sugestao.lado == lado,
         )
@@ -178,7 +216,7 @@ def _gravar_sugestao_se_nova(
     if existente is not None:
         return None
     sg = Sugestao(
-        jogo_id=jogo.id, mercado="golos", linha=linha, lado=lado,
+        jogo_id=jogo.id, mercado=mercado, linha=linha, lado=lado,
         prob_modelo=prob, odd_referencia=odd, ev=ev,
     )
     s.add(sg)

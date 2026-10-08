@@ -68,6 +68,18 @@ def test_gap_dist_total_soma_perto_de_1():
     assert math.isclose(sum(dist), 1.0, abs_tol=1e-5)
 
 
+def test_gap_prob_1x2_soma_1_e_coerente():
+    modelo = ModeloGAP()
+    modelo.fit(_jogos_sinteticos_gap())
+    p_casa, p_empate, p_fora = modelo.prob_1x2(1, 2)
+    assert 0 <= p_casa <= 1
+    assert 0 <= p_empate <= 1
+    assert 0 <= p_fora <= 1
+    assert math.isclose(p_casa + p_empate + p_fora, 1.0, abs_tol=1e-5)
+    # Equipa 1 em casa é a mais forte neste dataset → p_casa maior
+    assert p_casa > p_fora
+
+
 def test_gap_equipa_forte_prevista_marcar_mais():
     """Equipa 1 (14-16 remates em casa) deve prever mais golos que a 3."""
     modelo = ModeloGAP()
