@@ -7,6 +7,7 @@ dados/*.db
 dados/*.sqlite
 dados/raw/
 dados/processed/
+dados/tracking/
 dados/estado_bot.json
 dados/telegram_outbox.log
 !dados/.gitkeep
