@@ -53,9 +53,12 @@ def main() -> None:
     parser.add_argument("--referencia", help="Data de referência (YYYY-MM-DD). Default: agora.")
     parser.add_argument("--modelo", default="gap", choices=("gap", "poisson"))
     parser.add_argument(
-        "--mercado", default="todos",
+        "--mercado", default="golos",
         choices=("golos", "1x2", "todos"),
-        help="Mercado a analisar. 'todos' = golos + 1x2 (default).",
+        help="Mercado a analisar. Default 'golos' (over/under). "
+             "'1x2' é experimental: o modelo GAP foi calibrado para "
+             "totais de golos, pelo que 1X2 tende a produzir EVs inflados "
+             "contra sharp books. Use com cuidado.",
     )
     args = parser.parse_args()
 
@@ -63,6 +66,13 @@ def main() -> None:
     horas_inicio, horas_fim = _janela_fim_de_semana(ref)
 
     mercados = ("golos", "1x2") if args.mercado == "todos" else (args.mercado,)
+
+    if "1x2" in mercados:
+        print(
+            "⚠ Mercado 1X2 activo. Nota: o modelo GAP não está calibrado "
+            "para 1X2 — EVs podem ser inflados contra sharp books como Pinnacle. "
+            "Trata as sugestões 1X2 como experimentais, não accionáveis.\n"
+        )
 
     log.info(
         "Previsões para fim-de-semana a partir de %s "

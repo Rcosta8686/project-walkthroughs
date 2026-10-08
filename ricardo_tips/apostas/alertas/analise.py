@@ -43,14 +43,18 @@ def identificar_sugestoes(
     modelo: str = "gap",
     peso_cantos: float = 0.5,
     rho_dixon_coles: float = 0.1,
-    mercados: tuple[str, ...] = ("golos", "1x2"),
+    mercados: tuple[str, ...] = ("golos",),
 ) -> list[SugestaoExpandida]:
     """Varre jogos agendados na janela e grava Sugestao para os de EV positivo.
 
-    `mercados`: tuplo com 'golos' e/ou '1x2'. Default: ambos.
+    `mercados`: tuplo com 'golos' e/ou '1x2'. Default: apenas 'golos' (1X2
+    actual tem calibração frágil; opt-in explicitamente).
     """
     cfg = load_config()
-    ev_minimo = float(cfg["value_betting"]["ev_minimo"])
+    vb_cfg = cfg["value_betting"]
+    ev_minimo = float(vb_cfg["ev_minimo"])
+    ev_maximo = float(vb_cfg.get("ev_maximo", 1.0))
+    odd_maxima = float(vb_cfg.get("odd_maxima", 100.0))
     linhas_cfg = cfg["mercados"]["golos"]["linhas"]
     lados_cfg = cfg["mercados"]["golos"]["lados"]
     casa_ref = "Pinnacle_Closing"
@@ -100,10 +104,10 @@ def identificar_sugestoes(
                             continue
                         odd = _odd_referencia(s, jogo.id, linha, lado, casa_ref,
                                               mercado="golos")
-                        if odd is None:
+                        if odd is None or odd > odd_maxima:
                             continue
                         ev = calcular_ev(prob, odd)
-                        if ev < ev_minimo:
+                        if ev < ev_minimo or ev > ev_maximo:
                             continue
                         nova = _gravar_sugestao_se_nova(
                             s, jogo, "golos", linha, lado, prob, odd, ev,
@@ -128,10 +132,10 @@ def identificar_sugestoes(
                 for lado, prob in (("casa", p_casa), ("empate", p_empate), ("fora", p_fora)):
                     odd = _odd_referencia(s, jogo.id, None, lado, casa_ref,
                                           mercado="1x2")
-                    if odd is None:
+                    if odd is None or odd > odd_maxima:
                         continue
                     ev = calcular_ev(prob, odd)
-                    if ev < ev_minimo:
+                    if ev < ev_minimo or ev > ev_maximo:
                         continue
                     nova = _gravar_sugestao_se_nova(
                         s, jogo, "1x2", None, lado, prob, odd, ev,
