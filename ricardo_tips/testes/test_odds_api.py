@@ -89,3 +89,43 @@ def test_sincronizar_idempotente_sem_actualizacao(bd_com_jogo):
     # Segunda chamada: odds já existem, mesma odd → nada a actualizar
     assert segundo.odds_criadas == 0
     assert primeiro.odds_criadas > 0
+
+
+@pytest.fixture
+def bd_com_equipas_sem_jogos(tmp_path, monkeypatch):
+    """BD com equipas de EPL mas sem jogos — testa auto-criação."""
+    bd = tmp_path / "test.db"
+    monkeypatch.setattr(config_mod, "db_path", lambda: bd)
+    monkeypatch.setenv("MODO", "desenvolvimento")
+    db_mod.reset_engine()
+    db_mod.criar_schema()
+    ligas_equipas.sincronizar()
+
+    with db_mod.abrir_sessao() as s:
+        liga = s.scalar(select(Liga).where(Liga.nome == "Premier League"))
+        for nome in ("Arsenal", "Chelsea", "Liverpool", "Man City"):
+            s.add(Equipa(nome=nome, liga_id=liga.id))
+    yield bd
+    db_mod.reset_engine()
+
+
+def test_sincronizar_cria_jogos_futuros(bd_com_equipas_sem_jogos):
+    res = odds_api.sincronizar()
+    # 2 jogos de EPL no mock, ambos futuros → ambos criados
+    assert res.jogos_criados >= 2
+    assert res.odds_criadas > 0
+
+    with db_mod.abrir_sessao() as s:
+        liga = s.scalar(select(Liga).where(Liga.nome == "Premier League"))
+        arsenal = s.scalar(select(Equipa).where(Equipa.nome == "Arsenal", Equipa.liga_id == liga.id))
+        chelsea = s.scalar(select(Equipa).where(Equipa.nome == "Chelsea", Equipa.liga_id == liga.id))
+        jogo = s.scalar(
+            select(Jogo).where(
+                Jogo.liga_id == liga.id,
+                Jogo.casa_id == arsenal.id,
+                Jogo.fora_id == chelsea.id,
+            )
+        )
+        assert jogo is not None
+        assert jogo.estado == "agendado"
+        assert jogo.data_utc > datetime.utcnow()

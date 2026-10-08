@@ -88,14 +88,16 @@ def main() -> None:
     for erro in res_us.erros:
         print(f"⚠ Understat: {erro}")
 
-    # 4) Odds pré-jogo em tempo real via The Odds API (opcional — só corre
-    # se ODDS_API_KEY estiver definido no .env)
-    if get_env("ODDS_API_KEY"):
+    # 4) Odds pré-jogo em tempo real via The Odds API.
+    # Em dev mode (MODO=desenvolvimento) usa mocks e não precisa de chave.
+    # Em produção precisa de ODDS_API_KEY no .env.
+    if modo == "desenvolvimento" or get_env("ODDS_API_KEY"):
         res_oa = odds_api.sincronizar()
         print(
             f"✓ Odds correntes (The Odds API): {res_oa.odds_criadas} novas, "
             f"{res_oa.odds_atualizadas} atualizadas, "
-            f"{res_oa.jogos_sem_match} jogos sem match."
+            f"{res_oa.jogos_criados} jogos novos criados, "
+            f"{res_oa.jogos_sem_match} sem match."
         )
         if res_oa.credits_restantes is not None:
             print(f"  Credits Odds API restantes este mês: {res_oa.credits_restantes}")

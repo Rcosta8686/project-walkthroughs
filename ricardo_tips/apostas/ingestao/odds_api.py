@@ -14,6 +14,7 @@ mudam ao longo do tempo. A análise live prefere estas às históricas.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -189,12 +190,18 @@ _ALIAS_ODDS_API = {
 @dataclass
 class ResultadoOddsApi:
     jogos_atualizados: int = 0
+    jogos_criados: int = 0
     odds_criadas: int = 0
     odds_atualizadas: int = 0
     jogos_sem_match: int = 0
     equipas_sem_match: set = field(default_factory=set)
     erros: list[str] = field(default_factory=list)
     credits_restantes: int | None = None
+
+
+def _epoca_de(data: datetime) -> int:
+    """Devolve o ano de início da época para uma data (temporada europeia Jul-Jun)."""
+    return data.year if data.month >= 7 else data.year - 1
 
 
 def sincronizar(
@@ -221,9 +228,10 @@ def sincronizar(
                 _processar_jogo(s, jogo_json, liga, resultado)
 
     log.info(
-        "The Odds API: %d jogos com odds novas/actualizadas, %d sem match, %d equipas sem match. "
+        "The Odds API: %d jogos com odds (%d criados aqui), %d sem match, %d equipas sem match. "
         "Credits restantes: %s",
-        resultado.jogos_atualizados, resultado.jogos_sem_match,
+        resultado.jogos_atualizados, resultado.jogos_criados,
+        resultado.jogos_sem_match,
         len(resultado.equipas_sem_match),
         resultado.credits_restantes,
     )
@@ -260,6 +268,23 @@ def _puxar_odds_sport(
             pass
 
     return resp.json()
+
+
+def _id_externo_odds_api(jogo_json: dict) -> int:
+    """Chave sintética estável para um jogo da Odds API.
+
+    A Odds API devolve `id` como string hex (ex. `d2c8...`). Mapeamos para
+    int (hash estável de 63 bits) para caber na coluna `id_externo` INTEGER.
+    Prefixado com `9` para distinguir de IDs football-data (que começam em `1`).
+    """
+    raw = str(jogo_json.get("id", ""))
+    if not raw:
+        raw = f"{jogo_json.get('home_team','')}|{jogo_json.get('away_team','')}|{jogo_json.get('commence_time','')}"
+    # md5 estável entre runs (hash() do Python é salted por processo) → 15 dígitos
+    # Prefixo 9 para distinguir de IDs football-data (que começam em 1).
+    digest = hashlib.md5(raw.encode("utf-8")).hexdigest()
+    h = int(digest, 16) % (10**15)
+    return 9 * (10**15) + h
 
 
 def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi) -> None:
@@ -299,8 +324,31 @@ def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi)
         )
     )
     if jogo is None:
-        resultado.jogos_sem_match += 1
-        return
+        # Jogo futuro ainda não ingerido pelo football-data (CSVs só têm jogos
+        # jogados). Cria aqui para que a análise live tenha a quem atribuir
+        # odds e sugestões.
+        if data > datetime.utcnow():
+            id_ext = _id_externo_odds_api(jogo_json)
+            # Protege contra colisões: se já existe outro jogo com este id,
+            # salta (não devia acontecer com hash de 63 bits).
+            if s.scalar(select(Jogo).where(Jogo.id_externo == id_ext)) is not None:
+                resultado.jogos_sem_match += 1
+                return
+            jogo = Jogo(
+                id_externo=id_ext,
+                liga_id=liga.id,
+                epoca=_epoca_de(data),
+                data_utc=data,
+                casa_id=casa.id,
+                fora_id=fora.id,
+                estado="agendado",
+            )
+            s.add(jogo)
+            s.flush()
+            resultado.jogos_criados += 1
+        else:
+            resultado.jogos_sem_match += 1
+            return
 
     bookmakers = jogo_json.get("bookmakers", [])
     atualizou = False
