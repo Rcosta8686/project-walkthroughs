@@ -30,14 +30,74 @@ except ImportError:
     cffi_requests = None
     _CURL_CFFI_DISPONIVEL = False
 
+try:
+    import cloudscraper
+    _CLOUDSCRAPER_DISPONIVEL = True
+except ImportError:
+    cloudscraper = None
+    _CLOUDSCRAPER_DISPONIVEL = False
+
 from apostas.utils.config import project_root
 from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 _BASE = "https://api.sofascore.com/api/v1"
-_DELAY_ENTRE_PEDIDOS = 1.0  # segundos
+_DELAY_ENTRE_PEDIDOS = 1.5  # segundos — mais prudente
 _ultimo_pedido_ts: float = 0.0
+_SESSAO: Any = None  # curl_cffi Session persistente
+
+# Headers que o browser real envia; Cloudflare valida muitos deles.
+_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9,pt;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Origin": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+}
+
+
+def _obter_sessao():
+    """Lazy-init session com warm-up Cloudflare.
+
+    Tenta curl_cffi (Chrome 131 impersonation) primeiro. Se não existir,
+    cai para cloudscraper. Em qualquer caso, visita a homepage primeiro
+    para apanhar cookies cf_clearance.
+    """
+    global _SESSAO
+    if _SESSAO is not None:
+        return _SESSAO
+
+    if _CURL_CFFI_DISPONIVEL:
+        _SESSAO = cffi_requests.Session(impersonate="chrome131")
+        tipo = "curl_cffi+chrome131"
+    elif _CLOUDSCRAPER_DISPONIVEL:
+        _SESSAO = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False},
+        )
+        tipo = "cloudscraper"
+    else:
+        raise RuntimeError(
+            "Nem curl_cffi nem cloudscraper instalados. "
+            "Corre: pip install curl-cffi>=0.7 cloudscraper>=1.2"
+        )
+
+    log.info("Sofascore: warm-up na homepage (via %s)", tipo)
+    try:
+        resp = _SESSAO.get("https://www.sofascore.com/", timeout=20)
+        log.info(
+            "Sofascore warm-up: HTTP %d, cookies apanhados: %d",
+            resp.status_code, len(_SESSAO.cookies),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Sofascore warm-up falhou: %s", exc)
+    return _SESSAO
 
 
 def _rate_limit() -> None:
@@ -57,28 +117,26 @@ def _cache_dir() -> Path:
 
 
 def _get_json(path: str, cache_name: str | None = None) -> dict | None:
-    """GET com rate limit, cache opcional e impersonação Chrome."""
-    if not _CURL_CFFI_DISPONIVEL:
-        raise RuntimeError(
-            "curl_cffi não instalado. Corre: pip install curl-cffi>=0.7"
-        )
-
+    """GET com rate limit, cache opcional e session com warm-up Cloudflare."""
     cache_file = _cache_dir() / f"{cache_name}.json" if cache_name else None
     if cache_file and cache_file.exists():
         return json.loads(cache_file.read_text(encoding="utf-8"))
 
+    sessao = _obter_sessao()
     _rate_limit()
     url = f"{_BASE}{path}"
     log.debug("Sofascore GET %s", url)
     try:
-        resp = cffi_requests.get(url, impersonate="chrome120", timeout=20)
+        resp = sessao.get(url, headers=_HEADERS, timeout=20)
     except Exception as exc:  # noqa: BLE001
         log.warning("Sofascore GET %s falhou: %s", url, exc)
         return None
 
     if resp.status_code == 403:
-        log.warning("Sofascore 403 (bloqueado por Cloudflare). Aguarda +30s.")
-        time.sleep(30)
+        log.warning(
+            "Sofascore 403 em %s. Cloudflare bloqueou mesmo com warm-up. "
+            "Pode ser necessario cloudscraper ou proxies.", url,
+        )
         return None
     if resp.status_code == 404:
         log.debug("Sofascore 404 em %s (recurso não existe)", url)
@@ -87,7 +145,11 @@ def _get_json(path: str, cache_name: str | None = None) -> dict | None:
         log.warning("Sofascore %d em %s", resp.status_code, url)
         return None
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Sofascore resposta nao-JSON em %s: %s", url, exc)
+        return None
     if cache_file:
         cache_file.write_text(json.dumps(data), encoding="utf-8")
     return data
