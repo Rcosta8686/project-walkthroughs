@@ -66,22 +66,29 @@ _HEADERS = {
 def _obter_sessao():
     """Lazy-init session com warm-up Cloudflare.
 
-    Tenta curl_cffi (Chrome 131 impersonation) primeiro. Se não existir,
-    cai para cloudscraper. Em qualquer caso, visita a homepage primeiro
-    para apanhar cookies cf_clearance.
+    Default: tenta curl_cffi (impersonação TLS). Para forçar cloudscraper
+    (melhor em challenges JS), seta `SOFASCORE_SCRAPER=cloudscraper` no .env.
     """
     global _SESSAO
     if _SESSAO is not None:
         return _SESSAO
 
-    if _CURL_CFFI_DISPONIVEL:
+    import os
+    preferido = os.getenv("SOFASCORE_SCRAPER", "curl_cffi").lower()
+
+    if preferido == "cloudscraper" and _CLOUDSCRAPER_DISPONIVEL:
+        _SESSAO = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False},
+        )
+        tipo = "cloudscraper (forçado)"
+    elif _CURL_CFFI_DISPONIVEL:
         _SESSAO = cffi_requests.Session(impersonate="chrome131")
         tipo = "curl_cffi+chrome131"
     elif _CLOUDSCRAPER_DISPONIVEL:
         _SESSAO = cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "mobile": False},
         )
-        tipo = "cloudscraper"
+        tipo = "cloudscraper (fallback)"
     else:
         raise RuntimeError(
             "Nem curl_cffi nem cloudscraper instalados. "
