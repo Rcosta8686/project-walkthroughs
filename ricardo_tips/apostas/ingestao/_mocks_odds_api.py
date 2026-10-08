@@ -48,6 +48,9 @@ def jogos_sport(sport_key: str) -> list[dict]:
         odd_over = round(rng.uniform(1.6, 2.3), 2)
         odd_under = round(rng.uniform(1.6, 2.3), 2)
 
+        # Pinnacle (sharp) e Betano (soft). Betano com margem maior → odds
+        # ligeiramente diferentes, cria sinal de divergência para testes.
+        soft_boost = 1.08  # soft book preço médio 8% acima do pinnacle (margem)
         out.append({
             "id": f"mock_{sport_key}_{i}",
             "sport_key": sport_key,
@@ -55,27 +58,51 @@ def jogos_sport(sport_key: str) -> list[dict]:
             "commence_time": kickoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "home_team": casa,
             "away_team": fora,
-            "bookmakers": [{
-                "key": "pinnacle",
-                "title": "Pinnacle",
-                "last_update": agora.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "markets": [
-                    {
-                        "key": "h2h",
-                        "outcomes": [
-                            {"name": casa, "price": odd_casa},
-                            {"name": fora, "price": odd_fora},
-                            {"name": "Draw", "price": odd_empate},
-                        ],
-                    },
-                    {
-                        "key": "totals",
-                        "outcomes": [
-                            {"name": "Over", "price": odd_over, "point": 2.5},
-                            {"name": "Under", "price": odd_under, "point": 2.5},
-                        ],
-                    },
-                ],
-            }],
+            "bookmakers": [
+                {
+                    "key": "pinnacle",
+                    "title": "Pinnacle",
+                    "last_update": agora.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": casa, "price": odd_casa},
+                                {"name": fora, "price": odd_fora},
+                                {"name": "Draw", "price": odd_empate},
+                            ],
+                        },
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": odd_over, "point": 2.5},
+                                {"name": "Under", "price": odd_under, "point": 2.5},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "key": "betano",
+                    "title": "Betano",
+                    "last_update": agora.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": casa, "price": round(odd_casa * soft_boost, 2)},
+                                {"name": fora, "price": round(odd_fora * soft_boost, 2)},
+                                {"name": "Draw", "price": round(odd_empate * soft_boost, 2)},
+                            ],
+                        },
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": round(odd_over * soft_boost, 2), "point": 2.5},
+                                {"name": "Under", "price": round(odd_under * soft_boost, 2), "point": 2.5},
+                            ],
+                        },
+                    ],
+                },
+            ],
         })
     return out

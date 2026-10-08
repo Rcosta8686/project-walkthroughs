@@ -272,12 +272,20 @@ def _epoca_de(data: datetime) -> int:
     return data.year if data.month >= 7 else data.year - 1
 
 
+# Soft books (margens maiores, linhas menos eficientes que Pinnacle).
+# Pinnacle (sharp) usado como preço "justo"; soft books como preços a bater.
+BOOKMAKERS_DEFAULT = "pinnacle,betano,bet365,williamhill,unibet,1xbet,marathonbet"
+
+
 def sincronizar(
-    bookmakers: str = "pinnacle",
+    bookmakers: str = BOOKMAKERS_DEFAULT,
     regions: str = "eu",
     modo: str | None = None,
 ) -> ResultadoOddsApi:
-    """Puxa odds de pré-jogo para as ligas configuradas e grava em odds_correntes."""
+    """Puxa odds de pré-jogo para as ligas configuradas e grava em odds_correntes.
+
+    Default pede Pinnacle (sharp, fair-price) + soft books (Betano, bet365, etc.).
+    """
     modo = modo or (get_env("MODO", "desenvolvimento") or "desenvolvimento").lower()
     resultado = ResultadoOddsApi()
 
