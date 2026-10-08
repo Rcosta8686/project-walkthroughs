@@ -115,6 +115,7 @@ def correr(
     metrica_gap: str = "shots_corners",
     calibracao: str = "nenhuma",
     frac_calibracao: float = 0.4,
+    ligas_nomes: list[str] | None = None,
 ) -> RelatorioBacktest:
     if modelo not in MODELOS_DISPONIVEIS:
         raise ValueError(
@@ -144,11 +145,18 @@ def correr(
     bankroll_corrente = 0.0
 
     with abrir_sessao() as s:
-        jogos_teste = s.scalars(
-            select(Jogo)
-            .where(Jogo.epoca == epoca_teste, Jogo.estado == "terminado")
-            .order_by(Jogo.data_utc)
-        ).all()
+        # Filtro opcional por nome de liga (ex: focar top-4).
+        q = select(Jogo).where(Jogo.epoca == epoca_teste, Jogo.estado == "terminado")
+        if ligas_nomes:
+            from apostas.utils.schema import Liga as _Liga
+            ids_filtro = s.scalars(
+                select(_Liga.id).where(_Liga.nome.in_(ligas_nomes))
+            ).all()
+            if not ids_filtro:
+                raise ValueError(f"Nenhuma liga encontrada com nomes: {ligas_nomes}")
+            q = q.where(Jogo.liga_id.in_(ids_filtro))
+            log.info("Backtest filtrado a %d liga(s): %s", len(ids_filtro), ligas_nomes)
+        jogos_teste = s.scalars(q.order_by(Jogo.data_utc)).all()
 
         # Divide os jogos: primeiros N% para fitar o calibrador, restantes
         # para o backtest "accionável". Com calibracao="nenhuma" o split

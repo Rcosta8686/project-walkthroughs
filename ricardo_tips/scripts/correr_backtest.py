@@ -108,6 +108,13 @@ def main() -> None:
         default=0.4,
         help="Fração dos jogos da época para fitar o calibrador (default 0.4).",
     )
+    parser.add_argument(
+        "--ligas",
+        default=None,
+        help="Lista de nomes de ligas separados por vírgula (ex.: "
+             "'Premier League,La Liga,Serie A,Ligue 1') para restringir o "
+             "backtest. Default: todas as ligas da BD.",
+    )
     args = parser.parse_args()
 
     if args.mercado == "cantos":
@@ -122,6 +129,9 @@ def main() -> None:
 
     relatorios = []
     for modelo in modelos:
+        ligas_filtro = (
+            [l.strip() for l in args.ligas.split(",")] if args.ligas else None
+        )
         rel = walk_forward.correr(
             modelo=modelo,
             mercado=args.mercado,
@@ -135,6 +145,7 @@ def main() -> None:
             metrica_gap=args.metrica,
             calibracao=args.calibracao,
             frac_calibracao=args.frac_cal,
+            ligas_nomes=ligas_filtro,
         )
         print(fmt.formatar(rel))
         relatorios.append(rel)
