@@ -44,10 +44,17 @@ LIGAS_UNDERSTAT = {
 }
 
 _BASE_URL = "https://understat.com/league"
-_PAD_HTML_RE = re.compile(r"var\s+(\w+)\s*=\s*JSON\.parse\('([^']+)'\)")
-# Nomes possíveis do array de jogos no HTML da Understat.
-# Na página de liga chama-se "datesData"; nos mocks e algumas páginas antigas
-# "matchesData". Aceitamos os dois.
+
+# A Understat embute JSON em várias formas; apanhamos single e double quotes.
+_PAD_HTML_RE = re.compile(
+    r"var\s+(\w+)\s*=\s*JSON\.parse\(['\"](?P<payload>[^'\"]+)['\"]\)"
+)
+# Fallback: aceita conteúdo com aspas internas escapadas (\')
+_PAD_HTML_RE_RELAXADO = re.compile(
+    r"var\s+(\w+)\s*=\s*JSON\.parse\('((?:\\.|[^'\\])*)'\)"
+)
+# Nomes possíveis do array de jogos.
+# Na página de liga: "datesData"; nos mocks e algumas páginas antigas: "matchesData".
 _NOMES_MATCHES = {"datesData", "matchesData"}
 
 
@@ -83,22 +90,38 @@ def _obter_html(liga: str, ano: int, modo: str) -> str:
 
 def _parse_matches_json(html: str) -> list[dict]:
     """Extrai o array de jogos (datesData/matchesData) do HTML da Understat."""
-    encontrados = []
-    for nome, valor_escapado in _PAD_HTML_RE.findall(html):
-        if nome not in _NOMES_MATCHES:
-            continue
-        encontrados.append(nome)
-        # Understat escapa com \x{HH} notation
-        decoded = valor_escapado.encode("utf-8").decode("unicode_escape")
-        try:
-            return json.loads(decoded)
-        except json.JSONDecodeError as exc:
-            log.warning("Falha a parsear %s: %s", nome, exc)
-            return []
-    if not encontrados:
+    # Diagnóstico: lista todos os `var X = JSON.parse(...)` encontrados
+    variaveis_vistas: list[str] = []
+
+    for regex in (_PAD_HTML_RE, _PAD_HTML_RE_RELAXADO):
+        for match in regex.finditer(html):
+            nome = match.group(1)
+            if nome not in variaveis_vistas:
+                variaveis_vistas.append(nome)
+            if nome not in _NOMES_MATCHES:
+                continue
+            valor_escapado = match.group(2)
+            try:
+                decoded = valor_escapado.encode("utf-8").decode("unicode_escape")
+            except UnicodeDecodeError:
+                continue
+            try:
+                return json.loads(decoded)
+            except json.JSONDecodeError as exc:
+                log.warning("Falha a parsear %s: %s", nome, exc)
+                continue
+
+    if variaveis_vistas:
         log.warning(
-            "HTML Understat sem bloco datesData/matchesData "
-            "(estrutura da página mudou?)"
+            "Understat: nenhum datesData/matchesData, mas vi: %s "
+            "(cola isto no chat para diagnóstico)",
+            variaveis_vistas[:10],
+        )
+    else:
+        log.warning(
+            "Understat: HTML não tem padrões JSON.parse esperados "
+            "(primeiros 500 chars: %s)",
+            html[:500].replace("\n", " "),
         )
     return []
 
