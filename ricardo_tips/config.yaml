@@ -55,7 +55,7 @@ backtest:
 
 # Motor de value betting
 value_betting:
-  ev_minimo: 0.03                   # EV mínimo (3%) para sugerir aposta
+  ev_minimo: 0.08                   # EV mínimo (8%) para sugerir aposta
   bookmaker_referencia: "22bet"
   bookmaker_fallback: "pinnacle"    # usado quando não há 22bet disponível
   remover_overround: true           # devolver margem da casa antes de calcular EV
