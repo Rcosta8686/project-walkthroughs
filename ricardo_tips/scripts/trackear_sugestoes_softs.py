@@ -62,11 +62,25 @@ def main() -> None:
                         help="Fim da janela em horas (default 72h = ~3 dias).")
     parser.add_argument("--stake", type=float, default=1.0,
                         help="Stake simulado por aposta (default 1 unidade).")
+    parser.add_argument(
+        "--mercado", default="1x2",
+        choices=("golos", "1x2", "ambos"),
+        help="Mercado a trackear. Default '1x2' (todas as softs via Odds API "
+             "devolvem h2h; só algumas devolvem totals).",
+    )
+    parser.add_argument(
+        "--casas-soft", default="unibet,williamhill,bet365,betano",
+        help="Casas soft a comparar com Pinnacle (lowercase, keys Odds API).",
+    )
     args = parser.parse_args()
+
+    mercados = ("golos", "1x2") if args.mercado == "ambos" else (args.mercado,)
+    casas_soft = tuple(c.strip() for c in args.casas_soft.split(","))
 
     sugestoes = analise_softs.identificar_sugestoes_softs(
         janela_horas=(0.0, args.horas_fim),
-        mercados=("golos",),
+        mercados=mercados,
+        casas_soft=casas_soft,
     )
 
     if not sugestoes:

@@ -54,15 +54,29 @@ def main() -> None:
                 continue
             if jogo.golos_casa is None or jogo.golos_fora is None:
                 continue  # ainda não terminado
-            golos = jogo.golos_casa + jogo.golos_fora
-            lim = float(linha["linha"])
-            foi_over = golos > lim
-            if linha["lado"] == "over":
-                ganhou = foi_over
-            elif linha["lado"] == "under":
-                ganhou = not foi_over
+            gc = jogo.golos_casa
+            gf = jogo.golos_fora
+            lado = linha["lado"]
+            mercado = linha["mercado"]
+            if mercado == "golos":
+                lim = float(linha["linha"])
+                foi_over = (gc + gf) > lim
+                if lado == "over":
+                    ganhou = foi_over
+                elif lado == "under":
+                    ganhou = not foi_over
+                else:
+                    continue
+            elif mercado == "1x2":
+                if gc > gf:
+                    resultado_real = "casa"
+                elif gc < gf:
+                    resultado_real = "fora"
+                else:
+                    resultado_real = "empate"
+                ganhou = (lado == resultado_real)
             else:
-                continue  # 1x2 não suportado por este script
+                continue  # mercado desconhecido
             odd = float(linha["odd_soft"])
             stake = float(linha["stake"])
             lucro = stake * (odd - 1) if ganhou else -stake
