@@ -60,8 +60,25 @@ def main():
             ).order_by(Jogo.data_utc)
         ).all()
 
+        # Primeiro: inventário de linhas Over/Under disponíveis
+        linhas_disponiveis = s.execute(
+            select(OddsCorrentes.linha, OddsCorrentes.casa_de_apostas).distinct()
+            .where(OddsCorrentes.mercado == "golos")
+        ).all()
+        contagem = {}
+        for linha_val, casa_val in linhas_disponiveis:
+            contagem.setdefault(linha_val, set()).add(casa_val)
+
         print(f"\n{'=' * 110}")
-        print(f"  DIAGNÓSTICO DE DIVERGÊNCIAS — Over/Under {args.linha} em {len(jogos)} jogos próximos")
+        print(f"  INVENTÁRIO: linhas Over/Under na BD (jogos nos próximos {args.horas_fim:.0f}h)")
+        print(f"{'=' * 110}")
+        if not contagem:
+            print("  ⚠ ZERO linhas Over/Under na BD. A Odds API não devolveu totals.")
+            print("     Verifica se --markets=totals está activo e se Pinnacle oferece OU nestas ligas.")
+            return
+        for linha_val in sorted(contagem.keys(), key=lambda x: (x is None, x)):
+            print(f"  Linha {linha_val}: casas = {sorted(contagem[linha_val])}")
+        print(f"\n  → Vou procurar divergências na linha {args.linha}.")
         print(f"{'=' * 110}")
 
         jogos_com_pinnacle = 0
