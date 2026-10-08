@@ -274,12 +274,23 @@ def _epoca_de(data: datetime) -> int:
 
 # Soft books (margens maiores, linhas menos eficientes que Pinnacle).
 # Pinnacle (sharp) usado como preço "justo"; soft books como preços a bater.
-BOOKMAKERS_DEFAULT = "pinnacle,betano,bet365,williamhill,unibet,1xbet,marathonbet"
+# Nomes correctos conforme Odds API (confirmados via verificar_bookmaker.py):
+#   - betano_uk (não "betano"), onexbet (não "1xbet"), unibet_uk (não "unibet")
+#   - bet365 bloqueou a Odds API — não disponível em nenhum plano
+BOOKMAKERS_DEFAULT = (
+    "pinnacle,"
+    # Softs UK genuínas (edge historico documentado):
+    "paddypower,skybet,boylesports,betway,virginbet,betvictor,betfred_uk,"
+    # Multi-nacional softs:
+    "betano_uk,unibet_uk,coral,williamhill,sport888,"
+    # Outras (menos efficient que Pinnacle mas ainda sharp):
+    "onexbet,marathonbet"
+)
 
 
 def sincronizar(
     bookmakers: str = BOOKMAKERS_DEFAULT,
-    regions: str = "eu",
+    regions: str = "eu,uk,us,au",
     modo: str | None = None,
 ) -> ResultadoOddsApi:
     """Puxa odds de pré-jogo para as ligas configuradas e grava em odds_correntes.

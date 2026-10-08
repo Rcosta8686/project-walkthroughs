@@ -69,8 +69,10 @@ def main() -> None:
              "devolvem h2h; só algumas devolvem totals).",
     )
     parser.add_argument(
-        "--casas-soft", default="unibet,williamhill,bet365,betano",
-        help="Casas soft a comparar com Pinnacle (lowercase, keys Odds API).",
+        "--casas-soft",
+        default="paddypower,skybet,boylesports,betway,virginbet,betvictor,"
+                "betfred_uk,betano_uk,unibet_uk,coral,williamhill,sport888",
+        help="Casas soft a comparar com Pinnacle (keys exactas Odds API).",
     )
     parser.add_argument(
         "--ev-minimo", type=float, default=None,
