@@ -10,6 +10,7 @@ requests>=2.31
 aiohttp>=3.9
 beautifulsoup4>=4.12
 lxml>=4.9
+curl-cffi>=0.7       # para scraping Sofascore (bypass Cloudflare)
 
 # Base de dados
 SQLAlchemy>=2.0
