@@ -48,9 +48,13 @@ def jogos_sport(sport_key: str) -> list[dict]:
         odd_over = round(rng.uniform(1.6, 2.3), 2)
         odd_under = round(rng.uniform(1.6, 2.3), 2)
 
-        # Pinnacle (sharp) e Betano (soft). Betano com margem maior → odds
-        # ligeiramente diferentes, cria sinal de divergência para testes.
-        soft_boost = 1.08  # soft book preço médio 8% acima do pinnacle (margem)
+        # Pinnacle (sharp) e Betano (soft). Para testes, Betano tem asimetria:
+        # over com odds mais ALTAS (soft books tendem a ser generosos em over
+        # para atrair público), under mais apertadas. Isso gera divergência
+        # de ~10-15% em over → sugestões no dev.
+        soft_over_boost = 1.12   # Betano over 12% acima da Pinnacle
+        soft_under_boost = 1.00  # Betano under igual à Pinnacle
+        soft_h2h_boost = 1.08    # 1x2 asimétrico leve
         out.append({
             "id": f"mock_{sport_key}_{i}",
             "sport_key": sport_key,
@@ -89,16 +93,16 @@ def jogos_sport(sport_key: str) -> list[dict]:
                         {
                             "key": "h2h",
                             "outcomes": [
-                                {"name": casa, "price": round(odd_casa * soft_boost, 2)},
-                                {"name": fora, "price": round(odd_fora * soft_boost, 2)},
-                                {"name": "Draw", "price": round(odd_empate * soft_boost, 2)},
+                                {"name": casa, "price": round(odd_casa * soft_h2h_boost, 2)},
+                                {"name": fora, "price": round(odd_fora * soft_h2h_boost, 2)},
+                                {"name": "Draw", "price": round(odd_empate * soft_h2h_boost, 2)},
                             ],
                         },
                         {
                             "key": "totals",
                             "outcomes": [
-                                {"name": "Over", "price": round(odd_over * soft_boost, 2), "point": 2.5},
-                                {"name": "Under", "price": round(odd_under * soft_boost, 2), "point": 2.5},
+                                {"name": "Over", "price": round(odd_over * soft_over_boost, 2), "point": 2.5},
+                                {"name": "Under", "price": round(odd_under * soft_under_boost, 2), "point": 2.5},
                             ],
                         },
                     ],
