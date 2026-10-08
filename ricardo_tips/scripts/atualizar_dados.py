@@ -76,17 +76,23 @@ def main() -> None:
     for erro in res_fd.erros:
         print(f"⚠ football-data: {erro}")
 
-    # 3) xG via Understat (grátis, Top-5 ligas) — anota EstatisticasJogo
-    res_us = understat.sincronizar(epocas=epocas)
-    print(
-        f"✓ xG (Understat): {res_us.jogos_atualizados} jogos atualizados, "
-        f"{res_us.jogos_sem_match} sem match, "
-        f"{len(res_us.equipas_sem_match)} equipas sem match."
-    )
-    if res_us.equipas_sem_match:
-        print(f"  Equipas Understat sem match: {sorted(res_us.equipas_sem_match)[:10]}")
-    for erro in res_us.erros:
-        print(f"⚠ Understat: {erro}")
+    # 3) xG via Understat — DESACTIVADO. Em 2026 a Understat passou a carregar
+    # os dados via AJAX após o DOM; scraping com requests só devolve HTML vazio.
+    # Para reactivar: usar Playwright/Selenium ou outra fonte (FBref, StatsBomb).
+    # Põe UNDERSTAT_ATIVO=1 no .env para forçar reactivação (debug).
+    if get_env("UNDERSTAT_ATIVO"):
+        res_us = understat.sincronizar(epocas=epocas)
+        print(
+            f"✓ xG (Understat): {res_us.jogos_atualizados} jogos atualizados, "
+            f"{res_us.jogos_sem_match} sem match, "
+            f"{len(res_us.equipas_sem_match)} equipas sem match."
+        )
+        if res_us.equipas_sem_match:
+            print(f"  Equipas Understat sem match: {sorted(res_us.equipas_sem_match)[:10]}")
+        for erro in res_us.erros:
+            print(f"⚠ Understat: {erro}")
+    else:
+        print("  (Understat: desactivado — site passou a carregar dados por AJAX)")
 
     # 4) Odds pré-jogo em tempo real via The Odds API.
     # Em dev mode (MODO=desenvolvimento) usa mocks e não precisa de chave.
