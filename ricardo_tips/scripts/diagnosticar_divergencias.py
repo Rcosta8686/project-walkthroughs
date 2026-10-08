@@ -70,15 +70,34 @@ def main():
             contagem.setdefault(linha_val, set()).add(casa_val)
 
         print(f"\n{'=' * 110}")
-        print(f"  INVENTÁRIO: linhas Over/Under na BD (jogos nos próximos {args.horas_fim:.0f}h)")
+        print(f"  INVENTARIO: linhas Over/Under na BD (jogos nos proximos {args.horas_fim:.0f}h)")
         print(f"{'=' * 110}")
         if not contagem:
-            print("  ⚠ ZERO linhas Over/Under na BD. A Odds API não devolveu totals.")
-            print("     Verifica se --markets=totals está activo e se Pinnacle oferece OU nestas ligas.")
+            print("  AVISO: ZERO linhas Over/Under na BD. A Odds API nao devolveu totals.")
             return
         for linha_val in sorted(contagem.keys(), key=lambda x: (x is None, x)):
             print(f"  Linha {linha_val}: casas = {sorted(contagem[linha_val])}")
-        print(f"\n  → Vou procurar divergências na linha {args.linha}.")
+
+        # Inventário por casa: quantas odds de totals vs 1x2 por bookmaker
+        print(f"\n  INVENTARIO POR CASA:")
+        por_casa_totals = s.execute(
+            select(
+                OddsCorrentes.casa_de_apostas,
+                OddsCorrentes.mercado,
+            ).where(OddsCorrentes.mercado.in_(["golos", "1x2"]))
+        ).all()
+        contagem_casa = {}
+        for casa_val, mercado_val in por_casa_totals:
+            k = (casa_val, mercado_val)
+            contagem_casa[k] = contagem_casa.get(k, 0) + 1
+        casas_vistas = sorted({k[0] for k in contagem_casa})
+        print(f"  {'Casa':<16} {'Totals (O/U)':>14} {'H2H (1x2)':>12}")
+        for casa_val in casas_vistas:
+            n_tot = contagem_casa.get((casa_val, "golos"), 0)
+            n_h2h = contagem_casa.get((casa_val, "1x2"), 0)
+            print(f"  {casa_val:<16} {n_tot:>14} {n_h2h:>12}")
+
+        print(f"\n  --> Vou procurar divergencias na linha {args.linha}.")
         print(f"{'=' * 110}")
 
         jogos_com_pinnacle = 0
@@ -120,14 +139,14 @@ def main():
             if max_ev >= 0.03:
                 data = jogo.data_utc.strftime("%a %d/%m %H:%M")
                 print(f"\n  {data}  {casa.nome} vs {fora.nome}  ({liga.nome})")
-                print(f"    Pinnacle:  over @ {od_pin_over} · under @ {od_pin_under}")
-                print(f"    Fair prob: over {p_over * 100:.1f}% · under {p_under * 100:.1f}%")
+                print(f"    Pinnacle:  over @ {od_pin_over} / under @ {od_pin_under}")
+                print(f"    Fair prob: over {p_over * 100:.1f}% / under {p_under * 100:.1f}%")
                 for casa_soft, lado, odd, ev in evs_jogo:
                     marca = ""
-                    if ev >= 0.10: marca = " 🔥🔥"
-                    elif ev >= 0.08: marca = " 🔥"
-                    elif ev >= 0.05: marca = " ✓"
-                    elif ev >= 0.03: marca = " ·"
+                    if ev >= 0.10: marca = " ***"
+                    elif ev >= 0.08: marca = " **"
+                    elif ev >= 0.05: marca = " *"
+                    elif ev >= 0.03: marca = " ."
                     print(f"      {casa_soft:<14} {lado:<6} @ {odd:<6} EV {ev * 100:+6.2f}%{marca}")
 
         print(f"\n{'=' * 110}")
@@ -135,12 +154,12 @@ def main():
         print(f"{'=' * 110}")
         print(f"  Jogos próximos (próximas {args.horas_fim:.0f}h):      {len(jogos)}")
         print(f"  Jogos com odds Pinnacle (over/under {args.linha}):   {jogos_com_pinnacle}")
-        print(f"  Divergências com EV ≥ 5%:                     {divergencias_por_ev[5]}")
-        print(f"  Divergências com EV ≥ 8%:                     {divergencias_por_ev[8]}")
-        print(f"  Divergências com EV ≥ 10%:                    {divergencias_por_ev[10]}")
+        print(f"  Divergencias com EV >= 5%:                    {divergencias_por_ev[5]}")
+        print(f"  Divergencias com EV >= 8%:                    {divergencias_por_ev[8]}")
+        print(f"  Divergencias com EV >= 10%:                   {divergencias_por_ev[10]}")
         print()
         if divergencias_por_ev[5] == 0:
-            print("  ⚠ Nenhuma divergência ≥5%. Hipóteses:")
+            print("  AVISO: Nenhuma divergencia >= 5%. Hipoteses:")
             print("    1. Pre-match early: todas as softs ainda ancoradas à Pinnacle.")
             print("       Edge só aparece horas antes do kick-off.")
             print("    2. Odds API 'bet365' pode usar feed diferente do CSV 'B365'.")
