@@ -75,8 +75,18 @@ def main() -> None:
         help="EV mínimo para considerar aposta (default do config).",
     )
     parser.add_argument(
-        "--softs", default="B365,WH,BW,VC",
-        help="Soft books (nomes football-data) separados por vírgula.",
+        "--softs", default="B365",
+        help="Soft books (nomes football-data) separados por vírgula. "
+             "Para Over/Under 2.5, só B365 existe nos CSVs (as outras softs "
+             "— WH, BW, VC — só têm odds 1X2).",
+    )
+    parser.add_argument(
+        "--fair", default="Pinnacle_Closing",
+        choices=("Pinnacle", "Pinnacle_Closing"),
+        help="Casa a usar como fair-price. 'Pinnacle' (opening) captura o "
+             "line move: se Pinnacle fechou mais alto, mas B365 ficou nas "
+             "odds iniciais, há edge. 'Pinnacle_Closing' (default) compara "
+             "closing-vs-closing — mais conservador.",
     )
     parser.add_argument(
         "--ligas", default=None,
@@ -96,6 +106,7 @@ def main() -> None:
             epoca_teste=epoca,
             linha=args.linha,
             ev_minimo=args.ev_minimo,
+            casa_fair=args.fair,
             casas_soft=casas_soft,
             ligas_nomes=ligas_filtro,
         )
