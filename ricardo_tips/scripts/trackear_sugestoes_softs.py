@@ -74,7 +74,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--ev-minimo", type=float, default=None,
-        help="EV mínimo (ex: 0.05 = 5%). Default usa `value_betting.ev_minimo` do config.yaml.",
+        help="EV minimo (ex: 0.05 = 5 por cento). Default: value_betting.ev_minimo do config.yaml.",
     )
     args = parser.parse_args()
 
