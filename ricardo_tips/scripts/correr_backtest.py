@@ -54,9 +54,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--epoca",
-        type=int,
-        default=2024,
-        help="Ano de início da época a testar (ex.: 2024 = 2024/25)",
+        default="2024",
+        help="Ano de início da época a testar (ex.: 2024 = 2024/25). "
+             "Para múltiplas épocas, separar por vírgulas: '2022,2023,2024'.",
     )
     parser.add_argument(
         "--linha",
@@ -128,27 +128,50 @@ def main() -> None:
     linha = args.linha if args.linha != 2.5 or args.mercado == "golos" else 9.5
 
     relatorios = []
+    ligas_filtro = (
+        [l.strip() for l in args.ligas.split(",")] if args.ligas else None
+    )
+    epocas = [int(e.strip()) for e in str(args.epoca).split(",")]
     for modelo in modelos:
-        ligas_filtro = (
-            [l.strip() for l in args.ligas.split(",")] if args.ligas else None
+        for epoca in epocas:
+            rel = walk_forward.correr(
+                modelo=modelo,
+                mercado=args.mercado,
+                epoca_teste=epoca,
+                linha=linha,
+                ev_minimo=args.ev_minimo,
+                casa_de_apostas_ref=args.casa,
+                meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
+                peso_cantos=args.peso_cantos,
+                rho_dixon_coles=args.rho,
+                metrica_gap=args.metrica,
+                calibracao=args.calibracao,
+                frac_calibracao=args.frac_cal,
+                ligas_nomes=ligas_filtro,
+            )
+            print(fmt.formatar(rel))
+            relatorios.append(rel)
+
+    if len(relatorios) > 1:
+        print("\n" + "═" * 70)
+        print("  RESUMO MULTI-ÉPOCAS")
+        print("═" * 70)
+        total_apostas = sum(r.n_apostas for r in relatorios)
+        total_stake = sum(r.stake_total for r in relatorios)
+        total_lucro = sum(r.lucro for r in relatorios)
+        total_vitorias = sum(r.n_vitorias for r in relatorios)
+        roi_agg = total_lucro / total_stake if total_stake else 0.0
+        hit_agg = total_vitorias / total_apostas if total_apostas else 0.0
+        for r in relatorios:
+            print(
+                f"  {r.modelo:<8} {r.epoca_teste} | {r.n_apostas:>4} apostas "
+                f"| ROI {r.roi * 100:+6.2f}% | hit {r.hit_rate * 100:5.1f}%"
+            )
+        print(
+            f"  {'TOTAL':<8} ------ | {total_apostas:>4} apostas "
+            f"| ROI {roi_agg * 100:+6.2f}% | hit {hit_agg * 100:5.1f}%"
         )
-        rel = walk_forward.correr(
-            modelo=modelo,
-            mercado=args.mercado,
-            epoca_teste=args.epoca,
-            linha=linha,
-            ev_minimo=args.ev_minimo,
-            casa_de_apostas_ref=args.casa,
-            meia_vida_dias=cfg["modelo"]["decay_meia_vida_dias"],
-            peso_cantos=args.peso_cantos,
-            rho_dixon_coles=args.rho,
-            metrica_gap=args.metrica,
-            calibracao=args.calibracao,
-            frac_calibracao=args.frac_cal,
-            ligas_nomes=ligas_filtro,
-        )
-        print(fmt.formatar(rel))
-        relatorios.append(rel)
+        print("═" * 70)
 
     if not args.sem_dashboard:
         destino = dashboard.gerar(relatorios)
