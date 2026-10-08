@@ -63,10 +63,10 @@ def main() -> None:
     parser.add_argument("--stake", type=float, default=1.0,
                         help="Stake simulado por aposta (default 1 unidade).")
     parser.add_argument(
-        "--mercado", default="1x2",
-        choices=("golos", "1x2", "ambos"),
-        help="Mercado a trackear. Default '1x2' (todas as softs via Odds API "
-             "devolvem h2h; só algumas devolvem totals).",
+        "--mercado", default="todos",
+        choices=("golos", "1x2", "btts", "dupla", "handicap", "todos"),
+        help="Mercado a trackear. 'todos' = 1x2+golos+btts+dupla+handicap. "
+             "Mercados mais confortaveis (menos variancia): btts, dupla, handicap.",
     )
     parser.add_argument(
         "--casas-soft",
@@ -81,7 +81,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    mercados = ("golos", "1x2") if args.mercado == "ambos" else (args.mercado,)
+    if args.mercado == "todos":
+        mercados = ("1x2", "golos", "btts", "dupla", "handicap")
+    else:
+        mercados = (args.mercado,)
     casas_soft = tuple(c.strip() for c in args.casas_soft.split(","))
 
     sugestoes = analise_softs.identificar_sugestoes_softs(

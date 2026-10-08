@@ -88,9 +88,145 @@ def identificar_sugestoes_softs(
                     _analisar_1x2(s, jogo, casas_soft,
                                   ev_minimo, ev_maximo, odd_maxima)
                 )
+            if "btts" in mercados:
+                novas.extend(
+                    _analisar_btts(s, jogo, casas_soft,
+                                   ev_minimo, ev_maximo, odd_maxima)
+                )
+            if "dupla" in mercados:
+                novas.extend(
+                    _analisar_dupla(s, jogo, casas_soft,
+                                    ev_minimo, ev_maximo, odd_maxima)
+                )
+            if "handicap" in mercados:
+                novas.extend(
+                    _analisar_handicap(s, jogo, casas_soft,
+                                       ev_minimo, ev_maximo, odd_maxima)
+                )
 
     log.info("Identificadas %d divergências soft-vs-Pinnacle.", len(novas))
     return novas
+
+
+def _analisar_btts(
+    s, jogo: Jogo, casas_soft: tuple[str, ...],
+    ev_minimo: float, ev_maximo: float, odd_maxima: float,
+) -> list[SugestaoSoft]:
+    out = []
+    odd_pin_sim = _odd_de(s, jogo.id, "btts", None, "sim", CASA_FAIR)
+    odd_pin_nao = _odd_de(s, jogo.id, "btts", None, "nao", CASA_FAIR)
+    if odd_pin_sim is None or odd_pin_nao is None:
+        return out
+    try:
+        p_sim, p_nao = prob_justa_binaria(odd_pin_sim, odd_pin_nao)
+    except ValueError:
+        return out
+    for lado, p_fair, odd_pin in (("sim", p_sim, odd_pin_sim),
+                                   ("nao", p_nao, odd_pin_nao)):
+        for casa_soft in casas_soft:
+            odd_soft = _odd_de(s, jogo.id, "btts", None, lado, casa_soft)
+            if odd_soft is None or odd_soft <= 1.0 or odd_soft > odd_maxima:
+                continue
+            ev = calcular_ev(p_fair, odd_soft)
+            if ev < ev_minimo or ev > ev_maximo:
+                continue
+            nova = _gravar_se_nova(s, jogo, "btts", None, lado,
+                                    p_fair, odd_soft, ev, casa_soft)
+            if nova is None:
+                continue
+            out.append(_expandir(s, jogo, nova, casa_soft, p_fair, odd_pin, odd_soft))
+    return out
+
+
+def _analisar_dupla(
+    s, jogo: Jogo, casas_soft: tuple[str, ...],
+    ev_minimo: float, ev_maximo: float, odd_maxima: float,
+) -> list[SugestaoSoft]:
+    """Dupla hipotese: 1X, X2, 12. Fair prob derivada do 1x2 Pinnacle."""
+    out = []
+    odd_pin_c = _odd_de(s, jogo.id, "1x2", None, "casa", CASA_FAIR)
+    odd_pin_x = _odd_de(s, jogo.id, "1x2", None, "empate", CASA_FAIR)
+    odd_pin_f = _odd_de(s, jogo.id, "1x2", None, "fora", CASA_FAIR)
+    if not (odd_pin_c and odd_pin_x and odd_pin_f):
+        return out
+    try:
+        p_c, p_x, p_f = prob_justa_1x2(odd_pin_c, odd_pin_x, odd_pin_f)
+    except ValueError:
+        return out
+    probs = {"1x": p_c + p_x, "x2": p_x + p_f, "12": p_c + p_f}
+    for lado, p_fair in probs.items():
+        for casa_soft in casas_soft:
+            odd_soft = _odd_de(s, jogo.id, "dupla", None, lado, casa_soft)
+            if odd_soft is None or odd_soft <= 1.0 or odd_soft > odd_maxima:
+                continue
+            ev = calcular_ev(p_fair, odd_soft)
+            if ev < ev_minimo or ev > ev_maximo:
+                continue
+            # odd_pin para dupla: aproximacao
+            odd_pin_approx = 1.0 / p_fair
+            nova = _gravar_se_nova(s, jogo, "dupla", None, lado,
+                                    p_fair, odd_soft, ev, casa_soft)
+            if nova is None:
+                continue
+            out.append(_expandir(s, jogo, nova, casa_soft, p_fair, odd_pin_approx, odd_soft))
+    return out
+
+
+def _analisar_handicap(
+    s, jogo: Jogo, casas_soft: tuple[str, ...],
+    ev_minimo: float, ev_maximo: float, odd_maxima: float,
+) -> list[SugestaoSoft]:
+    out = []
+    # Procura todas as linhas de handicap que a Pinnacle tem
+    from sqlalchemy import select, distinct
+    linhas = s.scalars(
+        select(distinct(OddsCorrentes.linha)).where(
+            OddsCorrentes.jogo_id == jogo.id,
+            OddsCorrentes.mercado == "handicap",
+            OddsCorrentes.casa_de_apostas == CASA_FAIR,
+        )
+    ).all()
+    for linha in linhas:
+        if linha is None:
+            continue
+        # Pinnacle: linha casa + linha fora (soma = 0, ex +1.5 casa / -1.5 fora)
+        odd_pin_casa = _odd_de(s, jogo.id, "handicap", linha, "casa", CASA_FAIR)
+        odd_pin_fora = _odd_de(s, jogo.id, "handicap", -linha, "fora", CASA_FAIR)
+        if not (odd_pin_casa and odd_pin_fora):
+            continue
+        try:
+            p_casa, p_fora = prob_justa_binaria(odd_pin_casa, odd_pin_fora)
+        except ValueError:
+            continue
+        for lado, p_fair, linha_lado, odd_pin in (
+            ("casa", p_casa, linha, odd_pin_casa),
+            ("fora", p_fora, -linha, odd_pin_fora),
+        ):
+            for casa_soft in casas_soft:
+                odd_soft = _odd_de(s, jogo.id, "handicap", linha_lado, lado, casa_soft)
+                if odd_soft is None or odd_soft <= 1.0 or odd_soft > odd_maxima:
+                    continue
+                ev = calcular_ev(p_fair, odd_soft)
+                if ev < ev_minimo or ev > ev_maximo:
+                    continue
+                nova = _gravar_se_nova(s, jogo, "handicap", linha_lado, lado,
+                                        p_fair, odd_soft, ev, casa_soft)
+                if nova is None:
+                    continue
+                out.append(_expandir(s, jogo, nova, casa_soft, p_fair, odd_pin, odd_soft))
+    return out
+
+
+def _expandir(s, jogo: Jogo, sugestao, casa_soft: str,
+              prob_fair: float, odd_pin: float, odd_soft: float) -> SugestaoSoft:
+    liga = s.get(Liga, jogo.liga_id)
+    casa = s.get(Equipa, jogo.casa_id)
+    fora = s.get(Equipa, jogo.fora_id)
+    return SugestaoSoft(
+        sugestao=sugestao, jogo=jogo, liga=liga, casa=casa, fora=fora,
+        casa_soft=casa_soft, prob_fair=prob_fair,
+        odd_pinnacle=odd_pin, odd_soft=odd_soft,
+    )
 
 
 def _analisar_golos(

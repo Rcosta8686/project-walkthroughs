@@ -77,10 +77,23 @@ def main():
         mercado = s["mercado"]
         if mercado == "golos":
             aposta_label = f"{s['lado'].upper()} {s['linha']} golos"
-        else:  # 1x2
+        elif mercado == "1x2":
             lado_pt = {"casa": "1 (casa)", "empate": "X (empate)",
                        "fora": "2 (fora)"}[s["lado"]]
             aposta_label = f"1X2 {lado_pt}"
+        elif mercado == "btts":
+            lado_pt = "SIM (ambas marcam)" if s["lado"] == "sim" else "NAO (uma nao marca)"
+            aposta_label = f"BTTS {lado_pt}"
+        elif mercado == "dupla":
+            lado_pt = {"1x": "1X (casa/empate)", "x2": "X2 (empate/fora)",
+                       "12": "12 (casa/fora)"}[s["lado"]]
+            aposta_label = f"Dupla {lado_pt}"
+        elif mercado == "handicap":
+            lado_pt = s["lado"].upper()
+            sinal = "+" if float(s["linha"]) >= 0 else ""
+            aposta_label = f"Handicap {lado_pt} {sinal}{s['linha']}"
+        else:
+            aposta_label = f"{mercado} {s['lado']}"
         casa = s["casa_soft"]
         url = _URLS_CASAS.get(casa, "")
         prob = float(s["prob_fair"]) * 100

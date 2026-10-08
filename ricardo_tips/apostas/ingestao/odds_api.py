@@ -337,7 +337,9 @@ def _puxar_odds_sport(
     params = {
         "apiKey": key,
         "regions": regions,
-        "markets": "h2h,totals",
+        # Expandido: 1X2, Over/Under, BTTS, Handicap Asiatico, Dupla Hipotese.
+        # Cada mercado adicional cobra +1 credit por region por chamada.
+        "markets": "h2h,totals,btts,spreads,double_chance",
         "oddsFormat": "decimal",
         "bookmakers": bookmakers,
     }
@@ -487,7 +489,64 @@ def _grava_mercado(
             linha = float(o.get("point", 2.5))
             if _upsert_odd(s, jogo.id, "golos", linha, nome, float(o["price"]), casa_apostas, resultado):
                 atualizou = True
+
+    elif tipo == "btts":
+        # Both Teams To Score: outcomes {"name": "Yes"/"No", "price": ...}
+        for o in outcomes:
+            nome = (o.get("name") or "").lower()
+            if nome not in ("yes", "no"):
+                continue
+            lado = "sim" if nome == "yes" else "nao"
+            if _upsert_odd(s, jogo.id, "btts", None, lado, float(o["price"]), casa_apostas, resultado):
+                atualizou = True
+
+    elif tipo == "spreads":
+        # Asian Handicap: outcomes {"name": nome_equipa, "price": ..., "point": +/-X.X}
+        for o in outcomes:
+            lado = _lado_1x2(o.get("name"), nome_casa, nome_fora)
+            if lado is None or lado == "empate":
+                continue  # handicap tem só 2 outcomes (casa/fora)
+            try:
+                point = float(o.get("point"))
+            except (TypeError, ValueError):
+                continue
+            if _upsert_odd(s, jogo.id, "handicap", point, lado, float(o["price"]), casa_apostas, resultado):
+                atualizou = True
+
+    elif tipo == "double_chance":
+        # Dupla hipotese: outcomes {"name": "Home/Draw"|"Home/Away"|"Draw/Away", "price": ...}
+        for o in outcomes:
+            nome = (o.get("name") or "")
+            lado = _lado_dupla(nome, nome_casa, nome_fora)
+            if lado is None:
+                continue
+            if _upsert_odd(s, jogo.id, "dupla", None, lado, float(o["price"]), casa_apostas, resultado):
+                atualizou = True
     return atualizou
+
+
+def _lado_dupla(nome: str, nome_casa: str, nome_fora: str) -> str | None:
+    """Mapeia o nome do outcome da Odds API para codigo 1X / X2 / 12."""
+    if not nome:
+        return None
+    nome_n = nome.replace(" ", "").lower()
+    # Formato Odds API: "Home/Draw", "Draw/Away", "Home/Away"
+    if "draw" in nome_n and ("home" in nome_n or _canoniza_part(nome, nome_casa) == nome_casa):
+        return "1x"  # casa ou empate
+    if "draw" in nome_n and ("away" in nome_n or _canoniza_part(nome, nome_fora) == nome_fora):
+        return "x2"  # empate ou fora
+    if "home" in nome_n and "away" in nome_n:
+        return "12"  # casa ou fora
+    # Outros formatos: 'Casa/Empate'
+    return None
+
+
+def _canoniza_part(nome: str, equipa_nome: str) -> str:
+    # Trata caso em que o nome tem format 'Arsenal/Draw'
+    for p in nome.split("/"):
+        if p.strip() == equipa_nome:
+            return equipa_nome
+    return nome
 
 
 def _upsert_odd(
