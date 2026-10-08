@@ -25,9 +25,11 @@ def _formatar(rel) -> str:
     linhas = ["═" * 70]
     linhas.append(f"  BACKTEST PINNACLE→SOFTS — época {rel.epoca_teste}")
     linhas.append("═" * 70)
+    linhas.append(f"  Mercado:        {rel.mercado}")
     linhas.append(f"  Fair:           {rel.casa_fair}")
     linhas.append(f"  Soft books:     {', '.join(rel.casas_soft)}")
-    linhas.append(f"  Linha:          Over/Under {rel.linha} golos")
+    if rel.mercado == "golos":
+        linhas.append(f"  Linha:          Over/Under {rel.linha} golos")
     linhas.append(f"  EV mínimo:      {rel.ev_minimo * 100:.1f}%")
     linhas.append("")
     if rel.n_apostas == 0:
@@ -59,7 +61,7 @@ def _formatar(rel) -> str:
         )
     # Por lado
     linhas.append("  ── Por lado ───────────────────────────────────────")
-    for lado in ("over", "under"):
+    for lado in ("over", "under", "casa", "empate", "fora"):
         aps = [a for a in rel.apostas if a.lado == lado]
         if not aps:
             continue
@@ -83,7 +85,13 @@ def main() -> None:
         "--epoca", default="2024",
         help="Época(s) a testar, separadas por vírgula (ex: '2022,2023,2024').",
     )
-    parser.add_argument("--linha", type=float, default=2.5)
+    parser.add_argument("--linha", type=float, default=2.5,
+                        help="Linha Over/Under (só usado para --mercado golos)")
+    parser.add_argument(
+        "--mercado", choices=("golos", "1x2"), default="golos",
+        help="'golos' (Over/Under) ou '1x2' (resultado final). "
+             "Para 1x2, usar `--softs B365,BW` (as casas 1x2 do CSV).",
+    )
     parser.add_argument(
         "--ev-minimo", type=float,
         default=cfg["value_betting"]["ev_minimo"],
@@ -124,6 +132,7 @@ def main() -> None:
             casa_fair=args.fair,
             casas_soft=casas_soft,
             ligas_nomes=ligas_filtro,
+            mercado=args.mercado,
         )
         print(_formatar(rel))
         relatorios.append(rel)

@@ -17,7 +17,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from apostas.modelos.no_vig import prob_justa_binaria
+from apostas.modelos.no_vig import prob_justa_1x2, prob_justa_binaria
 from apostas.modelos.value import ev as calcular_ev
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
@@ -32,7 +32,8 @@ class ApostaSoft:
     liga_id: int
     jogo_id: int
     casa_soft: str
-    linha: float
+    mercado: str   # "golos" ou "1x2"
+    linha: float | None
     lado: str
     prob_fair: float
     odd_soft: float
@@ -48,6 +49,7 @@ class RelatorioSofts:
     epoca_teste: int
     linha: float
     ev_minimo: float
+    mercado: str = "golos"
     casa_fair: str = "Pinnacle_Closing"
     casas_soft: list[str] = field(default_factory=list)
     apostas: list[ApostaSoft] = field(default_factory=list)
@@ -85,11 +87,15 @@ def correr(
     casa_fair: str = "Pinnacle_Closing",
     casas_soft: tuple[str, ...] = ("B365", "WH", "BW", "VC"),
     ligas_nomes: list[str] | None = None,
+    mercado: str = "golos",
 ) -> RelatorioSofts:
-    """Backtest da estratégia Pinnacle-fair vs várias soft books."""
+    """Backtest da estratégia Pinnacle-fair vs várias soft books.
+
+    `mercado`: 'golos' (over/under `linha`) ou '1x2' (resultado final).
+    """
     rel = RelatorioSofts(
         epoca_teste=epoca_teste, linha=linha, ev_minimo=ev_minimo,
-        casa_fair=casa_fair, casas_soft=list(casas_soft),
+        mercado=mercado, casa_fair=casa_fair, casas_soft=list(casas_soft),
     )
 
     with abrir_sessao() as s:
@@ -105,49 +111,20 @@ def correr(
         jogos = s.scalars(q.order_by(Jogo.data_utc)).all()
 
         log.info(
-            "Backtest softs em %d jogos da época %d (fair=%s, softs=%s)",
-            len(jogos), epoca_teste, casa_fair, casas_soft,
+            "Backtest softs em %d jogos da época %d (mercado=%s, fair=%s, softs=%s)",
+            len(jogos), epoca_teste, mercado, casa_fair, casas_soft,
         )
 
         for jogo in jogos:
-            odd_pin_over = _odd(s, jogo.id, linha, "over", casa_fair)
-            odd_pin_under = _odd(s, jogo.id, linha, "under", casa_fair)
-            if odd_pin_over is None or odd_pin_under is None:
-                continue
-            try:
-                p_over_fair, p_under_fair = prob_justa_binaria(
-                    odd_pin_over, odd_pin_under
+            if mercado == "golos":
+                _processar_golos(
+                    s, jogo, rel, linha, casa_fair, casas_soft,
+                    ev_minimo, stake,
                 )
-            except ValueError:
-                continue
-
-            golos_total = (jogo.golos_casa or 0) + (jogo.golos_fora or 0)
-            foi_over = golos_total > linha
-
-            for casa_soft in casas_soft:
-                for lado, p_fair, odd_pin in (
-                    ("over", p_over_fair, odd_pin_over),
-                    ("under", p_under_fair, odd_pin_under),
-                ):
-                    odd_soft = _odd(s, jogo.id, linha, lado, casa_soft)
-                    if odd_soft is None or odd_soft <= 1.0:
-                        continue
-                    ev = calcular_ev(p_fair, odd_soft)
-                    if ev < ev_minimo:
-                        continue
-                    ganhou = (lado == "over" and foi_over) or (
-                        lado == "under" and not foi_over
-                    )
-                    lucro = stake * (odd_soft - 1) if ganhou else -stake
-                    rel.apostas.append(ApostaSoft(
-                        data=jogo.data_utc, liga_id=jogo.liga_id,
-                        jogo_id=jogo.id, casa_soft=casa_soft,
-                        linha=linha, lado=lado, prob_fair=p_fair,
-                        odd_soft=odd_soft, odd_pinnacle=odd_pin,
-                        ev=ev, stake=stake,
-                        resultado="ganho" if ganhou else "perdido",
-                        lucro=lucro,
-                    ))
+            elif mercado == "1x2":
+                _processar_1x2(
+                    s, jogo, rel, casa_fair, casas_soft, ev_minimo, stake,
+                )
 
     log.info(
         "Backtest softs terminado: %d apostas, ROI=%.2f%%, lucro=%.2f",
@@ -156,13 +133,104 @@ def correr(
     return rel
 
 
+def _processar_golos(
+    s, jogo: Jogo, rel: RelatorioSofts, linha: float, casa_fair: str,
+    casas_soft: tuple[str, ...], ev_minimo: float, stake: float,
+) -> None:
+    odd_pin_over = _odd(s, jogo.id, "golos", linha, "over", casa_fair)
+    odd_pin_under = _odd(s, jogo.id, "golos", linha, "under", casa_fair)
+    if odd_pin_over is None or odd_pin_under is None:
+        return
+    try:
+        p_over_fair, p_under_fair = prob_justa_binaria(odd_pin_over, odd_pin_under)
+    except ValueError:
+        return
+
+    golos_total = (jogo.golos_casa or 0) + (jogo.golos_fora or 0)
+    foi_over = golos_total > linha
+
+    for casa_soft in casas_soft:
+        for lado, p_fair, odd_pin in (
+            ("over", p_over_fair, odd_pin_over),
+            ("under", p_under_fair, odd_pin_under),
+        ):
+            odd_soft = _odd(s, jogo.id, "golos", linha, lado, casa_soft)
+            if odd_soft is None or odd_soft <= 1.0:
+                continue
+            ev = calcular_ev(p_fair, odd_soft)
+            if ev < ev_minimo:
+                continue
+            ganhou = (lado == "over" and foi_over) or (
+                lado == "under" and not foi_over
+            )
+            lucro = stake * (odd_soft - 1) if ganhou else -stake
+            rel.apostas.append(ApostaSoft(
+                data=jogo.data_utc, liga_id=jogo.liga_id,
+                jogo_id=jogo.id, casa_soft=casa_soft,
+                mercado="golos", linha=linha, lado=lado, prob_fair=p_fair,
+                odd_soft=odd_soft, odd_pinnacle=odd_pin,
+                ev=ev, stake=stake,
+                resultado="ganho" if ganhou else "perdido",
+                lucro=lucro,
+            ))
+
+
+def _processar_1x2(
+    s, jogo: Jogo, rel: RelatorioSofts, casa_fair: str,
+    casas_soft: tuple[str, ...], ev_minimo: float, stake: float,
+) -> None:
+    odd_pin_c = _odd(s, jogo.id, "1x2", None, "casa", casa_fair)
+    odd_pin_x = _odd(s, jogo.id, "1x2", None, "empate", casa_fair)
+    odd_pin_f = _odd(s, jogo.id, "1x2", None, "fora", casa_fair)
+    if odd_pin_c is None or odd_pin_x is None or odd_pin_f is None:
+        return
+    try:
+        p_c, p_x, p_f = prob_justa_1x2(odd_pin_c, odd_pin_x, odd_pin_f)
+    except ValueError:
+        return
+
+    # Resultado real
+    gc = jogo.golos_casa or 0
+    gf = jogo.golos_fora or 0
+    if gc > gf:
+        resultado_real = "casa"
+    elif gc < gf:
+        resultado_real = "fora"
+    else:
+        resultado_real = "empate"
+
+    for casa_soft in casas_soft:
+        for lado, p_fair, odd_pin in (
+            ("casa", p_c, odd_pin_c),
+            ("empate", p_x, odd_pin_x),
+            ("fora", p_f, odd_pin_f),
+        ):
+            odd_soft = _odd(s, jogo.id, "1x2", None, lado, casa_soft)
+            if odd_soft is None or odd_soft <= 1.0:
+                continue
+            ev = calcular_ev(p_fair, odd_soft)
+            if ev < ev_minimo:
+                continue
+            ganhou = (lado == resultado_real)
+            lucro = stake * (odd_soft - 1) if ganhou else -stake
+            rel.apostas.append(ApostaSoft(
+                data=jogo.data_utc, liga_id=jogo.liga_id,
+                jogo_id=jogo.id, casa_soft=casa_soft,
+                mercado="1x2", linha=None, lado=lado, prob_fair=p_fair,
+                odd_soft=odd_soft, odd_pinnacle=odd_pin,
+                ev=ev, stake=stake,
+                resultado="ganho" if ganhou else "perdido",
+                lucro=lucro,
+            ))
+
+
 def _odd(
-    s, jogo_id: int, linha: float, lado: str, casa: str,
+    s, jogo_id: int, mercado: str, linha: float | None, lado: str, casa: str,
 ) -> float | None:
     o = s.scalar(
         select(OddsFecho).where(
             OddsFecho.jogo_id == jogo_id,
-            OddsFecho.mercado == "golos",
+            OddsFecho.mercado == mercado,
             OddsFecho.linha == linha,
             OddsFecho.lado == lado,
             OddsFecho.casa_de_apostas == casa,
