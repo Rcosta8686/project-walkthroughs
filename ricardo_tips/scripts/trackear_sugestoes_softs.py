@@ -72,6 +72,10 @@ def main() -> None:
         "--casas-soft", default="unibet,williamhill,bet365,betano",
         help="Casas soft a comparar com Pinnacle (lowercase, keys Odds API).",
     )
+    parser.add_argument(
+        "--ev-minimo", type=float, default=None,
+        help="EV mínimo (ex: 0.05 = 5%). Default usa `value_betting.ev_minimo` do config.yaml.",
+    )
     args = parser.parse_args()
 
     mercados = ("golos", "1x2") if args.mercado == "ambos" else (args.mercado,)
@@ -81,6 +85,7 @@ def main() -> None:
         janela_horas=(0.0, args.horas_fim),
         mercados=mercados,
         casas_soft=casas_soft,
+        ev_minimo_override=args.ev_minimo,
     )
 
     if not sugestoes:

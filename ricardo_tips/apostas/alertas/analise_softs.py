@@ -45,11 +45,12 @@ def identificar_sugestoes_softs(
     janela_horas: tuple[float, float] = (0.0, 24.0),
     mercados: tuple[str, ...] = ("golos",),
     casas_soft: tuple[str, ...] = ("betano", "bet365", "williamhill", "unibet"),
+    ev_minimo_override: float | None = None,
 ) -> list[SugestaoSoft]:
     """Varre jogos agendados; marca onde soft books divergem da Pinnacle."""
     cfg = load_config()
     vb_cfg = cfg["value_betting"]
-    ev_minimo = float(vb_cfg["ev_minimo"])
+    ev_minimo = ev_minimo_override if ev_minimo_override is not None else float(vb_cfg["ev_minimo"])
     ev_maximo = float(vb_cfg.get("ev_maximo", 0.25))
     odd_maxima = float(vb_cfg.get("odd_maxima", 7.0))
     linhas_cfg = cfg["mercados"]["golos"]["linhas"]
