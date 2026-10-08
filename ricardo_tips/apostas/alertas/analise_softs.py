@@ -178,13 +178,13 @@ def _analisar_handicap(
 ) -> list[SugestaoSoft]:
     out = []
     # Procura todas as linhas de handicap que a Pinnacle tem
-    from sqlalchemy import select, distinct
+    from sqlalchemy import select
     linhas = s.scalars(
-        select(distinct(OddsCorrentes.linha)).where(
+        select(OddsCorrentes.linha).where(
             OddsCorrentes.jogo_id == jogo.id,
             OddsCorrentes.mercado == "handicap",
             OddsCorrentes.casa_de_apostas == CASA_FAIR,
-        )
+        ).distinct()
     ).all()
     for linha in linhas:
         if linha is None:

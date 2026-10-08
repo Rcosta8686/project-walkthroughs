@@ -337,9 +337,10 @@ def _puxar_odds_sport(
     params = {
         "apiKey": key,
         "regions": regions,
-        # Expandido: 1X2, Over/Under, BTTS, Handicap Asiatico, Dupla Hipotese.
-        # Cada mercado adicional cobra +1 credit por region por chamada.
-        "markets": "h2h,totals,btts,spreads,double_chance",
+        # Endpoint standard suporta: h2h (1X2), totals (O/U), spreads (handicap
+        # asiatico). BTTS e double_chance precisam de /events/{id}/odds separado
+        # (1 chamada por jogo, mais caro em credits — nao implementado ainda).
+        "markets": "h2h,totals,spreads",
         "oddsFormat": "decimal",
         "bookmakers": bookmakers,
     }
