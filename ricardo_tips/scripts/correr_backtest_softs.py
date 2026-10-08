@@ -57,6 +57,21 @@ def _formatar(rel) -> str:
             f"  {casa:<10} | {n:>4} apostas | hit {vit / n * 100:5.1f}% "
             f"| ROI {roi * 100:+6.2f}% | lucro {lucro:+.2f}"
         )
+    # Por lado
+    linhas.append("  ── Por lado ───────────────────────────────────────")
+    for lado in ("over", "under"):
+        aps = [a for a in rel.apostas if a.lado == lado]
+        if not aps:
+            continue
+        n = len(aps)
+        vit = sum(1 for a in aps if a.resultado == "ganho")
+        lucro = sum(a.lucro for a in aps)
+        stake = sum(a.stake for a in aps)
+        roi = lucro / stake if stake else 0
+        linhas.append(
+            f"  {lado:<10} | {n:>4} apostas | hit {vit / n * 100:5.1f}% "
+            f"| ROI {roi * 100:+6.2f}% | lucro {lucro:+.2f}"
+        )
     linhas.append("═" * 70)
     return "\n".join(linhas)
 
