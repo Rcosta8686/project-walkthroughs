@@ -23,6 +23,11 @@ def formatar(rel: RelatorioBacktest) -> str:
     linhas.append(f"  Casa de apostas:      {rel.casa_de_apostas_ref}")
     linhas.append(f"  EV mínimo:            {rel.ev_minimo * 100:.1f}%")
     linhas.append(f"  Meia-vida do decaimento: {rel.meia_vida_dias:.0f} dias")
+    if rel.calibracao != "nenhuma":
+        linhas.append(
+            f"  Calibração:           {rel.calibracao} "
+            f"(fit em {rel.n_jogos_calibracao} pares)"
+        )
     linhas.append("")
 
     if rel.n_apostas == 0:

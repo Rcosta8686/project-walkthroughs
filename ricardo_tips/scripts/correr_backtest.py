@@ -94,6 +94,20 @@ def main() -> None:
         default=0.1,
         help="Correção Dixon-Coles para resultados baixos (0 = desligado; típico ~0.1)",
     )
+    parser.add_argument(
+        "--calibracao",
+        choices=("nenhuma", "platt", "isotonic"),
+        default="nenhuma",
+        help="Calibração das probabilidades do modelo. 'platt' (sigmoid 2-param) "
+             "ou 'isotonic' (não-paramétrico). Fit nos primeiros %% da época "
+             "(ver --frac-cal), aplica aos restantes jogos.",
+    )
+    parser.add_argument(
+        "--frac-cal",
+        type=float,
+        default=0.4,
+        help="Fração dos jogos da época para fitar o calibrador (default 0.4).",
+    )
     args = parser.parse_args()
 
     if args.mercado == "cantos":
@@ -119,6 +133,8 @@ def main() -> None:
             peso_cantos=args.peso_cantos,
             rho_dixon_coles=args.rho,
             metrica_gap=args.metrica,
+            calibracao=args.calibracao,
+            frac_calibracao=args.frac_cal,
         )
         print(fmt.formatar(rel))
         relatorios.append(rel)

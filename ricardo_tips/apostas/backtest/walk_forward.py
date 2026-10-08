@@ -17,6 +17,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
+from apostas.modelos.calibracao import Calibrador
 from apostas.modelos.cantos import JogoHistoricoCantos, ModeloCantos
 from apostas.modelos.gap import JogoHistoricoGAP, ModeloGAP
 from apostas.modelos.poisson import JogoHistorico, ModeloPoisson
@@ -29,6 +30,7 @@ log = get_logger(__name__)
 
 MODELOS_DISPONIVEIS = ("poisson", "gap", "cantos")
 MERCADOS_DISPONIVEIS = ("golos", "cantos")
+CALIBRACOES_DISPONIVEIS = ("nenhuma", "platt", "isotonic")
 
 
 @dataclass
@@ -57,6 +59,8 @@ class RelatorioBacktest:
     epoca_teste: int
     modelo: str = "poisson"
     mercado: str = "golos"
+    calibracao: str = "nenhuma"
+    n_jogos_calibracao: int = 0
 
     apostas: list[ApostaSimulada] = field(default_factory=list)
     bankroll: list[tuple[datetime, float]] = field(default_factory=list)
@@ -109,6 +113,8 @@ def correr(
     rho_dixon_coles: float = 0.0,
     mercado: str = "golos",
     metrica_gap: str = "shots_corners",
+    calibracao: str = "nenhuma",
+    frac_calibracao: float = 0.4,
 ) -> RelatorioBacktest:
     if modelo not in MODELOS_DISPONIVEIS:
         raise ValueError(
@@ -117,6 +123,10 @@ def correr(
     if mercado not in MERCADOS_DISPONIVEIS:
         raise ValueError(
             f"Mercado '{mercado}' desconhecido. Usa um de: {MERCADOS_DISPONIVEIS}"
+        )
+    if calibracao not in CALIBRACOES_DISPONIVEIS:
+        raise ValueError(
+            f"Calibração '{calibracao}' desconhecida. Usa uma de: {CALIBRACOES_DISPONIVEIS}"
         )
     if mercado == "cantos" and modelo != "cantos":
         modelo = "cantos"  # força o modelo adequado para o mercado
@@ -129,6 +139,7 @@ def correr(
         epoca_teste=epoca_teste,
         modelo=modelo,
         mercado=mercado,
+        calibracao=calibracao,
     )
     bankroll_corrente = 0.0
 
@@ -139,12 +150,43 @@ def correr(
             .order_by(Jogo.data_utc)
         ).all()
 
+        # Divide os jogos: primeiros N% para fitar o calibrador, restantes
+        # para o backtest "accionável". Com calibracao="nenhuma" o split
+        # colapsa (idx_corte = 0).
+        if calibracao == "nenhuma":
+            idx_corte = 0
+            calibrador = Calibrador("nenhuma")
+            calibrador.fit([], [])
+        else:
+            idx_corte = int(len(jogos_teste) * frac_calibracao)
+            probs_cal, labels_cal = _coletar_probs_para_calibracao(
+                s, jogos_teste[:idx_corte], modelo, mercado, linha,
+                meia_vida_dias, peso_cantos, rho_dixon_coles, metrica_gap,
+            )
+            if len(probs_cal) < 50:
+                log.warning(
+                    "Apenas %d pares para calibração; a saltar calibração.",
+                    len(probs_cal),
+                )
+                calibracao = "nenhuma"
+                idx_corte = 0
+                calibrador = Calibrador("nenhuma")
+                calibrador.fit([], [])
+            else:
+                calibrador = Calibrador(calibracao)
+                calibrador.fit(probs_cal, labels_cal)
+                rel.n_jogos_calibracao = len(probs_cal)
+                log.info(
+                    "Calibrador '%s' fittado em %d pares (%.0f%% da época).",
+                    calibracao, len(probs_cal), 100 * frac_calibracao,
+                )
+
         log.info(
-            "Backtest (modelo=%s) sobre %d jogos da época %d.",
-            modelo, len(jogos_teste), epoca_teste,
+            "Backtest (modelo=%s, calibracao=%s) sobre %d jogos da época %d.",
+            modelo, calibracao, len(jogos_teste) - idx_corte, epoca_teste,
         )
 
-        for jogo in jogos_teste:
+        for jogo in jogos_teste[idx_corte:]:
             historicos = _historicos_antes_de(s, jogo.data_utc, jogo.liga_id, modelo)
             if len(historicos) < 10:
                 continue  # amostra pequena de mais
@@ -158,9 +200,11 @@ def correr(
                 continue  # histórico insuficiente para esta métrica
 
             try:
-                p_over = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
+                p_over_raw = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
             except KeyError:
                 continue  # equipa desconhecida pelo modelo
+            # Aplica calibrador (identidade se calibracao="nenhuma")
+            p_over = calibrador.transform(p_over_raw)
             p_under = 1.0 - p_over
 
             odd_over = _odd(s, jogo.id, mercado, linha, "over", casa_de_apostas_ref)
@@ -342,3 +386,47 @@ def _odd(
         )
     )
     return o.odd if o else None
+
+
+def _coletar_probs_para_calibracao(
+    s,
+    jogos: list[Jogo],
+    modelo: str,
+    mercado: str,
+    linha: float,
+    meia_vida_dias: float,
+    peso_cantos: float,
+    rho_dixon_coles: float,
+    metrica_gap: str,
+) -> tuple[list[float], list[int]]:
+    """Percorre jogos recolhendo (p_over, foi_over) sem apostar.
+
+    Serve de validation set para fittar o Calibrador. Usa walk-forward
+    puro: cada jogo treina o modelo com os jogos ANTERIORES à sua data.
+    """
+    probs: list[float] = []
+    labels: list[int] = []
+    for jogo in jogos:
+        historicos = _historicos_antes_de(s, jogo.data_utc, jogo.liga_id, modelo)
+        if len(historicos) < 10:
+            continue
+        modelo_obj = _criar_modelo(
+            modelo, meia_vida_dias, peso_cantos, rho_dixon_coles, metrica_gap,
+        )
+        try:
+            modelo_obj.fit(historicos, referencia=jogo.data_utc)
+        except ValueError:
+            continue
+        try:
+            p = modelo_obj.prob_over(jogo.casa_id, jogo.fora_id, linha)
+        except KeyError:
+            continue
+        if mercado == "golos":
+            total = (jogo.golos_casa or 0) + (jogo.golos_fora or 0)
+        else:
+            total = _total_cantos(s, jogo)
+            if total is None:
+                continue
+        probs.append(p)
+        labels.append(1 if total > linha else 0)
+    return probs, labels
