@@ -108,20 +108,14 @@ def _parse_matches_json(html: str) -> list[dict]:
             try:
                 return json.loads(decoded)
             except json.JSONDecodeError as exc:
-                log.warning("Falha a parsear %s: %s", nome, exc)
+                log.debug("Falha a parsear %s: %s", nome, exc)
                 continue
 
+    # Mensagens de erro mais compactas (uma linha, não cospe 500 chars de HTML).
     if variaveis_vistas:
-        log.warning(
-            "Understat: nenhum datesData/matchesData, mas vi: %s "
-            "(cola isto no chat para diagnóstico)",
+        log.debug(
+            "Understat: nenhum datesData/matchesData; vars vistas: %s",
             variaveis_vistas[:10],
-        )
-    else:
-        log.warning(
-            "Understat: HTML não tem padrões JSON.parse esperados "
-            "(primeiros 500 chars: %s)",
-            html[:500].replace("\n", " "),
         )
     return []
 
@@ -230,6 +224,11 @@ def sincronizar(
         resultado.jogos_atualizados, resultado.jogos_sem_match,
         len(resultado.equipas_sem_match),
     )
+    if resultado.jogos_atualizados == 0 and modo != "desenvolvimento":
+        log.warning(
+            "Understat: 0 jogos atualizados — formato do site pode ter mudado. "
+            "Corre `python scripts/diagnosticar_understat.py` e partilha o output."
+        )
     return resultado
 
 
