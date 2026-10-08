@@ -51,8 +51,12 @@ def identificar_sugestoes_softs(
     cfg = load_config()
     vb_cfg = cfg["value_betting"]
     ev_minimo = ev_minimo_override if ev_minimo_override is not None else float(vb_cfg["ev_minimo"])
-    ev_maximo = float(vb_cfg.get("ev_maximo", 0.25))
-    odd_maxima = float(vb_cfg.get("odd_maxima", 7.0))
+    # Scanner Pinnacle→softs usa Pinnacle como fair (não modelo caseiro),
+    # portanto limites mais permissivos que para o modelo GAP:
+    #   ev_maximo: 40% (vs 25% para GAP). Edges em outsiders podem passar.
+    #   odd_maxima: 15 (vs 7 para GAP). Softs atrasam mais em outsiders.
+    ev_maximo = float(vb_cfg.get("ev_maximo_softs", vb_cfg.get("ev_maximo", 0.40)))
+    odd_maxima = float(vb_cfg.get("odd_maxima_softs", vb_cfg.get("odd_maxima", 15.0)))
     linhas_cfg = cfg["mercados"]["golos"]["linhas"]
     lados_cfg = cfg["mercados"]["golos"]["lados"]
 

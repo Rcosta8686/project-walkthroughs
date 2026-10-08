@@ -56,11 +56,12 @@ backtest:
 # Motor de value betting
 value_betting:
   ev_minimo: 0.08                   # EV mínimo (8%) para sugerir aposta
-  ev_maximo: 0.25                   # EV máx 25% — acima disso é mais provável
-                                    # ser bug/dados maus do que valor real
-                                    # (Pinnacle é demasiado eficiente)
-  odd_maxima: 7.0                   # odd máx — acima disso variância é
-                                    # demasiado alta para apostar em flat stake
+  # Limites para o modelo GAP caseiro (sanity checks contra EVs inflados):
+  ev_maximo: 0.25                   # EV máx 25% para modelo caseiro
+  odd_maxima: 7.0                   # odd máx para modelo caseiro
+  # Limites para scanner Pinnacle→softs (Pinnacle é fair, não modelo caseiro):
+  ev_maximo_softs: 0.40             # EV máx 40% — edges em outsiders validos
+  odd_maxima_softs: 15.0            # odd máx 15 — softs atrasam linhas em outsiders
   bookmaker_referencia: "22bet"
   bookmaker_fallback: "pinnacle"    # usado quando não há 22bet disponível
   remover_overround: true           # devolver margem da casa antes de calcular EV

@@ -71,7 +71,8 @@ def main() -> None:
     parser.add_argument(
         "--casas-soft",
         default="paddypower,skybet,boylesports,betway,virginbet,betvictor,"
-                "betfred_uk,betano_uk,unibet_uk,coral,williamhill,sport888",
+                "betfred_uk,betano_uk,unibet_uk,coral,williamhill,sport888,"
+                "onexbet",
         help="Casas soft a comparar com Pinnacle (keys exactas Odds API).",
     )
     parser.add_argument(
