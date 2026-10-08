@@ -208,15 +208,22 @@ def sincronizar(
                 resultado.erros.append(f"Liga '{nome_liga}' não existe na BD.")
                 continue
             for ano in epocas:
+                log.info("  → %s %d/%d", nome_liga, ano, ano + 1)
                 try:
                     html = _obter_html(slug, ano, modo)
                     matches = _parse_matches_json(html)
                 except Exception as exc:  # noqa: BLE001
                     resultado.erros.append(f"{nome_liga} {ano}: {exc}")
+                    log.warning("    ✗ %s %d falhou: %s", nome_liga, ano, exc)
                     continue
 
+                n_antes = resultado.jogos_atualizados
                 for match in matches:
                     _processar_match(s, match, liga, resultado)
+                log.info(
+                    "    ✓ %d matches no HTML, %d jogos actualizados",
+                    len(matches), resultado.jogos_atualizados - n_antes,
+                )
 
     log.info(
         "Understat: %d jogos atualizados com xG, %d sem match, %d equipas sem match",

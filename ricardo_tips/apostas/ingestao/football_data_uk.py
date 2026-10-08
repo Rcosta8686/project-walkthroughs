@@ -227,13 +227,20 @@ def sincronizar(
                 resultado.erros.append(f"Liga '{nome_liga}' não existe na BD — correr ingestão de ligas primeiro.")
                 continue
             for epoca in epocas:
+                log.info("  → %s %d/%d", nome_liga, epoca, epoca + 1)
                 try:
                     csv_texto = _obter_csv(codigo, epoca, modo)
                     df = _ler_dataframe(csv_texto)
                 except Exception as exc:  # noqa: BLE001
                     resultado.erros.append(f"{nome_liga} {epoca}: {exc}")
+                    log.warning("    ✗ %s %d falhou: %s", nome_liga, epoca, exc)
                     continue
+                n_antes = resultado.jogos_criados
                 _processar_dataframe(s, df, liga, epoca, resultado)
+                log.info(
+                    "    ✓ %d linhas processadas, %d jogos novos",
+                    len(df), resultado.jogos_criados - n_antes,
+                )
 
     log.info(
         "football-data: %d jogos (%d novos), %d odds (%d novas), "
