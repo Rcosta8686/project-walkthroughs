@@ -175,7 +175,9 @@ def correr(
             foi_over = valor_total > linha
 
             for lado, p_modelo, odd in (("over", p_over, odd_over), ("under", p_under, odd_under)):
-                if odd is None:
+                if odd is None or odd <= 1.0:
+                    # odd <= 1 significa valor em branco no CSV (gravado como 0)
+                    # ou odd impossível; não é apostável.
                     continue
                 ev_val = calcular_ev(p_modelo, odd)
                 if ev_val < ev_minimo:

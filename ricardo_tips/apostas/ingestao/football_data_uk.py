@@ -190,6 +190,10 @@ def _upsert_odd(
     casa: str,
     resultado: ResultadoIngestaoFD,
 ) -> None:
+    # odd <= 1 significa que a coluna estava em branco no CSV
+    # (pandas converte NaN para 0.0). Ignora.
+    if odd is None or odd <= 1.0:
+        return
     existente = s.scalar(
         select(OddsFecho).where(
             OddsFecho.jogo_id == jogo_id,

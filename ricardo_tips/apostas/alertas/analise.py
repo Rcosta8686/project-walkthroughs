@@ -180,7 +180,10 @@ def _odd_referencia(
     s, jogo_id: int, linha: float | None, lado: str, casa: str,
     mercado: str = "golos",
 ) -> float | None:
-    """Prefere odds correntes (The Odds API) às de fecho históricas."""
+    """Prefere odds correntes (The Odds API) às de fecho históricas.
+
+    Devolve None para odd <= 1.0 (valor em branco no CSV ou impossível).
+    """
     corrente = s.scalar(
         select(OddsCorrentes).where(
             OddsCorrentes.jogo_id == jogo_id,
@@ -190,7 +193,7 @@ def _odd_referencia(
             OddsCorrentes.casa_de_apostas == "pinnacle",
         ).order_by(OddsCorrentes.timestamp.desc())
     )
-    if corrente is not None:
+    if corrente is not None and corrente.odd > 1.0:
         return corrente.odd
 
     o = s.scalar(
@@ -202,7 +205,9 @@ def _odd_referencia(
             OddsFecho.casa_de_apostas == casa,
         )
     )
-    return o.odd if o else None
+    if o is None or o.odd <= 1.0:
+        return None
+    return o.odd
 
 
 def _gravar_sugestao_se_nova(
