@@ -49,17 +49,10 @@ log = get_logger(__name__)
 
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
-# Ligas Sofascore (nomes como aparecem no tournament.name)
-LIGAS_SOFASCORE_DEFAULT = (
-    "Premier League",
-    "LaLiga",
-    "La Liga",
-    "Serie A",
-    "Bundesliga",
-    "Ligue 1",
-    "Primeira Liga",
-    "Liga Portugal",
-)
+# Ligas: usamos IDs internos Sofascore para precisao (ha "Premier League"
+# em Uganda, Russia, Burundi... o filtro por nome apanhava-as).
+# Para ver os IDs ou adicionar mais ligas, le o LIGAS_SOFASCORE_IDS.
+IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasattr(sofascore_live, "LIGAS_SOFASCORE_IDS") else ()
 
 CSV_COLUNAS = [
     "ts_scan", "liga", "home", "away", "minuto", "marcador",
@@ -272,7 +265,8 @@ def _correr_ciclo(args) -> None:
     agora = datetime.utcnow().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
     jogos = sofascore_live.listar_jogos_live(
-        ligas_filter=tuple(args.ligas) if args.ligas else LIGAS_SOFASCORE_DEFAULT,
+        ligas_filter=tuple(args.ligas) if args.ligas else None,
+        ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
     )
     if not jogos:
         print("    (sem jogos live nas ligas que seguimos)")

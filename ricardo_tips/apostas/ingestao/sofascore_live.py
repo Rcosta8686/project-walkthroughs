@@ -117,13 +117,35 @@ class EstadoLive:
 # ─────────────────────────────── API ──────────────────────────────────
 
 
-def listar_jogos_live(ligas_filter: tuple[str, ...] | None = None) -> list[dict]:
+# IDs internos Sofascore das ligas que seguimos. Mais fiavel que
+# matching por nome (ha mil "Premier League" no mundo).
+# Confirmados via https://www.sofascore.com/tournament/football/<pais>/<liga>
+LIGAS_SOFASCORE_IDS = {
+    "Premier League (ENG)": 17,     # England Premier League
+    "LaLiga":                8,     # Spain LaLiga
+    "Serie A (ITA)":         23,    # Italy Serie A
+    "Bundesliga":            35,    # Germany Bundesliga 1
+    "Ligue 1 (FRA)":         34,    # France Ligue 1
+    "Liga Portugal":         238,   # Portugal Primeira Liga
+}
+
+
+def listar_jogos_live(
+    ligas_filter: tuple[str, ...] | None = None,
+    ids_ligas: tuple[int, ...] | None = None,
+) -> list[dict]:
     """Devolve lista de jogos a decorrer em todo o futebol.
 
     Cada entrada contém {id, homeTeam, awayTeam, tournament.name,
-    status.description, homeScore.current, awayScore.current, time}.
-    Se ``ligas_filter`` for passado (ex: ("Premier League", "La Liga")),
-    filtra pelos nomes de torneio que contenham qualquer um.
+    tournament.category.name (pais), status.description,
+    homeScore.current, awayScore.current, time}.
+
+    Filtros disponiveis:
+      ids_ligas: tuple de IDs internos Sofascore (ex: (17, 8, 23) para
+                 EPL + LaLiga + Serie A). Precisao maxima.
+      ligas_filter: substrings do tournament.name — menos preciso, apanha
+                    "Premier League" de outros paises.
+    Se ambos vazios, devolve todos os jogos.
     """
     resp = _flaresolverr.get(
         f"{_BASE}/sport/football/events/live",
@@ -139,7 +161,14 @@ def listar_jogos_live(ligas_filter: tuple[str, ...] | None = None) -> list[dict]
         log.warning("Resposta nao-JSON em events/live: %s", exc)
         return []
     eventos = data.get("events", [])
-    if ligas_filter:
+    if ids_ligas:
+        ids_set = set(ids_ligas)
+        eventos = [
+            e for e in eventos
+            if (e.get("tournament") or {}).get("uniqueTournament", {}).get("id") in ids_set
+            or (e.get("tournament") or {}).get("id") in ids_set
+        ]
+    elif ligas_filter:
         lf = tuple(f.lower() for f in ligas_filter)
         eventos = [
             e for e in eventos
@@ -212,8 +241,14 @@ def _get_json(path: str) -> dict | None:
         log.debug("Sofascore %s nao-JSON: %s", path, exc)
         return None
     # Sofascore encapsula erros no body com status 200: {"error": {"code": 403, ...}}
+    # 404 e benigno (ligas sem stats detalhadas), nao polui o terminal.
     if isinstance(data, dict) and "error" in data and "events" not in data:
-        log.warning("Sofascore %s body error: %s", path, data["error"])
+        err = data.get("error") or {}
+        code = err.get("code")
+        if code == 404:
+            log.debug("Sofascore %s body 404 (stats indisponiveis)", path)
+        else:
+            log.warning("Sofascore %s body error: %s", path, err)
         return None
     return data
 
