@@ -254,24 +254,53 @@ def _get_json(path: str) -> dict | None:
 
 
 def _minuto_actual(ev: dict) -> int:
-    """Extrai o minuto actual (ou 45 se intervalo, 90+ se descontos)."""
-    tempo = ev.get("time", {}) or {}
-    # Em jogos ao vivo, time.initial e o segundo do inicio do periodo
-    # time.currentPeriodStartTimestamp pode ser util; o mais simples
-    # e usar o status.
-    status_code = ev.get("status", {}).get("code")
-    if status_code in (31, 32, 33):  # HT, End 1st half
-        return 45
-    if status_code == 6:  # 1st half
-        periodo_duracao = (tempo.get("initial", 0) or 0) // 60
-        return min(45, periodo_duracao)
-    if status_code == 7:  # 2nd half
-        periodo_duracao = (tempo.get("initial", 0) or 0) // 60
-        return min(90, 45 + periodo_duracao)
-    if status_code in (100, 110, 120):  # FT, AET, PEN
+    """Extrai o minuto actual (ou 45 se intervalo, 90+ se descontos).
+
+    Usa 2 fontes:
+      1. status.code / status.description (fase do jogo)
+      2. time.currentPeriodStartTimestamp (quando o periodo actual comecou)
+
+    Calculamos elapsed_min como (now - start) / 60. Se estamos na 2a
+    parte, somamos 45. Fallback para 0 se nada bater.
+    """
+    import time as time_mod
+
+    status = ev.get("status", {}) or {}
+    code = status.get("code")
+    desc = (status.get("description") or "").lower()
+
+    # Estados finais
+    terminais_desc = ("ended", "ft", "finished", "full time", "aet", "pen")
+    if code in (100, 110, 120) or any(x in desc for x in terminais_desc):
         return 90
-    # Fallback: usa initial directamente
-    return min(120, (tempo.get("initial", 0) or 0) // 60)
+
+    # Intervalo
+    if code == 31 or desc in ("halftime", "ht") or "halftime" in desc:
+        return 45
+
+    tempo = ev.get("time", {}) or {}
+    ts_start = tempo.get("currentPeriodStartTimestamp")
+    elapsed_min = 0
+    if ts_start:
+        elapsed_s = int(time_mod.time()) - int(ts_start)
+        elapsed_min = max(0, elapsed_s // 60)
+
+    # 2a parte
+    if code == 7 or "2nd" in desc or "second half" in desc:
+        return min(100, 45 + elapsed_min)
+    # 1a parte
+    if code == 6 or "1st" in desc or "first half" in desc:
+        return min(55, elapsed_min)
+
+    # Caso nao tenhamos codigo mas o jogo esta a decorrer:
+    # se o marcador > 0 ou se ha algum tempo decorrido, assume 1a parte
+    if elapsed_min > 0 or (
+        (ev.get("homeScore") or {}).get("current", 0)
+        or (ev.get("awayScore") or {}).get("current", 0)
+    ):
+        return max(1, elapsed_min)
+
+    return 0
 
 
 def _as_percent(v: Any) -> float:
