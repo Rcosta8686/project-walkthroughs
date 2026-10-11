@@ -87,14 +87,27 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
     ))
 
 
+def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive") -> bool:
+    """True se o jogo esta demasiado no inicio para o modelo ter sinal credivel.
+
+    Nos primeiros 15-20 min, se nao houver stats concretas, o modelo cai
+    para o baseline pre-match — nao e um insight live, e um reflexo da
+    expectativa pre-jogo. Nao vale a pena enviar isso ao utilizador.
+    """
+    return estado.minuto < 20
+
+
 def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
                  prob_minima: float = 0.55) -> list[Sinal]:
     """Devolve sinais LIVE com reasoning rico.
 
-    Agrupa sinais por (mercado, lado) e devolve so o mais forte por grupo:
-    evita enviar 'Over 2.5' + 'Over 3.5' + 'Over 4.5' no mesmo jogo —
-    escolhe a linha com melhor forca (prob × odd_valor).
+    Primeiros 20 minutos: so emite sinais onde o estado observado DA
+    evidencia real (ex: 3 big chances ja criadas, defesa a ceder, etc).
+    Senao, sinais sao reflexo do baseline pre-match disfarçado de live.
     """
+    if _estado_demasiado_cedo_para_sinal(estado):
+        return []
+
     ctx = _construir_contexto(estado, prev)
     out: list[Sinal] = []
     _sinal_golos(estado, prev, ctx, out, prob_minima)
@@ -422,6 +435,9 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
             continue
         p = prev.p_over_remates_total(linha)
         if p >= prob_min:
+            projeccao_total = shots + rate_shots * prev.minutos_restantes
+            if projeccao_total < linha * 0.75:
+                continue
             racional = []
             titulo = f"Over {linha} remates"
             if rate_shots > 0.27:
@@ -431,7 +447,7 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
             if "big_chances_pendentes" in ctx:
                 racional.append(ctx["big_chances_pendentes"])
             if not racional:
-                racional.append(f"{shots} remates ao min {estado.minuto}")
+                continue
             _add(out, "shots_over", "remates", "over", linha, p, racional, titulo)
 
     for linha in LINHAS_MERCADO["remates_a_baliza"]:
@@ -439,6 +455,12 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
             continue
         p = prev.p_over_remates_a_baliza_total(linha)
         if p >= prob_min:
+            # Consistencia: nao emitir Over X SoT quando rate actual e muito
+            # baixa — significa que o modelo baseline esta a inflar.
+            rate_90 = rate_sot * 90
+            projeccao_total = sot + rate_sot * prev.minutos_restantes
+            if projeccao_total < linha * 0.75:
+                continue  # observacao contradiz a sugestao
             racional = []
             titulo = f"Over {linha} remates ao alvo"
             if estado.big_chances_casa is not None:
@@ -449,6 +471,8 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["keeper_casa_grande"])
             if "keeper_fora_grande" in ctx:
                 racional.append(ctx["keeper_fora_grande"])
+            if rate_90 >= 7:
+                racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_90:.1f}/90min)")
             if not racional:
-                racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_sot*90:.1f}/90min)")
+                continue  # sem racional credivel, nao emite
             _add(out, "sot_over", "remates_a_baliza", "over", linha, p, racional, titulo)
