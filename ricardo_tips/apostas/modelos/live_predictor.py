@@ -32,12 +32,62 @@ P(≥N golos restantes) = 1 - F_Poisson(N-1, λ_atualizado)
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from math import exp
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apostas.ingestao.sofascore_live import EstadoLive
+
+
+# Calibracao aprendida de jogos passados. aprender_jogos.py gera isto.
+_CALIBRACAO_CACHE: dict | None = None
+
+
+def _carregar_calibracao() -> dict:
+    """Le dados/calibracao_live.json uma vez por processo. Se nao existir
+    ou tiver menos de 20 amostras, usa calibracao identidade.
+    """
+    global _CALIBRACAO_CACHE
+    if _CALIBRACAO_CACHE is not None:
+        return _CALIBRACAO_CACHE
+    try:
+        from apostas.utils.config import project_root
+        f = project_root() / "dados" / "calibracao_live.json"
+        if f.exists():
+            with f.open(encoding="utf-8") as fp:
+                calib = json.load(fp)
+            if calib.get("n_amostras", 0) >= 20:
+                _CALIBRACAO_CACHE = calib
+                return calib
+    except Exception:  # noqa: BLE001
+        pass
+    _CALIBRACAO_CACHE = {}
+    return _CALIBRACAO_CACHE
+
+
+def calibrar_prob(prob_modelo: float, mercado: str = "golos") -> float:
+    """Aplica calibracao aprendida. Reduz over-confidence identificado.
+
+    Se o bucket 70-80% historicamente so acerta 65%, uma prob de 75%
+    e corrigida para 65%.
+    """
+    calib = _carregar_calibracao()
+    por_bucket = calib.get("por_prob_bucket", {})
+    pct = prob_modelo * 100
+    bucket = ("<55%" if pct < 55 else
+              "55-65%" if pct < 65 else
+              "65-75%" if pct < 75 else
+              "75-85%" if pct < 85 else
+              "85%+")
+    stats = por_bucket.get(bucket)
+    if stats is None or stats.get("n", 0) < 10:
+        return prob_modelo
+    hit_rate_real = stats.get("hit_rate", 50) / 100.0
+    # Blend: 70% modelo original + 30% ajuste historico (nao sobre-reagir)
+    return 0.7 * prob_modelo + 0.3 * hit_rate_real
 
 
 # ───────────── Fatores empíricos (ajustar quando houver dados Ricardo) ─────────────
