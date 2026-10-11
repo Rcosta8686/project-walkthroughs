@@ -86,12 +86,17 @@ class EstadoLive:
     possession_fora: float | None = None
     corners_casa: int | None = None
     corners_fora: int | None = None
+    shots_blocked_casa: int | None = None  # bloqueados → geralmente geram canto
+    shots_blocked_fora: int | None = None
 
     # Disciplina
     yellow_cards_casa: int = 0
     yellow_cards_fora: int = 0
     red_cards_casa: int = 0
     red_cards_fora: int = 0
+    fouls_casa: int | None = None          # faltas cometidas (precursor de cartoes)
+    fouls_fora: int | None = None
+    arbitro: str | None = None
 
     # Jogadores com cartão (nome, equipa, "yellow"/"red"), para
     # detectar jogadores em risco de 5º amarelo (contexto cross-jornada)
@@ -187,6 +192,7 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     if event_json is None or "event" not in event_json:
         return None
     ev = event_json["event"]
+    arbitro = ((ev.get("referee") or {}).get("name") if isinstance(ev.get("referee"), dict) else None)
     estado = EstadoLive(
         event_id=event_id,
         home=ev.get("homeTeam", {}).get("name", "?"),
@@ -196,6 +202,7 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
         estado=ev.get("status", {}).get("code") or ev.get("status", {}).get("description", "?"),
         marcador_casa=int((ev.get("homeScore") or {}).get("current", 0) or 0),
         marcador_fora=int((ev.get("awayScore") or {}).get("current", 0) or 0),
+        arbitro=arbitro,
         _raw_event=ev,
     )
 
@@ -313,11 +320,13 @@ _MAPA_STATS = {
     "expected goals":        ("xg_casa", "xg_fora", float),
     "total shots":           ("shots_total_casa", "shots_total_fora", int),
     "shots on target":       ("shots_on_target_casa", "shots_on_target_fora", int),
+    "blocked shots":         ("shots_blocked_casa", "shots_blocked_fora", int),
     "big chances":           ("big_chances_casa", "big_chances_fora", int),
     "ball possession":       ("possession_casa", "possession_fora", _as_percent),
     "corner kicks":          ("corners_casa", "corners_fora", int),
     "yellow cards":          ("yellow_cards_casa", "yellow_cards_fora", int),
     "red cards":             ("red_cards_casa", "red_cards_fora", int),
+    "fouls":                 ("fouls_casa", "fouls_fora", int),
 }
 
 

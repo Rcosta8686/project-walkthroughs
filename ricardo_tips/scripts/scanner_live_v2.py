@@ -154,7 +154,17 @@ def _odds_api_live_evento(sport: str, home: str, away: str) -> dict | None:
             params = {
                 "apiKey": api_key,
                 "regions": "eu,uk",
-                "markets": "h2h,totals,btts,double_chance",
+                # Mercados cobertos no modelo: golos (totals), BTTS, dupla,
+                # cantos (totals_corners), cartoes (totals_cards), remates
+                # (totals_shots). Nem todas as softs oferecem todos — Odds API
+                # devolve so os disponiveis sem erro.
+                "markets": (
+                    "h2h,totals,btts,double_chance,"
+                    "totals_corners,alternate_corners_totals,"
+                    "totals_cards,alternate_cards_totals,"
+                    "totals_shots,alternate_shots_totals,"
+                    "totals_shots_on_target"
+                ),
                 "oddsFormat": "decimal",
             }
             r2 = requests.get(odds_url, params=params, timeout=20)
@@ -263,10 +273,48 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
                     p = prev.p_btts_final if nome == "yes" else (1 - prev.p_btts_final)
                     _emit("btts", "sim" if nome == "yes" else "nao", None, casa, odd, p)
             elif key == "h2h":
-                # 1X2: so interessa se o jogo ainda nao esta definido
-                # (empate 90min aos 85' = model deve estar OK)
-                # Suprimimos por agora: modelo 1X2 live precisa de rate por equipa
+                # 1X2: modelo precisa de rate por equipa ainda nao implementado
                 continue
+            elif key in ("totals_corners", "corner_totals", "alternate_corners_totals"):
+                for o in mkt.get("outcomes", []):
+                    nome = (o.get("name") or "").lower()
+                    if nome not in ("over", "under"):
+                        continue
+                    linha = float(o.get("point", 9.5))
+                    odd = float(o.get("price", 0))
+                    p_over = prev.p_over_cantos_total(linha)
+                    p = p_over if nome == "over" else (1 - p_over)
+                    _emit("cantos", nome, linha, casa, odd, p)
+            elif key in ("totals_cards", "card_totals", "alternate_cards_totals"):
+                for o in mkt.get("outcomes", []):
+                    nome = (o.get("name") or "").lower()
+                    if nome not in ("over", "under"):
+                        continue
+                    linha = float(o.get("point", 4.5))
+                    odd = float(o.get("price", 0))
+                    p_over = prev.p_over_cartoes_total(linha)
+                    p = p_over if nome == "over" else (1 - p_over)
+                    _emit("cartoes", nome, linha, casa, odd, p)
+            elif key in ("totals_shots", "shots_totals", "alternate_shots_totals"):
+                for o in mkt.get("outcomes", []):
+                    nome = (o.get("name") or "").lower()
+                    if nome not in ("over", "under"):
+                        continue
+                    linha = float(o.get("point", 24.5))
+                    odd = float(o.get("price", 0))
+                    p_over = prev.p_over_remates_total(linha)
+                    p = p_over if nome == "over" else (1 - p_over)
+                    _emit("remates", nome, linha, casa, odd, p)
+            elif key in ("totals_shots_on_target", "shots_on_target_totals"):
+                for o in mkt.get("outcomes", []):
+                    nome = (o.get("name") or "").lower()
+                    if nome not in ("over", "under"):
+                        continue
+                    linha = float(o.get("point", 8.5))
+                    odd = float(o.get("price", 0))
+                    p_over = prev.p_over_remates_a_baliza_total(linha)
+                    p = p_over if nome == "over" else (1 - p_over)
+                    _emit("remates_a_baliza", nome, linha, casa, odd, p)
     return sugestoes
 
 
@@ -277,20 +325,40 @@ def _imprimir_estado(estado, prev) -> None:
     sot = ""
     if estado.shots_on_target_casa is not None:
         sot = f" | SoT {estado.shots_on_target_casa}-{estado.shots_on_target_fora}"
-    cards = ""
+    tot = ""
+    if estado.shots_total_casa is not None:
+        tot = f" | Tot {estado.shots_total_casa}-{estado.shots_total_fora}"
+    cards_s = ""
     if estado.yellow_cards_casa or estado.yellow_cards_fora:
-        cards = f" | Y {estado.yellow_cards_casa}-{estado.yellow_cards_fora}"
+        cards_s = f" | Y {estado.yellow_cards_casa}-{estado.yellow_cards_fora}"
+    reds = ""
+    if estado.red_cards_casa or estado.red_cards_fora:
+        reds = f" R {estado.red_cards_casa}-{estado.red_cards_fora}"
+    corners_s = ""
+    if estado.corners_casa is not None:
+        corners_s = f" | C {estado.corners_casa}-{estado.corners_fora}"
+    arb = f" | arb: {estado.arbitro}" if estado.arbitro else ""
+    try:
+        from apostas.modelos.referencias import eh_derby, fator_arbitro
+        derby = " ⚡DERBY" if eh_derby(estado.home, estado.away) else ""
+        arb_mult = fator_arbitro(estado.arbitro) if estado.arbitro else 1.0
+        arb_tag = f" (x{arb_mult:.2f})" if abs(arb_mult - 1.0) > 0.05 else ""
+    except Exception:  # noqa: BLE001
+        derby = ""
+        arb_tag = ""
     print(
-        f"  {estado.home} vs {estado.away} ({estado.liga}) "
+        f"  {estado.home} vs {estado.away} ({estado.liga}){derby} "
         f"[{estado.minuto}'] {estado.marcador_casa}-{estado.marcador_fora}"
-        f"{xg_str}{sot}{cards}"
+        f"{xg_str}{sot}{tot}{corners_s}{cards_s}{reds}{arb}{arb_tag}"
     )
     print(
-        f"    → model: P(+1 gol)={prev.p_mais_1_golo*100:.1f}%  "
+        f"    → model: "
+        f"P(+1 gol)={prev.p_mais_1_golo*100:.1f}%  "
         f"P(Over 2.5)={prev.p_over_total(2.5)*100:.1f}%  "
         f"P(BTTS)={prev.p_btts_final*100:.1f}%  "
         f"P(+2 cantos)={prev.p_mais_cantos(2)*100:.1f}%  "
-        f"P(+1 card)={prev.p_mais_cartoes_amarelos(1)*100:.1f}%"
+        f"P(+1 card)={prev.p_mais_cartoes_amarelos(1)*100:.1f}%  "
+        f"P(+3 shots)={prev.p_mais_remates(3)*100:.1f}%"
     )
 
 

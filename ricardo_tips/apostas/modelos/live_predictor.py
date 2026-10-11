@@ -100,11 +100,22 @@ class PrevisaoLive:
     lam_golos_restantes: float
     lam_cantos_restantes: float
     lam_cartoes_amarelos_restantes: float
+    lam_shots_restantes: float = 0.0         # remates totais restantes
+    lam_shots_on_target_restantes: float = 0.0  # remates a baliza restantes
     # P(≥N golos restantes no jogo todo)
-    p_mais_1_golo: float
-    p_mais_2_golos: float
+    p_mais_1_golo: float = 0.0
+    p_mais_2_golos: float = 0.0
     # P(ambas marcam no final) — útil se BTTS ainda não aconteceu
-    p_btts_final: float
+    p_btts_final: float = 0.0
+
+    # Internos (usados por métodos)
+    _marcador_casa: int = 0
+    _marcador_fora: int = 0
+    _shots_atual: int = 0
+    _shots_on_target_atual: int = 0
+    _cantos_atual: int = 0
+    _amarelos_atual: int = 0
+
     # P(jogo acaba com Over N golos no total)
     def p_over_total(self, linha_total: float) -> float:
         """P(total golos no final > linha). Usa o marcador actual + λ_restantes."""
@@ -117,15 +128,49 @@ class PrevisaoLive:
             return 1.0
         return 1.0 - _poisson_cdf(n_para_bater - 1, self.lam_golos_restantes)
 
-    # Internos (usados por métodos)
-    _marcador_casa: int = 0
-    _marcador_fora: int = 0
-
     def p_mais_cantos(self, n: int) -> float:
+        """P(mais ≥n cantos nos min restantes)."""
         return 1.0 - _poisson_cdf(n - 1, self.lam_cantos_restantes)
 
+    def p_over_cantos_total(self, linha_total: float) -> float:
+        """P(cantos totais no final > linha)."""
+        n_para_bater = int(linha_total + 1) - self._cantos_atual if linha_total % 1 == 0.5 \
+            else int(linha_total) - self._cantos_atual + 1
+        if n_para_bater <= 0:
+            return 1.0
+        return 1.0 - _poisson_cdf(n_para_bater - 1, self.lam_cantos_restantes)
+
     def p_mais_cartoes_amarelos(self, n: int) -> float:
+        """P(mais ≥n cartoes amarelos nos min restantes)."""
         return 1.0 - _poisson_cdf(n - 1, self.lam_cartoes_amarelos_restantes)
+
+    def p_over_cartoes_total(self, linha_total: float) -> float:
+        """P(cartoes amarelos totais > linha)."""
+        n_para_bater = int(linha_total + 1) - self._amarelos_atual if linha_total % 1 == 0.5 \
+            else int(linha_total) - self._amarelos_atual + 1
+        if n_para_bater <= 0:
+            return 1.0
+        return 1.0 - _poisson_cdf(n_para_bater - 1, self.lam_cartoes_amarelos_restantes)
+
+    def p_mais_remates(self, n: int) -> float:
+        return 1.0 - _poisson_cdf(n - 1, self.lam_shots_restantes)
+
+    def p_over_remates_total(self, linha_total: float) -> float:
+        n_para_bater = int(linha_total + 1) - self._shots_atual if linha_total % 1 == 0.5 \
+            else int(linha_total) - self._shots_atual + 1
+        if n_para_bater <= 0:
+            return 1.0
+        return 1.0 - _poisson_cdf(n_para_bater - 1, self.lam_shots_restantes)
+
+    def p_mais_remates_a_baliza(self, n: int) -> float:
+        return 1.0 - _poisson_cdf(n - 1, self.lam_shots_on_target_restantes)
+
+    def p_over_remates_a_baliza_total(self, linha_total: float) -> float:
+        n_para_bater = int(linha_total + 1) - self._shots_on_target_atual if linha_total % 1 == 0.5 \
+            else int(linha_total) - self._shots_on_target_atual + 1
+        if n_para_bater <= 0:
+            return 1.0
+        return 1.0 - _poisson_cdf(n_para_bater - 1, self.lam_shots_on_target_restantes)
 
 
 def prever(
@@ -220,19 +265,39 @@ def prever(
         intensidade = min(2.0, max(0.5, intensidade))
         lam_golos_rest *= intensidade
 
-    # 6. Cantos: usa posse diferencial
+    # Vermelho afecta golos: equipa com 10 marca menos (-30%), adversario mais (+15%)
+    # Como nao distinguimos aqui qual equipa, aplicamos o net effect: -15% total.
+    reds = estado.red_cards_casa + estado.red_cards_fora
+    if reds > 0:
+        lam_golos_rest *= (0.85 ** reds)
+
+    # Score chasing: equipa a perder nos ultimos 20 min = +pressao
+    diff_sign = estado.marcador_fora - estado.marcador_casa  # positivo = casa a perder
+    chasing_late = minutos_restantes <= 25 and abs(diff_sign) in (1, 2)
+    fator_chasing = 1.20 if chasing_late else 1.0
+    lam_golos_rest *= fator_chasing
+
+    # 6. Cantos: posse diferencial + shots blocked + chasing
     cantos_actual = (estado.corners_casa or 0) + (estado.corners_fora or 0)
     if minuto > 10:
         cantos_rate = cantos_actual / minuto
     else:
         cantos_rate = lam_cantos_pre / 90.0
     lam_cantos_rest = cantos_rate * minutos_restantes * fator_m
-    # Posse: equipa dominante gera mais cantos. Posse 70-30 vs 50-50 → +15%
+    # Posse: equipa dominante gera mais cantos. Posse 70-30 vs 50-50 → +~15%
     if estado.possession_casa is not None:
         posse_diff = abs(estado.possession_casa - 0.5)
         lam_cantos_rest *= (1.0 + 0.3 * posse_diff)
+    # Shots blocked recentes correlacionam com cantos (bola a sair pela linha)
+    blocked = (estado.shots_blocked_casa or 0) + (estado.shots_blocked_fora or 0)
+    if blocked > 0 and minuto > 15:
+        blocked_rate = blocked / minuto
+        # Cada shot blocked adicional sobe ~0.5 corners/90min equivalente
+        lam_cantos_rest *= (1.0 + 0.10 * blocked_rate)
+    # Score chasing: late pressao = mais cantos
+    lam_cantos_rest *= fator_chasing
 
-    # 7. Cartoes: 2H + jogos apertados = mais
+    # 7. Cartoes: 2H + jogos apertados + arbitro + rivalidade + fouls
     cards_actual = estado.yellow_cards_casa + estado.yellow_cards_fora
     if minuto > 10:
         cards_rate = cards_actual / minuto
@@ -241,13 +306,49 @@ def prever(
     fator_fase_cards = 1.3 if minuto >= 45 else 1.0
     diff = abs(estado.marcador_casa - estado.marcador_fora)
     fator_card_marcador = 1.1 if (diff <= 1 and minuto >= 70) else 1.0
-    # Cartao vermelho ja mostrado tende a tornar o jogo mais tenso
-    reds = estado.red_cards_casa + estado.red_cards_fora
-    fator_red = 1.0 + 0.25 * reds
+    fator_red_cards = 1.0 + 0.25 * reds
+
+    # NOVO: fator arbitro
+    try:
+        from apostas.modelos.referencias import fator_arbitro
+        fator_arb = fator_arbitro(estado.arbitro)
+    except Exception:  # noqa: BLE001
+        fator_arb = 1.0
+
+    # NOVO: fator rivalidade (derby = +15%)
+    try:
+        from apostas.modelos.referencias import fator_rivalidade
+        fator_riv = fator_rivalidade(estado.home, estado.away)
+    except Exception:  # noqa: BLE001
+        fator_riv = 1.0
+
+    # NOVO: fouls rate como sinal adicional (muitas faltas = mais cartoes)
+    fator_fouls = 1.0
+    if estado.fouls_casa is not None and estado.fouls_fora is not None and minuto > 15:
+        fouls_total = estado.fouls_casa + estado.fouls_fora
+        fouls_rate = fouls_total / minuto
+        # Benchmark ~0.3 faltas/min. Acima disso aumenta rate de cartoes.
+        if fouls_rate > 0.35:
+            fator_fouls = 1.0 + min(0.4, (fouls_rate - 0.35) * 1.5)
+
     lam_cards_rest = (
         cards_rate * minutos_restantes
-        * fator_fase_cards * fator_card_marcador * fator_red
+        * fator_fase_cards * fator_card_marcador * fator_red_cards
+        * fator_arb * fator_riv * fator_fouls
     )
+
+    # 8. REMATES (novo mercado): total + ao alvo
+    shots_total_actual = (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0)
+    shots_on_target_actual = (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0)
+    # Baseline europeu: ~24 remates/jogo total, ~8 ao alvo
+    if minuto > 10:
+        shots_rate = shots_total_actual / minuto
+        sot_rate = shots_on_target_actual / minuto
+    else:
+        shots_rate = 24.0 / 90.0
+        sot_rate = 8.0 / 90.0
+    lam_shots_rest = shots_rate * minutos_restantes * fator_m * fator_chasing
+    lam_sot_rest = sot_rate * minutos_restantes * fator_m * fator_chasing
 
     p_mais_1 = 1.0 - _poisson_cdf(0, lam_golos_rest)
     p_mais_2 = 1.0 - _poisson_cdf(1, lam_golos_rest)
@@ -275,11 +376,17 @@ def prever(
         lam_golos_restantes=lam_golos_rest,
         lam_cantos_restantes=lam_cantos_rest,
         lam_cartoes_amarelos_restantes=lam_cards_rest,
+        lam_shots_restantes=lam_shots_rest,
+        lam_shots_on_target_restantes=lam_sot_rest,
         p_mais_1_golo=p_mais_1,
         p_mais_2_golos=p_mais_2,
         p_btts_final=p_btts,
         _marcador_casa=estado.marcador_casa,
         _marcador_fora=estado.marcador_fora,
+        _shots_atual=shots_total_actual,
+        _shots_on_target_atual=shots_on_target_actual,
+        _cantos_atual=cantos_actual,
+        _amarelos_atual=cards_actual,
     )
 
 

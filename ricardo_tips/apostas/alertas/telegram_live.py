@@ -95,4 +95,12 @@ def _formatar_aposta(mercado: str, lado: str, linha: str | float) -> str:
     if mercado == "handicap":
         sinal = "+" if linha_str and float(linha_str) >= 0 else ""
         return f"Handicap {lado.upper()} {sinal}{linha_str}"
+    if mercado == "cantos":
+        return f"{lado.upper()} {linha_str} cantos"
+    if mercado == "cartoes":
+        return f"{lado.upper()} {linha_str} cartoes amarelos"
+    if mercado == "remates":
+        return f"{lado.upper()} {linha_str} remates"
+    if mercado == "remates_a_baliza":
+        return f"{lado.upper()} {linha_str} remates a baliza"
     return f"{mercado} {lado} {linha_str}".strip()
