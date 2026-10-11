@@ -41,6 +41,12 @@ def configure_logging() -> None:
     root.addHandler(stream_handler)
     root.addHandler(file_handler)
 
+    # Silenciar logs de bibliotecas HTTP que imprimem URLs completas
+    # (os URLs do Telegram contem o token no path — nao deve aparecer em logs).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
     _configured = True
 
 
