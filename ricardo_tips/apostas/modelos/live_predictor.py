@@ -152,6 +152,13 @@ class PrevisaoLive:
     lam_cartoes_amarelos_restantes: float
     lam_shots_restantes: float = 0.0
     lam_shots_on_target_restantes: float = 0.0
+    # Split por equipa para dar o utilizador comparar com odds de total match
+    projeccao_shots_casa: float = 0.0        # total final previsto casa (actual + resto)
+    projeccao_shots_fora: float = 0.0
+    projeccao_sot_casa: float = 0.0
+    projeccao_sot_fora: float = 0.0
+    projeccao_cantos_casa: float = 0.0
+    projeccao_cantos_fora: float = 0.0
     # Lambda splitting por equipa (para 1X2)
     lam_golos_casa_rest: float = 0.0
     lam_golos_fora_rest: float = 0.0
@@ -394,18 +401,53 @@ def prever(
         * fator_arb * fator_riv * fator_fouls
     )
 
-    # 8. REMATES (novo mercado): total + ao alvo
-    shots_total_actual = (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0)
-    shots_on_target_actual = (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0)
-    # Baseline europeu: ~24 remates/jogo total, ~8 ao alvo
+    # 8. REMATES (total + ao alvo) com SPLIT por equipa
+    shots_c = estado.shots_total_casa or 0
+    shots_f = estado.shots_total_fora or 0
+    sot_c = estado.shots_on_target_casa or 0
+    sot_f = estado.shots_on_target_fora or 0
+    shots_total_actual = shots_c + shots_f
+    shots_on_target_actual = sot_c + sot_f
+    cantos_c_act = estado.corners_casa or 0
+    cantos_f_act = estado.corners_fora or 0
+
     if minuto > 10:
-        shots_rate = shots_total_actual / minuto
-        sot_rate = shots_on_target_actual / minuto
+        shots_rate_c = shots_c / minuto
+        shots_rate_f = shots_f / minuto
+        sot_rate_c = sot_c / minuto
+        sot_rate_f = sot_f / minuto
+        cantos_rate_c = cantos_c_act / minuto
+        cantos_rate_f = cantos_f_act / minuto
     else:
-        shots_rate = 24.0 / 90.0
-        sot_rate = 8.0 / 90.0
-    lam_shots_rest = shots_rate * minutos_restantes * fator_m * fator_chasing
-    lam_sot_rest = sot_rate * minutos_restantes * fator_m * fator_chasing
+        shots_rate_c = shots_rate_f = 12.0 / 90.0
+        sot_rate_c = sot_rate_f = 4.0 / 90.0
+        cantos_rate_c = cantos_rate_f = 5.3 / 90.0
+
+    # Multiplicadores por equipa (chasing + momentum)
+    mult_casa = fator_m * fator_chasing
+    mult_fora = fator_m * fator_chasing
+    if estado.momentum_actual == "casa":
+        mult_casa *= 1.15
+    elif estado.momentum_actual == "fora":
+        mult_fora *= 1.15
+
+    lam_shots_casa_r = shots_rate_c * minutos_restantes * mult_casa
+    lam_shots_fora_r = shots_rate_f * minutos_restantes * mult_fora
+    lam_sot_casa_r = sot_rate_c * minutos_restantes * mult_casa
+    lam_sot_fora_r = sot_rate_f * minutos_restantes * mult_fora
+    lam_cantos_casa_r = cantos_rate_c * minutos_restantes * mult_casa
+    lam_cantos_fora_r = cantos_rate_f * minutos_restantes * mult_fora
+
+    lam_shots_rest = lam_shots_casa_r + lam_shots_fora_r
+    lam_sot_rest = lam_sot_casa_r + lam_sot_fora_r
+
+    # Projeccao total final por equipa (para mostrar ao utilizador)
+    projeccao_shots_casa = shots_c + lam_shots_casa_r
+    projeccao_shots_fora = shots_f + lam_shots_fora_r
+    projeccao_sot_casa = sot_c + lam_sot_casa_r
+    projeccao_sot_fora = sot_f + lam_sot_fora_r
+    projeccao_cantos_casa = cantos_c_act + lam_cantos_casa_r
+    projeccao_cantos_fora = cantos_f_act + lam_cantos_fora_r
 
     # ─── Split lam_golos_rest por equipa (para 1X2) ───────────────
     # Peso: baseia-se em xG actual observado + home advantage + chasing.
@@ -488,6 +530,12 @@ def prever(
         lam_cartoes_amarelos_restantes=lam_cards_rest,
         lam_shots_restantes=lam_shots_rest,
         lam_shots_on_target_restantes=lam_sot_rest,
+        projeccao_shots_casa=projeccao_shots_casa,
+        projeccao_shots_fora=projeccao_shots_fora,
+        projeccao_sot_casa=projeccao_sot_casa,
+        projeccao_sot_fora=projeccao_sot_fora,
+        projeccao_cantos_casa=projeccao_cantos_casa,
+        projeccao_cantos_fora=projeccao_cantos_fora,
         lam_golos_casa_rest=lam_golos_casa_rest,
         lam_golos_fora_rest=lam_golos_fora_rest,
         p_mais_1_golo=p_mais_1,

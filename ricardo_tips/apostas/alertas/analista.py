@@ -591,6 +591,10 @@ def _sinal_btts(estado, prev, ctx, out, prob_min) -> None:
 
 def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
     cantos = (estado.corners_casa or 0) + (estado.corners_fora or 0)
+    proj_c_c = prev.projeccao_cantos_casa
+    proj_c_f = prev.projeccao_cantos_fora
+    proj_c_total = proj_c_c + proj_c_f
+
     for linha in LINHAS_MERCADO["cantos"]:
         if cantos > linha:
             continue
@@ -601,6 +605,10 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
         if p_over >= prob_min:
             racional = []
             titulo = f"Over {linha} cantos"
+            racional.append(
+                f"Projeccao: {estado.home} {proj_c_c:.0f}, "
+                f"{estado.away} {proj_c_f:.0f} = {proj_c_total:.0f} total"
+            )
             if rate > 0.11:
                 racional.append(f"rate {rate*90:.1f} cantos/90min (acima media)")
             if "dominio_territorial" in ctx:
@@ -612,8 +620,6 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(f"{blocked} remates bloqueados — cantos a caminho")
             if (estado.crosses_total_casa or 0) + (estado.crosses_total_fora or 0) > 15:
                 racional.append("Jogo pelos cruzamentos — cantos consequencia")
-            if not racional:
-                racional.append(f"{cantos} cantos ao min {estado.minuto}")
             _add(out, "cantos_over", "cantos", "over", linha, p_over, racional, titulo)
 
         if p_under >= prob_min:
@@ -691,39 +697,53 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
     rate_shots = shots / max(estado.minuto, 1)
     rate_sot = sot / max(estado.minuto, 1)
 
+    proj_shots_c = prev.projeccao_shots_casa
+    proj_shots_f = prev.projeccao_shots_fora
+    proj_shots_total = proj_shots_c + proj_shots_f
+
     for linha in LINHAS_MERCADO["remates"]:
         if shots > linha:
             continue
         p = prev.p_over_remates_total(linha)
         if p >= prob_min:
-            projeccao_total = shots + rate_shots * prev.minutos_restantes
-            if projeccao_total < linha * 0.75:
+            if proj_shots_total < linha * 0.75:
                 continue
             racional = []
             titulo = f"Over {linha} remates"
+            racional.append(
+                f"Projeccao: {estado.home} {proj_shots_c:.0f}, "
+                f"{estado.away} {proj_shots_f:.0f} = {proj_shots_total:.0f} total"
+            )
             if rate_shots > 0.27:
                 racional.append(f"rate {rate_shots*90:.1f} remates/90min")
             if "momentum" in ctx:
                 racional.append(ctx["momentum"])
             if "big_chances_pendentes" in ctx:
                 racional.append(ctx["big_chances_pendentes"])
-            if not racional:
-                continue
             _add(out, "shots_over", "remates", "over", linha, p, racional, titulo)
+
+    # Projeccao por equipa — mostramos sempre no racional para user
+    # comparar com linhas do mercado (ex: casa oferece Over 11.5 que
+    # modelo projecta 10, nao e aposta; se projeccao e 12-13, e aposta)
+    proj_sot_c = prev.projeccao_sot_casa
+    proj_sot_f = prev.projeccao_sot_fora
+    proj_sot_total = proj_sot_c + proj_sot_f
 
     for linha in LINHAS_MERCADO["remates_a_baliza"]:
         if sot > linha:
             continue
         p = prev.p_over_remates_a_baliza_total(linha)
         if p >= prob_min:
-            # Consistencia: nao emitir Over X SoT quando rate actual e muito
-            # baixa — significa que o modelo baseline esta a inflar.
-            rate_90 = rate_sot * 90
-            projeccao_total = sot + rate_sot * prev.minutos_restantes
-            if projeccao_total < linha * 0.75:
-                continue  # observacao contradiz a sugestao
+            # Consistencia: projeccao do modelo tem de aproximar a linha
+            if proj_sot_total < linha * 0.75:
+                continue
             racional = []
             titulo = f"Over {linha} remates ao alvo"
+            # Sempre: projeccao por equipa (dá contexto para comparar com casa)
+            racional.append(
+                f"Projeccao: {estado.home} {proj_sot_c:.0f}, "
+                f"{estado.away} {proj_sot_f:.0f} = {proj_sot_total:.0f} total"
+            )
             if estado.big_chances_casa is not None:
                 bc = (estado.big_chances_casa or 0) + (estado.big_chances_fora or 0)
                 if bc >= 3:
@@ -732,8 +752,6 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["keeper_casa_grande"])
             if "keeper_fora_grande" in ctx:
                 racional.append(ctx["keeper_fora_grande"])
-            if rate_90 >= 7:
-                racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_90:.1f}/90min)")
-            if not racional:
-                continue  # sem racional credivel, nao emite
+            if rate_sot * 90 >= 7:
+                racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_sot*90:.1f}/90min)")
             _add(out, "sot_over", "remates_a_baliza", "over", linha, p, racional, titulo)
