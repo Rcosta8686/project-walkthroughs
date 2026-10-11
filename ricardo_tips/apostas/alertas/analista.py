@@ -87,35 +87,125 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
     ))
 
 
-def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive") -> bool:
-    """True se o jogo esta demasiado no inicio para o modelo ter sinal credivel.
+# Minutos minimos por mercado para o modelo ter conviccao credivel.
+# Mercados mais voláteis (podem virar com 1 vermelho / 1 golo) exigem
+# mais minutos para o padrao se consolidar. Mercados mais estaveis
+# (cantos, cartoes, remates) ja dao sinais fiaveis mais cedo.
+MINUTO_MIN_POR_MERCADO = {
+    "1x2":              40,  # resultado final — muito volatil, so a partir do intervalo
+    "golos":            30,  # score shape consolida apos min 30
+    "btts":             30,
+    "cantos":           20,  # padrao de pressao estabelece-se cedo
+    "cartoes":          20,
+    "remates":          20,
+    "remates_a_baliza": 20,
+}
 
-    Nos primeiros 15-20 min, se nao houver stats concretas, o modelo cai
-    para o baseline pre-match — nao e um insight live, e um reflexo da
-    expectativa pre-jogo. Nao vale a pena enviar isso ao utilizador.
+# Conviccao minima (prob × odd_valor) para EMITIR o sinal no Telegram.
+# Sinais abaixo deste limiar aparecem no terminal mas nao notificam.
+CONVICCAO_MINIMA_TELEGRAM = 1.10  # ~10% edge esperado
+
+
+def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive", mercado: str = "golos") -> bool:
+    """True se o jogo esta demasiado no inicio para este mercado.
+
+    Antes do minuto minimo, qualquer sinal cai no baseline pre-match
+    disfarçado — nao vale a pena enviar.
     """
-    return estado.minuto < 20
+    return estado.minuto < MINUTO_MIN_POR_MERCADO.get(mercado, 25)
+
+
+def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
+    """Verdadeira pergunta: 'apostaria a minha vida nisto?'
+
+    Criterios *estritos* — o analista so arrisca quando TODOS batem:
+      1. Prob suficientemente alta para o lado escolhido:
+         - over/under: >= 68%
+         - 1X2: >= 48% (favorito claro)
+         - btts: >= 68%
+      2. Edge (prob x odd_valor) >= 1.05 (EV >= 5%)
+      3. 3+ racionais concretos para over/under
+         4+ racionais concretos para 1X2 (mais volatil)
+      4. Jogo maduro:
+         - over/under: minuto >= 50
+         - 1X2: minuto >= 65 (quase 2a parte)
+      5. Pelo menos UM sinal de dominio nos racionais (nao so stats
+         frias — tem de haver tom tipo "momentum", "dominante",
+         "em grande", "a jogar melhor")
+    """
+    # 1. Prob minima por tipo
+    if sinal.mercado == "1x2":
+        if sinal.prob_modelo < 0.48:
+            return False
+    elif sinal.mercado == "btts":
+        if sinal.prob_modelo < 0.68:
+            return False
+    else:
+        if sinal.prob_modelo < 0.68:
+            return False
+
+    # 2. Edge minimo
+    # Nota: odd_valor computada com margem 5% EV exacta, logo
+    # prob × odd_valor ~ 1.05 por desenho. Usamos 1.03 (3% EV) para
+    # permitir margem de arredondamento.
+    if sinal.prob_modelo * sinal.odd_valor < 1.03:
+        return False
+
+    # 3. Racionais concretos (nao fallbacks estatisticos)
+    racionais_credíveis = []
+    for r in sinal.racional:
+        rl = r.lower()
+        # Exclui fallbacks tipo "modelo 70%" ou "0 cantos ao min X"
+        if rl.startswith(("modelo ", "0 ", "intensidade ")):
+            continue
+        racionais_credíveis.append(r)
+    minimo_racionais = 4 if sinal.mercado == "1x2" else 3
+    if len(racionais_credíveis) < minimo_racionais:
+        return False
+
+    # 4. Jogo maduro
+    minuto_minimo = 65 if sinal.mercado == "1x2" else 50
+    if estado.minuto < minuto_minimo:
+        return False
+
+    # 5. Pelo menos um sinal de "tom" (nao so estatisticas frias)
+    palavras_tom = ("momentum", "dominante", "em grande", "a jogar melhor",
+                    "a vencer", "defesa a ceder", "big chances", "chasing",
+                    "pressiona", "derby", "severo", "vermelho")
+    tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
+    if not tem_tom:
+        return False
+
+    return True
 
 
 def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
                  prob_minima: float = 0.55) -> list[Sinal]:
     """Devolve sinais LIVE com reasoning rico.
 
-    Primeiros 20 minutos: so emite sinais onde o estado observado DA
-    evidencia real (ex: 3 big chances ja criadas, defesa a ceder, etc).
-    Senao, sinais sao reflexo do baseline pre-match disfarçado de live.
+    Cada mercado tem o seu minuto minimo (MINUTO_MIN_POR_MERCADO).
+    Alem disso, cada sinal e marcado com forca_num:
+      3 = "apostava o meu proprio dinheiro" (alta conviccao)
+      2 = "worth watching" (media conviccao)
+      1 = "nota" (pouca conviccao, so terminal)
+    Scanner usa este criterio para decidir se envia para Telegram.
     """
-    if _estado_demasiado_cedo_para_sinal(estado):
-        return []
-
     ctx = _construir_contexto(estado, prev)
     out: list[Sinal] = []
-    _sinal_1x2(estado, prev, ctx, out, prob_minima)
-    _sinal_golos(estado, prev, ctx, out, prob_minima)
-    _sinal_btts(estado, prev, ctx, out, prob_minima)
-    _sinal_cantos(estado, prev, ctx, out, prob_minima)
-    _sinal_cartoes(estado, prev, ctx, out, prob_minima)
-    _sinal_remates(estado, prev, ctx, out, prob_minima)
+
+    # Cada mercado so e analisado se o jogo esta maduro o suficiente
+    if not _estado_demasiado_cedo_para_sinal(estado, "1x2"):
+        _sinal_1x2(estado, prev, ctx, out, prob_minima)
+    if not _estado_demasiado_cedo_para_sinal(estado, "golos"):
+        _sinal_golos(estado, prev, ctx, out, prob_minima)
+    if not _estado_demasiado_cedo_para_sinal(estado, "btts"):
+        _sinal_btts(estado, prev, ctx, out, prob_minima)
+    if not _estado_demasiado_cedo_para_sinal(estado, "cantos"):
+        _sinal_cantos(estado, prev, ctx, out, prob_minima)
+    if not _estado_demasiado_cedo_para_sinal(estado, "cartoes"):
+        _sinal_cartoes(estado, prev, ctx, out, prob_minima)
+    if not _estado_demasiado_cedo_para_sinal(estado, "remates"):
+        _sinal_remates(estado, prev, ctx, out, prob_minima)
 
     # Agrupar por (mercado, lado) e manter a linha MAIS ALTA (over) ou mais
     # BAIXA (under) com prob >= prob_minima. As casas abrem as linhas mais
@@ -281,6 +371,17 @@ def _sinal_1x2(estado, prev, ctx, out, prob_min) -> None:
         return
     if estado.minuto >= 88:
         return
+
+    # ZONA DE INCERTEZA: se o momentum contradiz o lider do marcador,
+    # NAO prever o lider (o jogo pode virar). Analista no estadio ve
+    # claramente que a equipa a atacar pode empatar/virar.
+    if diff == 1:  # 1 golo de diferenca
+        casa_lider = estado.marcador_casa > estado.marcador_fora
+        mom_contra = (casa_lider and estado.momentum_actual == "fora") or \
+                     (not casa_lider and estado.momentum_actual == "casa")
+        if mom_contra and estado.minuto >= 50:
+            # Jogo turbulento com virada possivel — nao recomendamos lider
+            return
 
     threshold = min(prob_min, PROB_MIN_1X2)
     opcoes = [

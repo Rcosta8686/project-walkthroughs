@@ -367,11 +367,35 @@ def prever(
             # mistura com home advantage para evitar amostras pequenas
             peso_casa = 0.65 * peso_casa + 0.35 * 0.55
     # Chasing: equipa a perder empurra mais nos ultimos 25 min
-    if minutos_restantes <= 25:
-        if estado.marcador_casa < estado.marcador_fora:
-            peso_casa = min(0.75, peso_casa + 0.08)
-        elif estado.marcador_fora < estado.marcador_casa:
-            peso_casa = max(0.25, peso_casa - 0.08)
+    chasing_amount = 0.08 if minutos_restantes <= 25 else 0.0
+    if estado.marcador_casa < estado.marcador_fora:
+        peso_casa = min(0.75, peso_casa + chasing_amount)
+    elif estado.marcador_fora < estado.marcador_casa:
+        peso_casa = max(0.25, peso_casa - chasing_amount)
+
+    # Momentum amplifier: se a equipa a perder TEM momentum, boost extra.
+    # Isto captura o "em estadio ves que esta a pressionar" — nao e so
+    # o score que importa, e quem esta a atacar.
+    if estado.momentum_actual == "casa" and estado.marcador_casa < estado.marcador_fora:
+        # Modena-tipo: casa a perder MAS a atacar → +15% chance de reagir
+        peso_casa = min(0.80, peso_casa + 0.15)
+    elif estado.momentum_actual == "fora" and estado.marcador_fora < estado.marcador_casa:
+        peso_casa = max(0.20, peso_casa - 0.15)
+    # Momentum reforca o atual lider → +8%
+    elif estado.momentum_actual == "casa" and estado.marcador_casa > estado.marcador_fora:
+        peso_casa = min(0.80, peso_casa + 0.08)
+    elif estado.momentum_actual == "fora" and estado.marcador_fora > estado.marcador_casa:
+        peso_casa = max(0.20, peso_casa - 0.08)
+
+    # Big chances pendentes: equipa com muitas chances nao convertidas e
+    # mais provavel de marcar nos minutos finais
+    bc_c = (estado.big_chances_casa or 0) - estado.marcador_casa
+    bc_f = (estado.big_chances_fora or 0) - estado.marcador_fora
+    bc_diff = bc_c - bc_f
+    if bc_diff >= 2:
+        peso_casa = min(0.80, peso_casa + 0.05)
+    elif bc_diff <= -2:
+        peso_casa = max(0.20, peso_casa - 0.05)
     # Red cards: equipa com 10 cria menos
     if reds > 0:
         # Nao distinguimos qual equipa; assume divisao igual do dano

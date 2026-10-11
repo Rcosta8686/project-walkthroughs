@@ -639,9 +639,13 @@ def _correr_ciclo(args) -> None:
         sinais = analista.gerar_sinais(estado, prev, prob_minima=args.prob_minima)
         if sinais:
             _imprimir_sinais(sinais)
-            # Converte sinais em dicts (sem EV porque sem odds)
+            # Converte sinais em dicts. So os de ALTA CONVICCAO vao para
+            # Telegram (via marker _alta_conviccao). Os outros aparecem
+            # no terminal para analise mas nao notificam.
             for sinal in sinais:
                 sug = _sinal_para_sugestao(estado, sinal)
+                # Marca se o analista apostaria aqui o seu proprio dinheiro
+                sug["_alta_conviccao"] = analista._conviccao_alta(sinal, estado)
                 todas_sugestoes.append(sug)
 
         if odds_json is None:
@@ -669,7 +673,11 @@ def _correr_ciclo(args) -> None:
             notificar = []
             for s in todas_sugestoes:
                 if s.get("casa") == "ANALISTA":
-                    # Sinal puro: prob_modelo >= limiar
+                    # Sinal do analista: so notifica se e de alta conviccao
+                    # ("apostava o meu proprio dinheiro"). Filtra sinais
+                    # fracos onde ainda e cedo para arriscar.
+                    if not s.get("_alta_conviccao"):
+                        continue
                     if float(s.get("prob_modelo", 0)) >= prob_min_telegram:
                         notificar.append(s)
                 else:
