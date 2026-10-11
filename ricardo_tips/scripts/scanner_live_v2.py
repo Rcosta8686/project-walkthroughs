@@ -144,18 +144,29 @@ def _gravar_novas(sugestoes_dicts, f: Path) -> int:
 # ───────────── Puxar odds live via Odds API /events ─────────────
 
 def _sport_da_liga(liga_nome: str) -> str | None:
-    """Mapeia nome Sofascore → sport_key Odds API."""
-    mapa = {
-        "Premier League": "soccer_epl",
-        "LaLiga": "soccer_spain_la_liga",
-        "La Liga": "soccer_spain_la_liga",
-        "Serie A": "soccer_italy_serie_a",
-        "Bundesliga": "soccer_germany_bundesliga",
-        "Ligue 1": "soccer_france_ligue_one",
-        "Primeira Liga": "soccer_portugal_primeira_liga",
-        "Liga Portugal": "soccer_portugal_primeira_liga",
-    }
-    return mapa.get(liga_nome)
+    """Mapeia nome Sofascore → sport_key Odds API.
+
+    Match substring (lowercase) para apanhar variacoes como:
+      "LaLiga EA SPORTS"  → soccer_spain_la_liga
+      "Liga Portugal Betclic" → soccer_portugal_primeira_liga
+    """
+    if not liga_nome:
+        return None
+    n = liga_nome.lower()
+    pares = [
+        ("premier league", "soccer_epl"),
+        ("laliga", "soccer_spain_la_liga"),      # cobre "LaLiga EA Sports"
+        ("la liga", "soccer_spain_la_liga"),
+        ("serie a", "soccer_italy_serie_a"),
+        ("bundesliga", "soccer_germany_bundesliga"),
+        ("ligue 1", "soccer_france_ligue_one"),
+        ("liga portugal", "soccer_portugal_primeira_liga"),  # cobre "Liga Portugal Betclic"
+        ("primeira liga", "soccer_portugal_primeira_liga"),
+    ]
+    for sub, sport in pares:
+        if sub in n:
+            return sport
+    return None
 
 
 def _odds_api_live_evento(sport: str, home: str, away: str) -> dict | None:
@@ -603,17 +614,21 @@ def _correr_ciclo(args) -> None:
             _gravar_snapshot(estado)
         except Exception as exc:  # noqa: BLE001
             log.warning("Falha gravar snapshot %s: %s", estado.event_id, exc)
-        # Puxa odds da Odds API
-        sport = _sport_da_liga(estado.liga)
-        if sport is None:
-            continue
-        try:
-            odds_json = _odds_api_live_evento(sport, estado.home, estado.away)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Odds API erro para %s vs %s: %s", estado.home, estado.away, exc)
-            odds_json = None
+        # Modelo corre SEMPRE, nao depende de ter odds da Odds API.
         prev = live_predictor.prever(estado)
         _imprimir_estado(estado, prev)
+
+        # Odds API: so para computar EV (classico) — opcional.
+        sport = _sport_da_liga(estado.liga)
+        if sport is None:
+            print(f"    (liga '{estado.liga}' sem mapeamento Odds API — so modo analista)")
+            odds_json = None
+        else:
+            try:
+                odds_json = _odds_api_live_evento(sport, estado.home, estado.away)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Odds API erro para %s vs %s: %s", estado.home, estado.away, exc)
+                odds_json = None
 
         # MODO ANALISTA: gera sinais do modelo independentes de haver odds.
         # Serve dois casos:
