@@ -37,6 +37,187 @@ LINHAS_MERCADO = {
 }
 
 
+# ──────── Contexto de mercado (Caan Berry: 5 hotspots) ────────
+# Multiplicador aplicado ao score de ranking do sinal. Nao distorce
+# a prob_modelo (nao mente sobre probabilidade); apenas prioriza
+# sinais em ligas/mercados onde o edge do bookmaker e menor.
+
+# Hotspot 1+5: ligas pouco monitoradas = pricing menos eficiente.
+# Big-5 principais e UEFA tem atencao maxima → baseline 1.0.
+# Segundas divisoes, tacas e Brasileirao → boost.
+EFICIENCIA_LIGA = {
+    # Baseline eficiente (margens apertadas)
+    "Premier League (ENG)":       1.00,
+    "LaLiga":                     1.00,
+    "Serie A (ITA)":              1.00,
+    "Bundesliga":                 1.00,
+    "Ligue 1 (FRA)":              1.00,
+    "UEFA Champions League":      1.00,
+    "UEFA Europa League":         1.02,
+    "UEFA Conference League":     1.05,
+    "Liga Portugal":              1.05,   # menor que Big-5
+    # Segundas divisoes (pouca atencao)
+    "Championship (ENG)":         1.15,
+    "LaLiga 2 (Hypermotion)":     1.15,
+    "Serie B (ITA)":              1.15,
+    "Bundesliga 2":               1.15,
+    "Ligue 2":                    1.15,
+    "Liga Portugal 2":            1.18,
+    # Tacas (cobertura ad-hoc)
+    "FA Cup (ENG)":               1.08,
+    "Copa del Rey":               1.08,
+    "Coppa Italia":               1.08,
+    "DFB-Pokal":                  1.08,
+    "Coupe de France":            1.08,
+    "Taca de Portugal":           1.10,
+    # Brasileirao (grande volume local, menor no mercado europeu)
+    "Brasileirão Série A":        1.10,
+}
+
+# Hotspot 2: equipas mediaticas atraem dinheiro recreacional por
+# paixao → odds a favor comprimem, odds contra inflacionam. Fade.
+# Match case-insensitive substring.
+EQUIPAS_MEDIATICAS = frozenset({
+    "real madrid", "barcelona", "atletico madrid", "atlético madrid",
+    "manchester united", "manchester city", "liverpool", "arsenal",
+    "chelsea", "tottenham",
+    "juventus", "milan", "inter", "napoli",
+    "bayern", "borussia dortmund", "dortmund",
+    "paris saint-germain", "psg",
+    "porto", "benfica", "sporting",
+    "flamengo", "palmeiras", "corinthians", "são paulo", "santos",
+})
+
+# Hotspot 5 refinado: em Big-5, bookmakers focam em 1X2/golos.
+# Mercados nicho (cantos, cartoes, SoT) tem pricing menos afiado.
+_LIGAS_BIG5 = frozenset({
+    "Premier League (ENG)", "LaLiga", "Serie A (ITA)",
+    "Bundesliga", "Ligue 1 (FRA)",
+})
+_MERCADOS_NICHE = frozenset({"cantos", "cartoes", "remates", "remates_a_baliza"})
+
+
+def _eh_mediatica(nome_equipa: str) -> bool:
+    """True se o nome contem alguma substring de equipa mediatica."""
+    n = (nome_equipa or "").lower()
+    return any(m in n for m in EQUIPAS_MEDIATICAS)
+
+
+def fator_mercado(liga: str, home: str, away: str,
+                   mercado: str, lado: str) -> float:
+    """Multiplicador composto a aplicar ao score de ranking do sinal.
+
+    - Ligas pouco eficientes: boost
+    - Mercado nicho em Big-5: boost extra
+    - Apostar CONTRA equipa mediatica: boost (odds inflacionadas)
+    - Apostar A FAVOR de equipa mediatica: pequeno desconto
+
+    Nao distorce a prob_modelo. So prioriza o ranking.
+    """
+    liga = liga or ""
+    f = EFICIENCIA_LIGA.get(liga, 1.0)
+
+    if liga in _LIGAS_BIG5 and mercado in _MERCADOS_NICHE:
+        f *= 1.10
+
+    if mercado == "1x2":
+        casa_med = _eh_mediatica(home)
+        fora_med = _eh_mediatica(away)
+        if lado == "casa":
+            if casa_med and not fora_med:
+                f *= 0.92
+            elif fora_med and not casa_med:
+                f *= 1.08
+        elif lado == "fora":
+            if fora_med and not casa_med:
+                f *= 0.92
+            elif casa_med and not fora_med:
+                f *= 1.08
+        elif lado == "empate" and (casa_med or fora_med):
+            f *= 1.05
+
+    elif mercado == "golo_equipa":
+        lado_eh_mediatica = (
+            (lado == "marca_casa" and _eh_mediatica(home))
+            or (lado == "marca_fora" and _eh_mediatica(away))
+        )
+        if lado_eh_mediatica:
+            f *= 0.94
+
+    return f
+
+
+def _fator_mercado(sinal: "Sinal", estado: "EstadoLive") -> float:
+    """Variante sobre Sinal+EstadoLive. Delega em fator_mercado."""
+    return fator_mercado(estado.liga, estado.home, estado.away,
+                          sinal.mercado, sinal.lado)
+
+
+# Hotspot 2 (Caan Berry): fade do favorito pos-intervalo.
+# Underdog a ganhar 1-0 ao min 45-60 → publico martela comeback do
+# favorito → odds do underdog aguentar INFLACIONAM. Boost prob.
+_BOOST_FADE_HT = 0.06  # +6pp na prob do underdog aguentar
+
+
+def _ajuste_fade_favorito(estado: "EstadoLive", prev: "PrevisaoLive") -> tuple[float, float, float, str | None]:
+    """Devolve (p_casa_ajust, p_empate_ajust, p_fora_ajust, racional).
+
+    Se nao se aplica, devolve as probs originais e racional=None.
+    """
+    minuto = estado.minuto
+    if minuto < 45 or minuto > 65:
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+    diff = estado.marcador_casa - estado.marcador_fora
+    if abs(diff) != 1:
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+
+    # Identificar favorito via rating medio OU equipa mediatica
+    casa_med = _eh_mediatica(estado.home)
+    fora_med = _eh_mediatica(estado.away)
+    rating_c = estado.rating_medio_casa
+    rating_f = estado.rating_medio_fora
+    rating_delta = (rating_c - rating_f) if (rating_c and rating_f) else 0.0
+
+    # Favorito = mediatica OR melhor rating (delta > 0.25)
+    favorito_casa = (casa_med and not fora_med) or rating_delta > 0.25
+    favorito_fora = (fora_med and not casa_med) or rating_delta < -0.25
+
+    if not favorito_casa and not favorito_fora:
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+
+    # Favorito a perder?
+    favorito_a_perder = (favorito_casa and diff < 0) or (favorito_fora and diff > 0)
+    if not favorito_a_perder:
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+
+    # Momentum nao pode CONTRADIZER o underdog (se o favorito tem
+    # momentum claro, nao vale fade — o jogo esta mesmo a virar).
+    if favorito_casa and estado.momentum_actual == "casa":
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+    if favorito_fora and estado.momentum_actual == "fora":
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+
+    # Fade so e util quando o modelo tem incerteza (prob underdog 30-60%).
+    # Se o modelo ja concorda fortemente (>60%), as odds nao estao viciadas
+    # — nao ha arbitragem publica para explorar.
+    p_c, p_x, p_f = prev.p_casa_vence, prev.p_empate, prev.p_fora_vence
+    prob_underdog_actual = p_f if favorito_casa else p_c
+    if prob_underdog_actual < 0.30 or prob_underdog_actual > 0.60:
+        return prev.p_casa_vence, prev.p_empate, prev.p_fora_vence, None
+
+    if favorito_casa:
+        p_f = min(0.90, p_f + _BOOST_FADE_HT)
+        p_c = max(0.05, p_c - _BOOST_FADE_HT)
+    else:
+        p_c = min(0.90, p_c + _BOOST_FADE_HT)
+        p_f = max(0.05, p_f - _BOOST_FADE_HT)
+    nome_underdog = estado.away if favorito_casa else estado.home
+    nome_favorito = estado.home if favorito_casa else estado.away
+    racional = (f"Fade sentimental: publico martela {nome_favorito} a reagir, "
+                f"odds do {nome_underdog} aguentar inflacionam")
+    return p_c, p_x, p_f, racional
+
+
 @dataclass
 class Sinal:
     tipo: str
@@ -173,11 +354,17 @@ def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
     return True
 
 
-def pontuar_sinal(sinal: Sinal) -> float:
-    """Score para ranking: edge x qualidade do racional x forca."""
+def pontuar_sinal(sinal: Sinal, estado: "EstadoLive | None" = None) -> float:
+    """Score para ranking: edge x qualidade do racional x forca x contexto.
+
+    Contexto de mercado (Caan Berry): sinais em ligas pouco monitoradas,
+    mercados nicho em Big-5, ou contra equipas mediaticas sobrem a
+    pontuacao sem distorcer a prob_modelo subjacente.
+    """
     edge = sinal.prob_modelo * sinal.odd_valor
     qualidade = max(1, len(sinal.racional))
-    return edge * (qualidade ** 0.5) * sinal.forca_num
+    fator = _fator_mercado(sinal, estado) if estado is not None else 1.0
+    return edge * (qualidade ** 0.5) * sinal.forca_num * fator
 
 
 def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
@@ -388,10 +575,14 @@ def _sinal_1x2(estado, prev, ctx, out, prob_min) -> None:
             return
 
     threshold = min(prob_min, PROB_MIN_1X2)
+
+    # Aplicar fade favorito pos-intervalo (Caan Berry hotspot 2)
+    p_c, p_x, p_f, racional_fade = _ajuste_fade_favorito(estado, prev)
+
     opcoes = [
-        ("casa", estado.home, prev.p_casa_vence),
-        ("empate", "Empate", prev.p_empate),
-        ("fora", estado.away, prev.p_fora_vence),
+        ("casa", estado.home, p_c),
+        ("empate", "Empate", p_x),
+        ("fora", estado.away, p_f),
     ]
     opcoes.sort(key=lambda x: -x[2])
 
@@ -406,19 +597,26 @@ def _sinal_1x2(estado, prev, ctx, out, prob_min) -> None:
         # So emite o segundo se estiver proximo do favorito (dentro de 10pp)
         if emitidos > 0 and prob < opcoes[0][2] - 0.10:
             break
-        _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob)
+        _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob, racional_fade)
         emitidos += 1
 
 
-def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob) -> None:
+def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob, racional_fade=None) -> None:
 
     racional = []
     titulo = (f"{estado.home} vence" if lado == "casa"
               else f"{estado.away} vence" if lado == "fora"
               else "Empate")
 
-    # Racional baseado no marcador actual
+    # Fade sentimental (Caan Berry): aplica so a quem esta a ganhar e o underdog
     diff = estado.marcador_casa - estado.marcador_fora
+    if racional_fade:
+        underdog_ganha_casa = (lado == "casa" and diff > 0)
+        underdog_ganha_fora = (lado == "fora" and diff < 0)
+        if underdog_ganha_casa or underdog_ganha_fora:
+            racional.append(racional_fade)
+
+    # Racional baseado no marcador actual
     if lado == "casa" and diff > 0:
         racional.append(f"{estado.home} a vencer {estado.marcador_casa}-{estado.marcador_fora}")
     elif lado == "fora" and diff < 0:

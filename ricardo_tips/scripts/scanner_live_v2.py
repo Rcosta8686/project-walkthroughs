@@ -689,13 +689,18 @@ def _correr_ciclo(args) -> None:
                         continue
                     if ev_val >= ev_min_telegram:
                         notificar.append(s)
-            # Score para ranking: edge × √racionais × forca
+            # Score para ranking: edge × fator_mercado (Caan Berry:
+            # ligas pouco monitoradas, nicho em Big-5, fade mediaticas)
             def _score(s):
                 try:
                     prob = float(s.get("prob_modelo", 0))
                     odd = float(s.get("odd", 0))
                     edge = prob * odd
-                    return edge  # mais alto = melhor
+                    fator = analista.fator_mercado(
+                        s.get("liga", ""), s.get("home", ""), s.get("away", ""),
+                        s.get("mercado", ""), s.get("lado", ""),
+                    )
+                    return edge * fator
                 except (ValueError, TypeError):
                     return 0
             notificar.sort(key=_score, reverse=True)
