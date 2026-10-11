@@ -43,36 +43,69 @@ LINHAS_MERCADO = {
 # sinais em ligas/mercados onde o edge do bookmaker e menor.
 
 # Hotspot 1+5: ligas pouco monitoradas = pricing menos eficiente.
-# Big-5 principais e UEFA tem atencao maxima → baseline 1.0.
-# Segundas divisoes, tacas e Brasileirao → boost.
-EFICIENCIA_LIGA = {
-    # Baseline eficiente (margens apertadas)
-    "Premier League (ENG)":       1.00,
-    "LaLiga":                     1.00,
-    "Serie A (ITA)":              1.00,
-    "Bundesliga":                 1.00,
-    "Ligue 1 (FRA)":              1.00,
-    "UEFA Champions League":      1.00,
-    "UEFA Europa League":         1.02,
-    "UEFA Conference League":     1.05,
-    "Liga Portugal":              1.05,   # menor que Big-5
-    # Segundas divisoes (pouca atencao)
-    "Championship (ENG)":         1.15,
-    "LaLiga 2 (Hypermotion)":     1.15,
-    "Serie B (ITA)":              1.15,
-    "Bundesliga 2":               1.15,
-    "Ligue 2":                    1.15,
-    "Liga Portugal 2":            1.18,
-    # Tacas (cobertura ad-hoc)
-    "FA Cup (ENG)":               1.08,
-    "Copa del Rey":               1.08,
-    "Coppa Italia":               1.08,
-    "DFB-Pokal":                  1.08,
-    "Coupe de France":            1.08,
-    "Taca de Portugal":           1.10,
-    # Brasileirao (grande volume local, menor no mercado europeu)
-    "Brasileirão Série A":        1.10,
-}
+# Chaves em LOWERCASE para substring matching (Sofascore devolve nomes
+# com variacoes: "Serie A" OR "Serie A (ITA)" OR "Campeonato Italiano").
+# Primeira correspondencia vence (ordem importa — especıficos primeiro).
+EFICIENCIA_LIGA = [
+    # Segundas divisoes e menos eficientes (BOOST — mais edge)
+    ("championship",         1.15),
+    ("laliga 2",             1.15),
+    ("hypermotion",          1.15),  # alias LaLiga 2
+    ("serie b",              1.15),
+    ("bundesliga 2",         1.15),
+    ("ligue 2",              1.15),
+    ("liga portugal 2",      1.18),
+    # Tacas (cobertura ad-hoc, menos linhas, mais erros)
+    ("fa cup",               1.08),
+    ("copa del rey",         1.08),
+    ("coppa italia",         1.08),
+    ("dfb-pokal",            1.08),
+    ("coupe de france",      1.08),
+    ("taca de portugal",     1.10),
+    ("taça de portugal",     1.10),
+    # Conference / UEL (margens menos apertadas que UCL)
+    ("conference league",    1.05),
+    ("europa league",        1.02),
+    # Liga Portugal (menor que Big-5)
+    ("liga portugal",        1.05),
+    ("portugal betclic",     1.05),
+    # Baseline eficiente — Big-5 e UCL (margens apertadas)
+    ("premier league",       1.00),
+    ("champions league",     1.00),
+    ("bundesliga",           1.00),
+    ("ligue 1",              1.00),
+    ("laliga",               1.00),
+    ("serie a",              1.00),
+    # Brasileirao: dados Ricardo mostraram -42% ROI em 190 sinais.
+    # Downgrade severo ate termos modelo que entenda esse futebol.
+    ("brasileir",            0.60),   # casa com stats menos previsiveis
+    ("campeonato brasileiro",0.60),
+]
+
+# Ligas onde o modelo esta DEMONSTRAVELMENTE a perder dinheiro (dados Ricardo).
+# Sinais destas ligas sao ainda emitidos para terminal, mas NAO para Telegram.
+# Reavaliar quando acumulares 100+ sinais com modelo pos-fix-SoT.
+LIGAS_BLACKLIST_TELEGRAM = frozenset({
+    "brasileir",              # -42% ROI, 190 sinais
+    "campeonato brasileiro",
+    "laliga 2",               # -35% ROI, 54 sinais
+    "hypermotion",
+})
+
+
+def _match_liga_substring(liga: str, mapa: list) -> float:
+    """Procura primeira chave que e substring do nome da liga (case-insensitive)."""
+    n = (liga or "").lower()
+    for chave, valor in mapa:
+        if chave in n:
+            return valor
+    return 1.0
+
+
+def liga_na_blacklist(liga: str) -> bool:
+    """True se a liga esta a perder sistematicamente nos dados reais."""
+    n = (liga or "").lower()
+    return any(k in n for k in LIGAS_BLACKLIST_TELEGRAM)
 
 # Hotspot 2: equipas mediaticas atraem dinheiro recreacional por
 # paixao → odds a favor comprimem, odds contra inflacionam. Fade.
@@ -90,11 +123,19 @@ EQUIPAS_MEDIATICAS = frozenset({
 
 # Hotspot 5 refinado: em Big-5, bookmakers focam em 1X2/golos.
 # Mercados nicho (cantos, cartoes, SoT) tem pricing menos afiado.
-_LIGAS_BIG5 = frozenset({
-    "Premier League (ENG)", "LaLiga", "Serie A (ITA)",
-    "Bundesliga", "Ligue 1 (FRA)",
-})
+# Lowercase substrings para matching robusto.
+_LIGAS_BIG5_SUBSTR = ("premier league", "laliga", "serie a",
+                      "bundesliga", "ligue 1")
 _MERCADOS_NICHE = frozenset({"cantos", "cartoes", "remates", "remates_a_baliza"})
+
+
+def _eh_big5(liga: str) -> bool:
+    n = (liga or "").lower()
+    # Exclui segundas divisoes: "laliga 2", "serie b", etc.
+    if any(s in n for s in ("laliga 2", "hypermotion", "serie b",
+                             "bundesliga 2", "ligue 2", "championship")):
+        return False
+    return any(s in n for s in _LIGAS_BIG5_SUBSTR)
 
 
 def _eh_mediatica(nome_equipa: str) -> bool:
@@ -115,9 +156,9 @@ def fator_mercado(liga: str, home: str, away: str,
     Nao distorce a prob_modelo. So prioriza o ranking.
     """
     liga = liga or ""
-    f = EFICIENCIA_LIGA.get(liga, 1.0)
+    f = _match_liga_substring(liga, EFICIENCIA_LIGA)
 
-    if liga in _LIGAS_BIG5 and mercado in _MERCADOS_NICHE:
+    if _eh_big5(liga) and mercado in _MERCADOS_NICHE:
         f *= 1.10
 
     if mercado == "1x2":
@@ -253,6 +294,13 @@ def _odds_minimas(prob: float, ev_desejado: float = 0.05) -> tuple[float, float]
 
 def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
          prob: float, racional: list[str], titulo: str = "") -> None:
+    # Calibracao: aplica blend 40/60 com hit rate historico do bucket.
+    # Dados Ricardo mostraram shift -15pp sistematico em todos os buckets.
+    try:
+        from apostas.modelos.live_predictor import calibrar_prob
+        prob = calibrar_prob(prob, mercado)
+    except Exception:  # noqa: BLE001
+        pass
     if prob > 0.92:
         return
     forca = _classifica_forca(prob)
@@ -268,18 +316,21 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
     ))
 
 
-# Minutos minimos por mercado para o modelo ter conviccao credivel.
-# Mercados mais voláteis (podem virar com 1 vermelho / 1 golo) exigem
-# mais minutos para o padrao se consolidar. Mercados mais estaveis
-# (cantos, cartoes, remates) ja dao sinais fiaveis mais cedo.
+# Minutos minimos por mercado. Dados Ricardo (653 sinais) mostraram:
+#   0-30'  hit 49.5%  ROI -27.8%
+#   30-45' hit 49.2%  ROI -28.9%
+#   45-60' hit 60.6%  ROI -12.3%
+#   60-75' hit 64.2%  ROI  -8.5%   ← sweet spot
+# → Antes do intervalo o modelo e random (<=50%). Thresholds puxados
+# para o segundo tempo onde o padrao realmente consolida.
 MINUTO_MIN_POR_MERCADO = {
-    "1x2":              40,  # resultado final — muito volatil, so a partir do intervalo
-    "golos":            30,  # score shape consolida apos min 30
-    "btts":             30,
-    "cantos":           20,  # padrao de pressao estabelece-se cedo
-    "cartoes":          20,
-    "remates":          20,
-    "remates_a_baliza": 20,
+    "1x2":              50,  # resultado final — favorito so emerge no 2o tempo
+    "golos":            45,  # score shape consolida apos intervalo
+    "btts":             45,
+    "cantos":           40,  # padrao de pressao fiavel na 1a metade do 2o tempo
+    "cartoes":          40,
+    "remates":          40,
+    "remates_a_baliza": 50,  # pior mercado nos dados — mais exigente
 }
 
 # Conviccao minima (prob × odd_valor) para EMITIR o sinal no Telegram.

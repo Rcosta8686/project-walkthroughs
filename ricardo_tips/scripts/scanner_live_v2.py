@@ -675,6 +675,11 @@ def _correr_ciclo(args) -> None:
             prob_min_telegram = args.prob_minima
             notificar = []
             for s in todas_sugestoes:
+                # Blacklist por liga (dados reais: Brasileirao -42% ROI,
+                # LaLiga 2 -35% ROI com n>=50). Deixa aparecer no terminal
+                # mas nao notifica para evitar perdas acumuladas.
+                if analista.liga_na_blacklist(s.get("liga", "")):
+                    continue
                 if s.get("casa") == "ANALISTA":
                     # Sinal do analista: tem de passar o filtro Paulo
                     # Rebelo (edge, racional, minuto maduro, tom).
