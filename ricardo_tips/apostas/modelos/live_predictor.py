@@ -100,15 +100,22 @@ class PrevisaoLive:
     lam_golos_restantes: float
     lam_cantos_restantes: float
     lam_cartoes_amarelos_restantes: float
-    lam_shots_restantes: float = 0.0         # remates totais restantes
-    lam_shots_on_target_restantes: float = 0.0  # remates a baliza restantes
-    # P(≥N golos restantes no jogo todo)
+    lam_shots_restantes: float = 0.0
+    lam_shots_on_target_restantes: float = 0.0
+    # Lambda splitting por equipa (para 1X2)
+    lam_golos_casa_rest: float = 0.0
+    lam_golos_fora_rest: float = 0.0
+    # P(≥N golos restantes)
     p_mais_1_golo: float = 0.0
     p_mais_2_golos: float = 0.0
-    # P(ambas marcam no final) — útil se BTTS ainda não aconteceu
+    # P(BTTS final)
     p_btts_final: float = 0.0
+    # P(resultado final 1/X/2)
+    p_casa_vence: float = 0.0
+    p_empate: float = 0.0
+    p_fora_vence: float = 0.0
 
-    # Internos (usados por métodos)
+    # Internos
     _marcador_casa: int = 0
     _marcador_fora: int = 0
     _shots_atual: int = 0
@@ -350,6 +357,35 @@ def prever(
     lam_shots_rest = shots_rate * minutos_restantes * fator_m * fator_chasing
     lam_sot_rest = sot_rate * minutos_restantes * fator_m * fator_chasing
 
+    # ─── Split lam_golos_rest por equipa (para 1X2) ───────────────
+    # Peso: baseia-se em xG actual observado + home advantage + chasing.
+    peso_casa = 0.55  # home advantage default (~0.25 golos/jogo)
+    if estado.xg_casa is not None and estado.xg_fora is not None and minuto > 10:
+        xg_t = estado.xg_casa + estado.xg_fora
+        if xg_t > 0.3:
+            peso_casa = estado.xg_casa / xg_t
+            # mistura com home advantage para evitar amostras pequenas
+            peso_casa = 0.65 * peso_casa + 0.35 * 0.55
+    # Chasing: equipa a perder empurra mais nos ultimos 25 min
+    if minutos_restantes <= 25:
+        if estado.marcador_casa < estado.marcador_fora:
+            peso_casa = min(0.75, peso_casa + 0.08)
+        elif estado.marcador_fora < estado.marcador_casa:
+            peso_casa = max(0.25, peso_casa - 0.08)
+    # Red cards: equipa com 10 cria menos
+    if reds > 0:
+        # Nao distinguimos qual equipa; assume divisao igual do dano
+        pass
+
+    lam_golos_casa_rest = lam_golos_rest * peso_casa
+    lam_golos_fora_rest = lam_golos_rest * (1 - peso_casa)
+
+    # 1X2 live: convolui Poisson das 2 equipas para distribuicao final
+    p_casa_vence, p_empate, p_fora_vence = _calc_1x2(
+        estado.marcador_casa, estado.marcador_fora,
+        lam_golos_casa_rest, lam_golos_fora_rest,
+    )
+
     p_mais_1 = 1.0 - _poisson_cdf(0, lam_golos_rest)
     p_mais_2 = 1.0 - _poisson_cdf(1, lam_golos_rest)
 
@@ -378,9 +414,14 @@ def prever(
         lam_cartoes_amarelos_restantes=lam_cards_rest,
         lam_shots_restantes=lam_shots_rest,
         lam_shots_on_target_restantes=lam_sot_rest,
+        lam_golos_casa_rest=lam_golos_casa_rest,
+        lam_golos_fora_rest=lam_golos_fora_rest,
         p_mais_1_golo=p_mais_1,
         p_mais_2_golos=p_mais_2,
         p_btts_final=p_btts,
+        p_casa_vence=p_casa_vence,
+        p_empate=p_empate,
+        p_fora_vence=p_fora_vence,
         _marcador_casa=estado.marcador_casa,
         _marcador_fora=estado.marcador_fora,
         _shots_atual=shots_total_actual,
@@ -388,6 +429,52 @@ def prever(
         _cantos_atual=cantos_actual,
         _amarelos_atual=cards_actual,
     )
+
+
+def _calc_1x2(marcador_casa: int, marcador_fora: int,
+              lam_casa_rest: float, lam_fora_rest: float,
+              max_golos_rest: int = 8) -> tuple[float, float, float]:
+    """Convolui Poisson das 2 equipas para P(casa_vence), P(empate), P(fora_vence).
+
+    Soma sobre todas as combinacoes de (gh, ga) com gh = golos extra casa,
+    ga = golos extra fora. Final = marcador_actual + gh/ga.
+    """
+    p_casa, p_empate, p_fora = 0.0, 0.0, 0.0
+    from math import exp
+    for gh in range(max_golos_rest + 1):
+        # P(exactamente gh golos extra casa)
+        if lam_casa_rest > 0:
+            p_gh = (lam_casa_rest ** gh) / _fatorial(gh) * exp(-lam_casa_rest)
+        else:
+            p_gh = 1.0 if gh == 0 else 0.0
+        for ga in range(max_golos_rest + 1):
+            if lam_fora_rest > 0:
+                p_ga = (lam_fora_rest ** ga) / _fatorial(ga) * exp(-lam_fora_rest)
+            else:
+                p_ga = 1.0 if ga == 0 else 0.0
+            p = p_gh * p_ga
+            final_casa = marcador_casa + gh
+            final_fora = marcador_fora + ga
+            if final_casa > final_fora:
+                p_casa += p
+            elif final_casa < final_fora:
+                p_fora += p
+            else:
+                p_empate += p
+    # Normaliza para somar 1 (margem de truncagem)
+    total = p_casa + p_empate + p_fora
+    if total > 0:
+        p_casa /= total
+        p_empate /= total
+        p_fora /= total
+    return p_casa, p_empate, p_fora
+
+
+def _fatorial(n: int) -> int:
+    r = 1
+    for i in range(2, n + 1):
+        r *= i
+    return r
 
 
 def ev_contra_odd(prob: float, odd_casa: float) -> float:
