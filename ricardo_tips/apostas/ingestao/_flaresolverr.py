@@ -93,8 +93,12 @@ def _rate_limit() -> None:
     _ultimo_pedido = time.monotonic()
 
 
-def _garantir_sessao() -> None:
-    """Cria uma sessao flaresolverr (reutiliza cookies entre pedidos)."""
+def _garantir_sessao(warmup_url: str | None = None) -> None:
+    """Cria uma sessao flaresolverr e opcionalmente visita warmup_url.
+
+    O warmup e critico para APIs que verificam cookies do site principal
+    (Sofascore devolve 403 ao /api se nao houver cookies de www.sofascore.com).
+    """
     global _sessao_criada
     if _sessao_criada:
         return
@@ -118,10 +122,36 @@ def _garantir_sessao() -> None:
             "`docker ps | grep flaresolverr`."
         ) from exc
 
+    if warmup_url:
+        log.info("Flaresolverr: warmup em %s para apanhar cookies de sessao...", warmup_url)
+        try:
+            w = requests.post(
+                _url_flaresolverr(),
+                json={
+                    "cmd": "request.get",
+                    "url": warmup_url,
+                    "session": _SESSION_NAME,
+                    "maxTimeout": _timeout_ms(),
+                },
+                timeout=90,
+            )
+            if w.ok:
+                sol = (w.json() or {}).get("solution", {}) or {}
+                log.info("  warmup HTTP %s", sol.get("status"))
+            else:
+                log.warning("  warmup falhou: HTTP %d", w.status_code)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("  warmup erro: %s", exc)
 
-def get(url: str, headers: dict | None = None) -> RespostaFS:
-    """GET via flaresolverr. Resolve Cloudflare transparentemente."""
-    _garantir_sessao()
+
+def get(url: str, headers: dict | None = None, warmup_url: str | None = None) -> RespostaFS:
+    """GET via flaresolverr. Resolve Cloudflare transparentemente.
+
+    Se ``warmup_url`` for passado e a sessao ainda nao existir, o
+    flaresolverr visita-o PRIMEIRO (para apanhar cookies do site), e
+    so depois o ``url`` real.
+    """
+    _garantir_sessao(warmup_url=warmup_url)
     _rate_limit()
     payload = {
         "cmd": "request.get",

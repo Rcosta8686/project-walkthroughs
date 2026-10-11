@@ -32,6 +32,19 @@ from apostas.utils.logger import get_logger
 log = get_logger(__name__)
 
 _BASE = "https://api.sofascore.com/api/v1"
+_WARMUP = "https://www.sofascore.com/"
+
+# Headers que a webapp Sofascore envia nos pedidos XHR a api.sofascore.com.
+# Sem estes, a API devolve 403 Forbidden mesmo quando Cloudflare deixa passar.
+_HEADERS_API = {
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9,pt;q=0.8",
+    "Origin": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+}
 
 
 # ─────────────────────────────── Modelos ──────────────────────────────
@@ -109,7 +122,11 @@ def listar_jogos_live(ligas_filter: tuple[str, ...] | None = None) -> list[dict]
     Se ``ligas_filter`` for passado (ex: ("Premier League", "La Liga")),
     filtra pelos nomes de torneio que contenham qualquer um.
     """
-    resp = _flaresolverr.get(f"{_BASE}/sport/football/events/live")
+    resp = _flaresolverr.get(
+        f"{_BASE}/sport/football/events/live",
+        headers=_HEADERS_API,
+        warmup_url=_WARMUP,
+    )
     if resp.status != 200:
         log.warning("Sofascore live events: HTTP %d", resp.status)
         return []
@@ -171,7 +188,11 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
 
 def _get_json(path: str) -> dict | None:
     try:
-        resp = _flaresolverr.get(f"{_BASE}{path}")
+        resp = _flaresolverr.get(
+            f"{_BASE}{path}",
+            headers=_HEADERS_API,
+            warmup_url=_WARMUP,
+        )
     except _flaresolverr.FlaresolverrIndisponivel:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -183,10 +204,15 @@ def _get_json(path: str) -> dict | None:
         log.debug("Sofascore %s HTTP %d", path, resp.status)
         return None
     try:
-        return resp.json()
+        data = resp.json()
     except Exception as exc:  # noqa: BLE001
         log.debug("Sofascore %s nao-JSON: %s", path, exc)
         return None
+    # Sofascore encapsula erros no body com status 200: {"error": {"code": 403, ...}}
+    if isinstance(data, dict) and "error" in data and "events" not in data:
+        log.warning("Sofascore %s body error: %s", path, data["error"])
+        return None
+    return data
 
 
 def _minuto_actual(ev: dict) -> int:
