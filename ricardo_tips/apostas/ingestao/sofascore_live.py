@@ -180,16 +180,45 @@ class EstadoLive:
 # ─────────────────────────────── API ──────────────────────────────────
 
 
-# IDs internos Sofascore das ligas que seguimos. Mais fiavel que
-# matching por nome (ha mil "Premier League" no mundo).
-# Confirmados via https://www.sofascore.com/tournament/football/<pais>/<liga>
+# IDs internos Sofascore. Confirmados via
+# https://www.sofascore.com/tournament/football/<pais>/<liga>
 LIGAS_SOFASCORE_IDS = {
-    "Premier League (ENG)": 17,     # England Premier League
-    "LaLiga":                8,     # Spain LaLiga
-    "Serie A (ITA)":         23,    # Italy Serie A
-    "Bundesliga":            35,    # Germany Bundesliga 1
-    "Ligue 1 (FRA)":         34,    # France Ligue 1
-    "Liga Portugal":         238,   # Portugal Primeira Liga
+    # ─── Big-5 principais ─────────────────────────────────────────
+    "Premier League (ENG)":         17,
+    "LaLiga":                        8,
+    "Serie A (ITA)":                23,
+    "Bundesliga":                   35,
+    "Ligue 1 (FRA)":                34,
+    "Liga Portugal":               238,
+
+    # ─── Segundas divisoes europeias (jogos semana + fim de semana) ─
+    "Championship (ENG)":           18,     # England Championship
+    "LaLiga 2 (Hypermotion)":       54,     # Spain Segunda
+    "Serie B (ITA)":                53,     # Italy Serie B
+    "Bundesliga 2":                 44,     # Germany Bundesliga 2
+    "Ligue 2":                      182,    # France Ligue 2
+    "Liga Portugal 2":              239,    # Portugal Segunda
+
+    # ─── Competicoes europeias (jogos ter/qua/qui) ────────────────
+    "UEFA Champions League":        7,      # Champions
+    "UEFA Europa League":           679,    # Europa
+    "UEFA Conference League":       17015,  # Conference
+
+    # ─── Tacas nacionais (jogos semana) ───────────────────────────
+    "FA Cup (ENG)":                 19,
+    "Copa del Rey":                 329,
+    "Coppa Italia":                 328,
+    "DFB-Pokal":                    872,
+    "Coupe de France":              335,
+    "Taca de Portugal":             211,
+
+    # ─── Outras ligas top (opcional, boa cobertura Sofascore) ─────
+    "Eredivisie (NED)":             37,
+    "Belgian Pro League":           38,
+    "Super Lig (TUR)":              52,
+    "MLS":                          242,
+    "Brasileirão Série A":          325,
+    "Argentina Liga Profesional":   155,
 }
 
 

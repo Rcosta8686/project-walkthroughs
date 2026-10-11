@@ -590,10 +590,13 @@ def _imprimir_sugestoes(sugs) -> None:
 def _correr_ciclo(args) -> None:
     agora = datetime.utcnow().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
-    jogos = sofascore_live.listar_jogos_live(
-        ligas_filter=tuple(args.ligas) if args.ligas else None,
-        ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
-    )
+    if args.todas_ligas:
+        jogos = sofascore_live.listar_jogos_live()  # tudo
+    else:
+        jogos = sofascore_live.listar_jogos_live(
+            ligas_filter=tuple(args.ligas) if args.ligas else None,
+            ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
+        )
     if not jogos:
         print("    (sem jogos live nas ligas que seguimos)")
         return
@@ -736,7 +739,10 @@ def main() -> None:
                         help="EV minimo para emitir sugestao (default 0.05 = 5 por cento).")
     parser.add_argument("--ligas", nargs="*", default=None,
                         help="Ligas (substring do tournament.name Sofascore). "
-                             "Default: Big-5 + Liga Portugal.")
+                             "Default: Big-5 + segundas + competicoes europeias + tacas.")
+    parser.add_argument("--todas-ligas", action="store_true",
+                        help="Analisa TODOS os jogos (incluindo ligas obscuras). "
+                             "Util para teste mas enche de ruido.")
     parser.add_argument("--casas", nargs="*", default=None,
                         help="Keys Odds API de casas a considerar. Vazio = todas.")
     parser.add_argument("--telegram", action="store_true",
