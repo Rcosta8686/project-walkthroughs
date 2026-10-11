@@ -25,6 +25,18 @@ if TYPE_CHECKING:
     from apostas.modelos.live_predictor import PrevisaoLive
 
 
+# Linhas STANDARD oferecidas pelas casas de apostas (not inventadas pelo
+# modelo). Modelo so emite para linhas que casas efectivamente abrem.
+# Para cada mercado, lista as linhas tipicas do pre-match / live.
+LINHAS_MERCADO = {
+    "golos":     [0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+    "cantos":    [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5],
+    "cartoes":   [2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
+    "remates":   [16.5, 18.5, 20.5, 22.5, 24.5, 26.5, 28.5, 30.5],
+    "remates_a_baliza": [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5],
+}
+
+
 @dataclass
 class Sinal:
     tipo: str
@@ -77,7 +89,12 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
 
 def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
                  prob_minima: float = 0.55) -> list[Sinal]:
-    """Devolve sinais LIVE com reasoning rico."""
+    """Devolve sinais LIVE com reasoning rico.
+
+    Agrupa sinais por (mercado, lado) e devolve so o mais forte por grupo:
+    evita enviar 'Over 2.5' + 'Over 3.5' + 'Over 4.5' no mesmo jogo —
+    escolhe a linha com melhor forca (prob × odd_valor).
+    """
     ctx = _construir_contexto(estado, prev)
     out: list[Sinal] = []
     _sinal_golos(estado, prev, ctx, out, prob_minima)
@@ -85,7 +102,30 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
     _sinal_cantos(estado, prev, ctx, out, prob_minima)
     _sinal_cartoes(estado, prev, ctx, out, prob_minima)
     _sinal_remates(estado, prev, ctx, out, prob_minima)
-    return [s for s in out if s.prob_modelo >= prob_minima]
+
+    # Agrupar por (mercado, lado) e manter a linha MAIS ALTA (over) ou mais
+    # BAIXA (under) com prob >= prob_minima. As casas abrem as linhas mais
+    # desafiadoras cedo no jogo — emitir Over 2.5 cartoes quando a casa so
+    # tem Over 3.5 e inutil. Preferimos a linha mais exigente onde o
+    # modelo ainda e confiante.
+    melhores: dict[tuple, Sinal] = {}
+    for s in out:
+        key = (s.mercado, s.lado)
+        linha_s = s.linha if s.linha is not None else 0.0
+        existente = melhores.get(key)
+        if existente is None:
+            melhores[key] = s
+            continue
+        linha_e = existente.linha if existente.linha is not None else 0.0
+        # Para OVER: preferir linha ALTA (mais exigente, odd mais atractiva)
+        if s.lado in ("over", "sim"):
+            if linha_s > linha_e:
+                melhores[key] = s
+        # Para UNDER: preferir linha BAIXA (mais exigente, odd mais atractiva)
+        else:  # under, nao
+            if linha_s < linha_e:
+                melhores[key] = s
+    return [s for s in melhores.values() if s.prob_modelo >= prob_minima]
 
 
 # ──────────────────── Contexto ricamente observado ────────────────────
@@ -179,11 +219,12 @@ def _construir_contexto(estado, prev) -> dict:
 # ─────────────── GOLOS ───────────────
 
 def _sinal_golos(estado, prev, ctx, out, prob_min) -> None:
+    """Itera as linhas standard do mercado e emite sinais."""
     golos = estado.marcador_casa + estado.marcador_fora
-    linhas = [golos + 0.5, golos + 1.5]
 
-    for linha in linhas:
-        if linha < 0.5 or linha > 6.5:
+    for linha in LINHAS_MERCADO["golos"]:
+        # Se jogo ja tem mais golos que a linha, mercado esta fechado
+        if golos > linha:
             continue
         p_over = prev.p_over_total(linha)
         p_under = 1 - p_over
@@ -208,10 +249,10 @@ def _sinal_golos(estado, prev, ctx, out, prob_min) -> None:
                 if xg_tot > golos + 0.3:
                     racional.append(f"xG total {xg_tot:.1f} > {golos} golos actuais")
             if not racional:
-                racional.append(f"{prev.minutos_restantes}min restam, modelo espera +1")
+                racional.append(f"{prev.minutos_restantes}min restam, modelo espera +{int(linha - golos + 0.5)}")
             _add(out, "over_golos_live", "golos", "over", linha, p_over, racional, titulo)
 
-        if p_under >= prob_min and prev.minutos_restantes <= 30:
+        if p_under >= prob_min:
             racional = []
             titulo = f"Under {linha} golos"
             if "jogo_a_fechar" in ctx:
@@ -222,10 +263,10 @@ def _sinal_golos(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["keeper_fora_grande"])
             if estado.xg_recent_casa is not None:
                 xg_rec = estado.xg_recent_casa + estado.xg_recent_fora
-                if xg_rec < 0.2:
+                if xg_rec < 0.2 and estado.minuto >= 60:
                     racional.append(f"xG ultimos 15min apenas {xg_rec:.1f}")
             if not racional:
-                racional.append(f"intensidade baixa, {prev.minutos_restantes}min restam")
+                racional.append(f"{golos} golos ao min {estado.minuto}, pouca intensidade")
             _add(out, "under_golos_live", "golos", "under", linha, p_under, racional, titulo)
 
 
@@ -276,16 +317,16 @@ def _sinal_btts(estado, prev, ctx, out, prob_min) -> None:
 
 def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
     cantos = (estado.corners_casa or 0) + (estado.corners_fora or 0)
-    for linha in [cantos + 0.5, cantos + 1.5, cantos + 2.5]:
-        if linha < 2.5 or linha > 15.5:
+    for linha in LINHAS_MERCADO["cantos"]:
+        if cantos > linha:
             continue
         p_over = prev.p_over_cantos_total(linha)
         p_under = 1 - p_over
+        rate = cantos / max(estado.minuto, 1)
 
         if p_over >= prob_min:
             racional = []
             titulo = f"Over {linha} cantos"
-            rate = cantos / max(estado.minuto, 1)
             if rate > 0.11:
                 racional.append(f"rate {rate*90:.1f} cantos/90min (acima media)")
             if "dominio_territorial" in ctx:
@@ -296,25 +337,23 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
             if blocked >= 3:
                 racional.append(f"{blocked} remates bloqueados — cantos a caminho")
             if (estado.crosses_total_casa or 0) + (estado.crosses_total_fora or 0) > 15:
-                racional.append("Jogo pelos cruzamentos (cantos consequencia)")
+                racional.append("Jogo pelos cruzamentos — cantos consequencia")
             if not racional:
                 racional.append(f"{cantos} cantos ao min {estado.minuto}")
             _add(out, "cantos_over", "cantos", "over", linha, p_over, racional, titulo)
 
-        if p_under >= prob_min and prev.minutos_restantes <= 25:
+        if p_under >= prob_min:
             racional = []
             titulo = f"Under {linha} cantos"
-            rate = cantos / max(estado.minuto, 1)
             if rate < 0.08:
                 racional.append(f"rate {rate*90:.1f} cantos/90min (abaixo media)")
             if "jogo_a_fechar" in ctx:
                 racional.append(ctx["jogo_a_fechar"])
-            # Fallback: diferenca grande no marcador late
             diff = abs(estado.marcador_casa - estado.marcador_fora)
             if diff >= 2 and estado.minuto >= 75 and not racional:
-                racional.append(f"Jogo decidido ({estado.marcador_casa}-{estado.marcador_fora}) ao min {estado.minuto} — ambas aceitam ritmo")
+                racional.append(f"Jogo decidido ({estado.marcador_casa}-{estado.marcador_fora}) ao min {estado.minuto}")
             if not racional:
-                racional.append(f"{cantos} cantos ao min {estado.minuto}, {prev.minutos_restantes}min restam para +{int(linha - cantos + 0.5)}")
+                racional.append(f"{cantos} cantos ao min {estado.minuto}, pouca cadencia")
             _add(out, "cantos_under", "cantos", "under", linha, p_under, racional, titulo)
 
 
@@ -322,8 +361,8 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
 
 def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
     amarelos = estado.yellow_cards_casa + estado.yellow_cards_fora
-    for linha in [amarelos + 0.5, amarelos + 1.5, amarelos + 2.5]:
-        if linha < 1.5 or linha > 9.5:
+    for linha in LINHAS_MERCADO["cartoes"]:
+        if amarelos > linha:
             continue
         p_over = prev.p_over_cartoes_total(linha)
         p_under = 1 - p_over
@@ -339,15 +378,35 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["vermelho"] + " — jogo mais tenso")
             if "faltas_altas" in ctx:
                 racional.append(ctx["faltas_altas"])
-            # Duels won % baixo indica dispossessions = fouls
             if estado.ground_duels_won_pct_casa is not None:
-                diff = abs(estado.ground_duels_won_pct_casa - 0.5)
-                if diff > 0.07:
+                dd = abs(estado.ground_duels_won_pct_casa - 0.5)
+                if dd > 0.07:
                     perdedor = estado.home if estado.ground_duels_won_pct_casa < 0.5 else estado.away
                     racional.append(f"{perdedor} a perder duelos — faltas a vir")
             if not racional:
-                racional.append(f"{amarelos} amarelos ao min {estado.minuto}")
+                rate = amarelos / max(estado.minuto, 1)
+                racional.append(f"{amarelos} amarelos ao min {estado.minuto} ({rate*90:.1f}/90min)")
             _add(out, "cards_over", "cartoes", "over", linha, p_over, racional, titulo)
+
+        # UNDER cartoes: so late no jogo e sem contexto de agressividade
+        try:
+            from apostas.modelos.referencias import fator_arbitro, eh_derby
+            arb_sev = fator_arbitro(estado.arbitro) if estado.arbitro else 1.0
+            is_derby = eh_derby(estado.home, estado.away)
+        except Exception:  # noqa: BLE001
+            arb_sev = 1.0
+            is_derby = False
+        if (p_under >= prob_min and prev.minutos_restantes <= 25
+                and arb_sev < 1.05 and not is_derby):
+            racional = []
+            titulo = f"Under {linha} cartoes amarelos"
+            if "jogo_a_fechar" in ctx:
+                racional.append(ctx["jogo_a_fechar"])
+            if estado.arbitro:
+                racional.append(f"arbitro {estado.arbitro} brando")
+            if not racional:
+                racional.append(f"so {amarelos} amarelos ao min {estado.minuto}")
+            _add(out, "cards_under", "cartoes", "under", linha, p_under, racional, titulo)
 
 
 # ─────────────── REMATES ───────────────
@@ -355,17 +414,18 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
 def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
     shots = (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0)
     sot = (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0)
+    rate_shots = shots / max(estado.minuto, 1)
+    rate_sot = sot / max(estado.minuto, 1)
 
-    for linha in [shots + 0.5, shots + 2.5, shots + 4.5]:
-        if linha < 5.5 or linha > 35.5:
+    for linha in LINHAS_MERCADO["remates"]:
+        if shots > linha:
             continue
         p = prev.p_over_remates_total(linha)
-        if p >= prob_min and estado.minuto < 80:
+        if p >= prob_min:
             racional = []
             titulo = f"Over {linha} remates"
-            rate = shots / max(estado.minuto, 1)
-            if rate > 0.27:
-                racional.append(f"rate {rate*90:.1f} remates/90min")
+            if rate_shots > 0.27:
+                racional.append(f"rate {rate_shots*90:.1f} remates/90min")
             if "momentum" in ctx:
                 racional.append(ctx["momentum"])
             if "big_chances_pendentes" in ctx:
@@ -374,11 +434,11 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(f"{shots} remates ao min {estado.minuto}")
             _add(out, "shots_over", "remates", "over", linha, p, racional, titulo)
 
-    for linha in [sot + 0.5, sot + 1.5, sot + 2.5]:
-        if linha < 2.5 or linha > 15.5:
+    for linha in LINHAS_MERCADO["remates_a_baliza"]:
+        if sot > linha:
             continue
         p = prev.p_over_remates_a_baliza_total(linha)
-        if p >= prob_min and estado.minuto < 80:
+        if p >= prob_min:
             racional = []
             titulo = f"Over {linha} remates ao alvo"
             if estado.big_chances_casa is not None:
@@ -390,5 +450,5 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
             if "keeper_fora_grande" in ctx:
                 racional.append(ctx["keeper_fora_grande"])
             if not racional:
-                racional.append(f"{sot} remates ao alvo ao min {estado.minuto}")
+                racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_sot*90:.1f}/90min)")
             _add(out, "sot_over", "remates_a_baliza", "over", linha, p, racional, titulo)
