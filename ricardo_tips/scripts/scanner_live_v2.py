@@ -40,7 +40,7 @@ import requests  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
-from apostas.alertas import telegram_live  # noqa: E402
+from apostas.alertas import analista, telegram_live  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
 from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
 from apostas.modelos import live_predictor  # noqa: E402
@@ -422,6 +422,65 @@ def _imprimir_estado(estado, prev) -> None:
     )
 
 
+def _imprimir_sinais(sinais) -> None:
+    """Imprime sinais do analista (sem odds)."""
+    print(f"    🎯 {len(sinais)} sinal(ais) do analista:")
+    for s in sorted(sinais, key=lambda x: -x.prob_modelo):
+        tag = {"forte": "★★★", "normal": "★★", "fraco": "★"}.get(s.forca, "")
+        aposta = _nome_aposta(s.mercado, s.lado, s.linha)
+        print(f"      {tag} [{s.tipo}] {aposta}")
+        print(f"          prob={s.prob_modelo*100:.1f}%  "
+              f"odd_min={s.odd_minima}  odd_valor(+5% EV)={s.odd_valor}")
+        for r in s.racional[:3]:  # top 3 razoes
+            print(f"          · {r}")
+
+
+def _nome_aposta(mercado: str, lado: str, linha: float | None) -> str:
+    linha_str = f" {linha}" if linha is not None else ""
+    if mercado == "golos":
+        return f"{lado.upper()}{linha_str} golos"
+    if mercado == "cantos":
+        return f"{lado.upper()}{linha_str} cantos"
+    if mercado == "cartoes":
+        return f"{lado.upper()}{linha_str} cartoes amarelos"
+    if mercado == "btts":
+        return f"BTTS {'SIM' if lado == 'sim' else 'NAO'}"
+    if mercado == "remates":
+        return f"{lado.upper()}{linha_str} remates"
+    if mercado == "remates_a_baliza":
+        return f"{lado.upper()}{linha_str} remates a baliza"
+    return f"{mercado} {lado}{linha_str}"
+
+
+def _sinal_para_sugestao(estado, sinal) -> dict:
+    """Converte Sinal numa linha de sugestao para o CSV."""
+    return {
+        "ts_scan": datetime.utcnow().isoformat(timespec="seconds"),
+        "event_id": estado.event_id,
+        "liga": estado.liga,
+        "home": estado.home,
+        "away": estado.away,
+        "minuto": estado.minuto,
+        "marcador": f"{estado.marcador_casa}-{estado.marcador_fora}",
+        "mercado": sinal.mercado,
+        "lado": sinal.lado,
+        "linha": "" if sinal.linha is None else str(sinal.linha),
+        "casa": "ANALISTA",      # mnemonico: nao e uma casa real, e sinal do modelo
+        "odd": sinal.odd_valor,  # odd desejada para EV+5%
+        "prob_modelo": round(sinal.prob_modelo, 4),
+        "ev": "",                # sem EV concreto porque sem odd real
+        "xg_casa": estado.xg_casa or "",
+        "xg_fora": estado.xg_fora or "",
+        "shots_on_target_c": estado.shots_on_target_casa or "",
+        "shots_on_target_f": estado.shots_on_target_fora or "",
+        "corners_c": estado.corners_casa or "",
+        "corners_f": estado.corners_fora or "",
+        "yellows_c": estado.yellow_cards_casa,
+        "yellows_f": estado.yellow_cards_fora,
+        "resultado": "", "lucro": "", "resolvido_em": "",
+    }
+
+
 def _imprimir_sugestoes(sugs) -> None:
     if not sugs:
         return
@@ -474,9 +533,25 @@ def _correr_ciclo(args) -> None:
             odds_json = None
         prev = live_predictor.prever(estado)
         _imprimir_estado(estado, prev)
+
+        # MODO ANALISTA: gera sinais do modelo independentes de haver odds.
+        # Serve dois casos:
+        # (1) Odds API nao devolve odds live para este jogo
+        # (2) Mesmo com odds, sinal do modelo ja tem valor como analise
+        sinais = analista.gerar_sinais(estado, prev, prob_minima=args.prob_minima)
+        if sinais:
+            _imprimir_sinais(sinais)
+            # Converte sinais em dicts (sem EV porque sem odds)
+            for sinal in sinais:
+                sug = _sinal_para_sugestao(estado, sinal)
+                todas_sugestoes.append(sug)
+
         if odds_json is None:
-            print(f"    (sem odds live Odds API para este jogo)")
+            if not sinais:
+                print(f"    (sem odds live Odds API e sem sinais do modelo)")
             continue
+
+        # Com odds disponiveis: analise classica EV-based
         sugs = _analisar_jogo(estado, odds_json, args.ev_minimo, tuple(args.casas) if args.casas else ())
         _imprimir_sugestoes(sugs)
         todas_sugestoes.extend(sugs)
@@ -485,13 +560,33 @@ def _correr_ciclo(args) -> None:
         adic = _gravar_novas(todas_sugestoes, _ficheiro_csv())
         print(f"  → {adic} novas gravadas (de {len(todas_sugestoes)} totais)")
         if adic > 0 and args.telegram:
-            # Envia so as NOVAS (nao as repetidas de scans anteriores)
-            # Reload do CSV? Simples: enviamos as de agora acima do limiar.
+            # Dois tipos de notificacao:
+            # 1. Sugestoes com odds reais (coluna 'ev' numerica): filtra por EV
+            # 2. Sinais puros do analista (ev='' e casa='ANALISTA'): filtra por prob_modelo
             ev_min_telegram = max(args.ev_minimo, args.ev_minimo_telegram)
-            notificar = [s for s in todas_sugestoes if s["ev"] >= ev_min_telegram]
+            prob_min_telegram = args.prob_minima
+            notificar = []
+            for s in todas_sugestoes:
+                if s.get("casa") == "ANALISTA":
+                    # Sinal puro: prob_modelo >= limiar
+                    if float(s.get("prob_modelo", 0)) >= prob_min_telegram:
+                        notificar.append(s)
+                else:
+                    # Sugestao com EV real
+                    try:
+                        ev_val = float(s.get("ev", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    if ev_val >= ev_min_telegram:
+                        notificar.append(s)
             # Deduplica em memoria: 1 notificacao por (jogo+mercado+lado) por scan
             vistas = set()
-            for s in sorted(notificar, key=lambda x: -x["ev"]):
+            def _sort_key(s):
+                try:
+                    return -float(s.get("ev") or s.get("prob_modelo") or 0)
+                except (ValueError, TypeError):
+                    return 0
+            for s in sorted(notificar, key=_sort_key):
                 key = (s["home"], s["away"], s["mercado"], s["lado"], s["linha"])
                 if key in vistas:
                     continue
@@ -521,6 +616,10 @@ def main() -> None:
     parser.add_argument("--ev-minimo-telegram", type=float, default=0.07,
                         help="EV min para notificar via Telegram (default 0.07 = 7 por cento). "
                              "So notifica as de topo para evitar spam.")
+    parser.add_argument("--prob-minima", type=float, default=0.70,
+                        help="Prob minima para o analista emitir sinal (default 0.70 = 70 por cento). "
+                             "Sinais do analista aparecem mesmo sem odds da Odds API. "
+                             "Baixa para 0.55 para veres mais fluxo.")
     args = parser.parse_args()
 
     print("Scanner LIVE v2 iniciado.")

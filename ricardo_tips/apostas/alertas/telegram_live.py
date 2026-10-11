@@ -40,7 +40,13 @@ _URLS_CASAS = {
 
 
 def enviar_sugestao_live(s: dict) -> None:
-    """Envia uma sugestao live para Telegram. ``s`` tem as colunas CSV."""
+    """Envia uma sugestao live para Telegram. ``s`` tem as colunas CSV.
+
+    Dois formatos:
+    - Sugestao com odd real: mostra EV, link para casa.
+    - Sinal puro do analista (casa='ANALISTA'): mostra prob modelo +
+      odd minima + odd desejada para +5% EV.
+    """
     try:
         liga = s.get("liga", "?")
         home = s.get("home", "?")
@@ -51,30 +57,52 @@ def enviar_sugestao_live(s: dict) -> None:
         lado = s.get("lado", "?")
         linha = s.get("linha", "")
         casa = s.get("casa", "?")
-        odd = s.get("odd", 0)
         prob = float(s.get("prob_modelo", 0))
-        ev = float(s.get("ev", 0))
         xg_c = s.get("xg_casa", "")
         xg_f = s.get("xg_fora", "")
         sot_c = s.get("shots_on_target_c", "")
         sot_f = s.get("shots_on_target_f", "")
-
-        url = _URLS_CASAS.get(casa, "")
         aposta_fmt = _formatar_aposta(mercado, lado, linha)
 
-        texto = (
-            f"🎯 *EV +{ev*100:.1f}%* LIVE\n"
-            f"\n"
-            f"⚽ {home} vs {away}\n"
-            f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
-            f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
-            f"\n"
-            f"*Aposta:* {aposta_fmt}\n"
-            f"*Odd:* {odd}  ({casa})\n"
-            f"*Prob modelo:* {prob*100:.1f}%\n"
-            f"\n"
-            f"[Abrir casa]({url})" if url else f"Casa: {casa}"
-        )
+        if casa == "ANALISTA":
+            # Sinal puro — modelo diz que esta aposta vale a pena, procura a odd
+            odd_desejada = float(s.get("odd", 0))
+            odd_be = round(1.0 / prob, 2) if prob > 0 else 0
+            texto = (
+                f"🎯 *SINAL DO ANALISTA* ({prob*100:.0f}%)\n"
+                f"\n"
+                f"⚽ {home} vs {away}\n"
+                f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
+                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
+                f"\n"
+                f"*Aposta:* {aposta_fmt}\n"
+                f"*Prob modelo:* {prob*100:.1f}%\n"
+                f"*Odd minima (EV=0):* {odd_be}\n"
+                f"*Odd alvo (EV+5%):* {odd_desejada}\n"
+                f"\n"
+                f"_Procura esta odd no teu bookmaker._"
+            )
+        else:
+            try:
+                ev = float(s.get("ev", 0))
+            except (ValueError, TypeError):
+                ev = 0.0
+            odd = s.get("odd", 0)
+            url = _URLS_CASAS.get(casa, "")
+            link_line = f"[Abrir casa]({url})" if url else f"Casa: {casa}"
+            texto = (
+                f"🎯 *EV +{ev*100:.1f}%* LIVE\n"
+                f"\n"
+                f"⚽ {home} vs {away}\n"
+                f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
+                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
+                f"\n"
+                f"*Aposta:* {aposta_fmt}\n"
+                f"*Odd:* {odd}  ({casa})\n"
+                f"*Prob modelo:* {prob*100:.1f}%\n"
+                f"\n"
+                f"{link_line}"
+            )
         cliente().enviar(texto)
     except Exception as exc:  # noqa: BLE001
         log.warning("Falha a enviar notificacao Telegram: %s", exc)
