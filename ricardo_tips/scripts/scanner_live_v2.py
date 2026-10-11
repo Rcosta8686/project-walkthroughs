@@ -126,7 +126,9 @@ def _gravar_novas(sugestoes_dicts, f: Path) -> int:
     novo = not f.exists()
     adicionadas = 0
     with f.open("a", encoding="utf-8", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=CSV_COLUNAS)
+        # extrasaction="ignore" permite dicts com campos extra (titulo,
+        # racional_str) que sao usados em memoria mas nao vao para CSV.
+        writer = csv.DictWriter(fp, fieldnames=CSV_COLUNAS, extrasaction="ignore")
         if novo:
             writer.writeheader()
         for s in sugestoes_dicts:
