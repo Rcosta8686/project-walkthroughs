@@ -1,8 +1,8 @@
 """Migracao incremental: cria tabelas em falta na BD local.
 
-Usa Base.metadata.create_all() que so cria tabelas que ainda nao existem;
-nao mexe em tabelas ja criadas (dados existentes preservados). Script
-seguro para correr vezes sem conta.
+Usa criar_schema() que chama Base.metadata.create_all() — so cria tabelas
+que ainda nao existem; nao mexe em tabelas ja criadas (dados existentes
+preservados). Script seguro para correr vezes sem conta.
 
 Uso:
     python scripts/migrar_db.py
@@ -16,16 +16,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import inspect  # noqa: E402
 
-from apostas.utils.db import engine  # noqa: E402
-from apostas.utils.schema import Base  # noqa: E402
+from apostas.utils.db import criar_schema, get_engine  # noqa: E402
 
 
 def main() -> None:
+    engine = get_engine()
     insp = inspect(engine)
     antes = set(insp.get_table_names())
     print(f"Tabelas antes: {len(antes)}")
 
-    Base.metadata.create_all(engine)
+    criar_schema()
 
     insp = inspect(engine)
     depois = set(insp.get_table_names())
