@@ -133,22 +133,37 @@ def prever(
     lam_golos_pre: float | None = None,
     lam_cantos_pre: float | None = None,
     lam_cartoes_pre: float | None = None,
+    expectativa_pre=None,
 ) -> PrevisaoLive:
-    """Devolve previsão de eventos restantes para um jogo in-play.
+    """Devolve previsao de eventos restantes para um jogo in-play.
 
     Parameters
     ----------
     estado:
         Snapshot Sofascore (resultado + xG + shots + cards + posse).
     lam_golos_pre:
-        Golos totais esperados pre-match. Default: implícito 2.6 (média
-        europeia). Se tens a sugestão pré-match Pinnacle, usa 1/odd_over_2_5
-        + 1/odd_under_2_5 e deriva lambda que satisfaz Poisson = linha.
+        Golos totais esperados pre-match. Default: 2.6 (media europeia).
     lam_cantos_pre:
         Cantos totais esperados pre-match. Default 10.5.
     lam_cartoes_pre:
-        Cartões amarelos totais esperados pre-match. Default 4.0.
+        Cartoes amarelos totais esperados pre-match. Default 4.0.
+    expectativa_pre:
+        Objecto ExpectativaJogo (de form_ratings) com ratings historicos
+        das 2 equipas. Se passado, override os lam_* defaults.
+
+    Modelo:
+      1. Prior: lam_golos_pre * (90-min)/90 * fator_marcador
+      2. Update bayesian com xG actual observado (peso cresce com minuto)
+      3. Shot quality: SoT/total ratio ajusta a eficiencia esperada
+      4. Big chances: cada big chance pendente conta como mini-boost
+      5. Intensidade recente (xg_recent nos ultimos 15min)
+      6. Posse diferencial afecta rate de cantos
+      7. Marcador apertado late = mais cartoes
     """
+    if expectativa_pre is not None:
+        lam_golos_pre = expectativa_pre.lam_golos_total
+        lam_cantos_pre = expectativa_pre.lam_cantos_total
+        lam_cartoes_pre = expectativa_pre.lam_cards_total
     lam_golos_pre = lam_golos_pre if lam_golos_pre is not None else 2.6
     lam_cantos_pre = lam_cantos_pre if lam_cantos_pre is not None else 10.5
     lam_cartoes_pre = lam_cartoes_pre if lam_cartoes_pre is not None else 4.0
@@ -159,71 +174,100 @@ def prever(
 
     fator_m = _fator_marcador(estado.marcador_casa, estado.marcador_fora, minuto)
 
-    # Rate de golos restantes
+    # 1. Prior do golo
     lam_golos_rest_prior = lam_golos_pre * frac_restante * fator_m
 
-    # Update bayesian com xG efectivo observado
+    # 2. Update com xG efectivo observado
     if estado.xg_casa is not None and estado.xg_fora is not None and minuto > 10:
         xg_actual = estado.xg_casa + estado.xg_fora
-        xg_rate_actual = xg_actual / minuto  # xG por minuto efectivo
+        xg_rate_actual = xg_actual / minuto
         lam_from_xg = xg_rate_actual * minutos_restantes * fator_m
-        # Peso: cedo = confia pre; tarde = confia actual
         w_pre = max(0.2, 1 - minuto / 90)
         lam_golos_rest = w_pre * lam_golos_rest_prior + (1 - w_pre) * lam_from_xg
     else:
         lam_golos_rest = lam_golos_rest_prior
 
-    # Intensidade recente (shots last 10-15 min)
+    # 3. Shot quality: SoT/total ratio. Ratio alto = equipa a tentar e a
+    #    encontrar o alvo. Baixo = disparos aleatorios.
+    sot_c = estado.shots_on_target_casa or 0
+    sot_f = estado.shots_on_target_fora or 0
+    tot_c = estado.shots_total_casa or 0
+    tot_f = estado.shots_total_fora or 0
+    sot_total = sot_c + sot_f
+    tot_total = tot_c + tot_f
+    if tot_total >= 4:
+        sot_ratio = sot_total / tot_total
+        # Benchmark europeu ~0.35. Ajuste:
+        quality_mult = 0.8 + 0.6 * min(1.0, sot_ratio / 0.35)
+        lam_golos_rest *= quality_mult
+
+    # 4. Big chances pendentes: forte sinal de que algo esta a construir
+    big_c = estado.big_chances_casa or 0
+    big_f = estado.big_chances_fora or 0
+    if big_c + big_f > 0 and minuto > 10:
+        # Cada big chance que nao resultou em golo ainda pode levar a outro
+        golos_actuais = estado.marcador_casa + estado.marcador_fora
+        big_total = big_c + big_f
+        pendentes = max(0, big_total - golos_actuais)
+        lam_golos_rest += 0.10 * pendentes * (frac_restante)
+
+    # 5. Intensidade recente
     if estado.xg_recent_casa is not None and estado.xg_recent_fora is not None:
         xg_recent = estado.xg_recent_casa + estado.xg_recent_fora
-        xg_recent_rate = xg_recent / 15.0  # por minuto nos últimos 15
-        # Escala contra o rate médio pre-match
+        xg_recent_rate = xg_recent / 15.0
         rate_medio_pre_minuto = lam_golos_pre / 90.0
         intensidade = xg_recent_rate / rate_medio_pre_minuto if rate_medio_pre_minuto > 0 else 1.0
         intensidade = min(2.0, max(0.5, intensidade))
         lam_golos_rest *= intensidade
 
-    # Rate de cantos restantes (modelo simples: linear + factor marcador)
+    # 6. Cantos: usa posse diferencial
     cantos_actual = (estado.corners_casa or 0) + (estado.corners_fora or 0)
     if minuto > 10:
         cantos_rate = cantos_actual / minuto
     else:
         cantos_rate = lam_cantos_pre / 90.0
     lam_cantos_rest = cantos_rate * minutos_restantes * fator_m
+    # Posse: equipa dominante gera mais cantos. Posse 70-30 vs 50-50 → +15%
+    if estado.possession_casa is not None:
+        posse_diff = abs(estado.possession_casa - 0.5)
+        lam_cantos_rest *= (1.0 + 0.3 * posse_diff)
 
-    # Rate de cartoes amarelos: mais frequentes em 2H + jogos apertados
+    # 7. Cartoes: 2H + jogos apertados = mais
     cards_actual = estado.yellow_cards_casa + estado.yellow_cards_fora
     if minuto > 10:
         cards_rate = cards_actual / minuto
     else:
         cards_rate = lam_cartoes_pre / 90.0
-    # 2H tem ~60% dos cartoes. Fator para proximos minutos:
     fator_fase_cards = 1.3 if minuto >= 45 else 1.0
-    # Marcador apertado late = mais frustracao
     diff = abs(estado.marcador_casa - estado.marcador_fora)
     fator_card_marcador = 1.1 if (diff <= 1 and minuto >= 70) else 1.0
-    lam_cards_rest = cards_rate * minutos_restantes * fator_fase_cards * fator_card_marcador
+    # Cartao vermelho ja mostrado tende a tornar o jogo mais tenso
+    reds = estado.red_cards_casa + estado.red_cards_fora
+    fator_red = 1.0 + 0.25 * reds
+    lam_cards_rest = (
+        cards_rate * minutos_restantes
+        * fator_fase_cards * fator_card_marcador * fator_red
+    )
 
     p_mais_1 = 1.0 - _poisson_cdf(0, lam_golos_rest)
     p_mais_2 = 1.0 - _poisson_cdf(1, lam_golos_rest)
 
-    # P(BTTS final) = 1 se ja aconteceu, caso contrario estima
+    # P(BTTS final)
     if estado.marcador_casa > 0 and estado.marcador_fora > 0:
         p_btts = 1.0
     else:
-        # Precisa que a equipa com 0 marque pelo menos 1 vez
         if estado.marcador_casa == 0 and estado.marcador_fora == 0:
-            # Ambas precisam de marcar. Aproximacao: cada equipa com metade da rate
             lam_c = lam_golos_rest / 2
             lam_f = lam_golos_rest / 2
             p_casa_marca = 1.0 - exp(-lam_c)
             p_fora_marca = 1.0 - exp(-lam_f)
             p_btts = p_casa_marca * p_fora_marca
         else:
-            # So a equipa com 0 precisa de marcar
-            # Assume 50/50 distribuicao do lam entre equipas
             lam_lado_zero = lam_golos_rest / 2
             p_btts = 1.0 - exp(-lam_lado_zero)
+    # Mistura com observacao historica se disponivel
+    if expectativa_pre is not None and (estado.marcador_casa == 0 or estado.marcador_fora == 0):
+        p_btts = 0.8 * p_btts + 0.2 * expectativa_pre.p_btts_pre
 
     return PrevisaoLive(
         minuto=minuto,

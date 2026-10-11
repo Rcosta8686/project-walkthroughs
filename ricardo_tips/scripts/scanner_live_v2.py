@@ -38,12 +38,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import requests  # noqa: E402
 
+from sqlalchemy import select  # noqa: E402
+
+from apostas.alertas import telegram_live  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
-from apostas.ingestao.odds_api import LIGAS_ODDS_API, _parse_commence_time  # noqa: E402
+from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
 from apostas.modelos import live_predictor  # noqa: E402
+from apostas.modelos.form_ratings import RatingsForma, expectativa, shrinkage  # noqa: E402
 from apostas.modelos.live_predictor import ev_contra_odd  # noqa: E402
 from apostas.utils.config import get_env, project_root  # noqa: E402
+from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
+from apostas.utils.schema import Equipa, Liga  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -160,10 +166,49 @@ def _odds_api_live_evento(sport: str, home: str, away: str) -> dict | None:
     return None
 
 
+def _nome_db(sofa_nome: str) -> str:
+    """Aplica o alias Odds API-like para converter nomes Sofascore em nomes DB."""
+    return _ALIAS_ODDS_API.get(sofa_nome, sofa_nome)
+
+
+def _puxar_expectativa(estado) -> "object | None":
+    """Procura ratings historicos para as 2 equipas; devolve ExpectativaJogo."""
+    with abrir_sessao() as s:
+        # Procura liga pela heuristica do nome
+        liga_nome_candidatos = [
+            estado.liga,
+            estado.liga.replace("LaLiga", "La Liga"),
+            estado.liga.replace("Primeira Liga", "Liga Portugal"),
+        ]
+        liga = None
+        for cand in liga_nome_candidatos:
+            liga = s.scalar(select(Liga).where(Liga.nome == cand))
+            if liga:
+                break
+        if liga is None:
+            return None
+        nome_c = _nome_db(estado.home)
+        nome_f = _nome_db(estado.away)
+        casa = s.scalar(select(Equipa).where(
+            Equipa.liga_id == liga.id, Equipa.nome == nome_c,
+        ))
+        fora = s.scalar(select(Equipa).where(
+            Equipa.liga_id == liga.id, Equipa.nome == nome_f,
+        ))
+        if casa is None or fora is None:
+            return None
+        casa_id, fora_id = casa.id, fora.id
+    r = RatingsForma(max_jogos=20)
+    rc = shrinkage(r.rating(casa_id, "casa"))
+    rf = shrinkage(r.rating(fora_id, "fora"))
+    return expectativa(rc, rf)
+
+
 def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[str, ...]) -> list[dict]:
     """Devolve lista de sugestoes (dicts) com EV >= ev_min."""
     sugestoes = []
-    prev = live_predictor.prever(estado)
+    exp_pre = _puxar_expectativa(estado)
+    prev = live_predictor.prever(estado, expectativa_pre=exp_pre)
 
     def _emit(mercado, lado, linha, casa, odd, prob):
         ev = ev_contra_odd(prob, odd)
@@ -306,6 +351,21 @@ def _correr_ciclo(args) -> None:
     if todas_sugestoes:
         adic = _gravar_novas(todas_sugestoes, _ficheiro_csv())
         print(f"  → {adic} novas gravadas (de {len(todas_sugestoes)} totais)")
+        if adic > 0 and args.telegram:
+            # Envia so as NOVAS (nao as repetidas de scans anteriores)
+            # Reload do CSV? Simples: enviamos as de agora acima do limiar.
+            ev_min_telegram = max(args.ev_minimo, args.ev_minimo_telegram)
+            notificar = [s for s in todas_sugestoes if s["ev"] >= ev_min_telegram]
+            # Deduplica em memoria: 1 notificacao por (jogo+mercado+lado) por scan
+            vistas = set()
+            for s in sorted(notificar, key=lambda x: -x["ev"]):
+                key = (s["home"], s["away"], s["mercado"], s["lado"], s["linha"])
+                if key in vistas:
+                    continue
+                vistas.add(key)
+                telegram_live.enviar_sugestao_live(s)
+            if notificar:
+                print(f"  → {len(vistas)} notificacoes Telegram enviadas")
 
 
 def main() -> None:
@@ -323,6 +383,11 @@ def main() -> None:
                              "Default: Big-5 + Liga Portugal.")
     parser.add_argument("--casas", nargs="*", default=None,
                         help="Keys Odds API de casas a considerar. Vazio = todas.")
+    parser.add_argument("--telegram", action="store_true",
+                        help="Envia notificacoes Telegram para sugestoes >= --ev-minimo-telegram.")
+    parser.add_argument("--ev-minimo-telegram", type=float, default=0.07,
+                        help="EV min para notificar via Telegram (default 0.07 = 7 por cento). "
+                             "So notifica as de topo para evitar spam.")
     args = parser.parse_args()
 
     print("Scanner LIVE v2 iniciado.")
