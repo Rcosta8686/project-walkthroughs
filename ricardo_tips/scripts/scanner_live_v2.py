@@ -53,6 +53,36 @@ from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga  # noqa: E402
 
 log = get_logger(__name__)
 
+# Dedup entre ciclos para notificacoes Telegram.
+# chave = (event_id, mercado, lado, linha) → datetime do ultimo envio.
+# Impede re-notificar o mesmo sinal dentro de COOLDOWN_MIN minutos.
+_cooldown: dict[tuple, datetime] = {}
+COOLDOWN_MIN = 15
+
+
+def _purgar_cooldown() -> None:
+    """Remove entradas antigas (>COOLDOWN_MIN) do dict de dedup."""
+    agora = datetime.utcnow()
+    limite = COOLDOWN_MIN * 60
+    expiradas = [k for k, ts in _cooldown.items()
+                 if (agora - ts).total_seconds() > limite]
+    for k in expiradas:
+        _cooldown.pop(k, None)
+
+
+def _em_cooldown(event_id, mercado, lado, linha) -> bool:
+    """True se ja mandamos este sinal nos ultimos COOLDOWN_MIN minutos."""
+    key = (str(event_id), mercado, lado, str(linha))
+    ts = _cooldown.get(key)
+    if ts is None:
+        return False
+    return (datetime.utcnow() - ts).total_seconds() < COOLDOWN_MIN * 60
+
+
+def _marcar_enviado(event_id, mercado, lado, linha) -> None:
+    key = (str(event_id), mercado, lado, str(linha))
+    _cooldown[key] = datetime.utcnow()
+
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
 # Ligas: usamos IDs internos Sofascore para precisao (ha "Premier League"
@@ -266,6 +296,50 @@ def _puxar_expectativa(estado) -> "object | None":
     return expectativa(rc, rf)
 
 
+def _linha_live(mercado: str, lado: str, linha: float | None, estado) -> bool:
+    """True se a linha ainda pode ir para qualquer lado.
+
+    Filtra: Over 2.5 golos quando jogo esta 4-2 (ja consumado, inutil).
+    Over 9.5 cantos quando ja tem 10 (ja ganhou, inutil).
+    etc.
+    """
+    if linha is None:
+        return True
+    try:
+        linha_f = float(linha)
+    except (ValueError, TypeError):
+        return True
+
+    atuais = None
+    if mercado == "golos":
+        atuais = estado.marcador_casa + estado.marcador_fora
+    elif mercado == "cantos":
+        atuais = (estado.corners_casa or 0) + (estado.corners_fora or 0)
+    elif mercado == "cartoes":
+        atuais = estado.yellow_cards_casa + estado.yellow_cards_fora
+    elif mercado == "remates":
+        atuais = (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0)
+    elif mercado == "remates_a_baliza":
+        atuais = (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0)
+    elif mercado == "btts":
+        # BTTS sim decidido quando ambas ja marcaram
+        if lado == "sim" and estado.marcador_casa > 0 and estado.marcador_fora > 0:
+            return False
+        # BTTS nao decidido quando ambas ja marcaram (perdeu)
+        if lado == "nao" and estado.marcador_casa > 0 and estado.marcador_fora > 0:
+            return False
+        return True
+
+    if atuais is None:
+        return True
+    # Linhas tipo 2.5, 9.5 — comparacao directa
+    if lado == "over" and atuais > linha_f:
+        return False  # over ja ganhou
+    if lado == "under" and atuais > linha_f:
+        return False  # under ja perdeu
+    return True
+
+
 def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[str, ...]) -> list[dict]:
     """Devolve lista de sugestoes (dicts) com EV >= ev_min."""
     sugestoes = []
@@ -273,6 +347,9 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
     prev = live_predictor.prever(estado, expectativa_pre=exp_pre)
 
     def _emit(mercado, lado, linha, casa, odd, prob):
+        # NOVO: skip linhas ja decididas (Over 2.5 num 4-2 = inutil)
+        if not _linha_live(mercado, lado, linha, estado):
+            return
         ev = ev_contra_odd(prob, odd)
         if ev < ev_min:
             return
@@ -559,7 +636,10 @@ def _correr_ciclo(args) -> None:
     if todas_sugestoes:
         adic = _gravar_novas(todas_sugestoes, _ficheiro_csv())
         print(f"  → {adic} novas gravadas (de {len(todas_sugestoes)} totais)")
-        if adic > 0 and args.telegram:
+        # DEDUP entre ciclos: evita re-enviar notificacao do mesmo sinal
+        # dentro de 15 minutos (user ja viu, nao precisa de repeticao).
+        _purgar_cooldown()
+        if args.telegram:
             # Dois tipos de notificacao:
             # 1. Sugestoes com odds reais (coluna 'ev' numerica): filtra por EV
             # 2. Sinais puros do analista (ev='' e casa='ANALISTA'): filtra por prob_modelo
@@ -579,21 +659,35 @@ def _correr_ciclo(args) -> None:
                         continue
                     if ev_val >= ev_min_telegram:
                         notificar.append(s)
-            # Deduplica em memoria: 1 notificacao por (jogo+mercado+lado) por scan
-            vistas = set()
+            # Deduplica entre ciclos: 1 notificacao por (event+mercado+lado+linha)
+            # a cada COOLDOWN_MIN min. Alem disso, limite de 1 sinal por jogo
+            # por ciclo (so o mais forte).
             def _sort_key(s):
                 try:
                     return -float(s.get("ev") or s.get("prob_modelo") or 0)
                 except (ValueError, TypeError):
                     return 0
+            enviadas = 0
+            jogos_notificados_este_ciclo = set()
             for s in sorted(notificar, key=_sort_key):
-                key = (s["home"], s["away"], s["mercado"], s["lado"], s["linha"])
-                if key in vistas:
+                event_id = s.get("event_id")
+                mercado = s["mercado"]
+                lado = s["lado"]
+                linha = s.get("linha", "")
+                jogo_key = (s["home"], s["away"])
+                # Cooldown dedup entre ciclos
+                if _em_cooldown(event_id, mercado, lado, linha):
                     continue
-                vistas.add(key)
+                # Max 1 notificacao por jogo por ciclo (sinal mais forte)
+                if jogo_key in jogos_notificados_este_ciclo:
+                    continue
                 telegram_live.enviar_sugestao_live(s)
-            if notificar:
-                print(f"  → {len(vistas)} notificacoes Telegram enviadas")
+                _marcar_enviado(event_id, mercado, lado, linha)
+                jogos_notificados_este_ciclo.add(jogo_key)
+                enviadas += 1
+            if enviadas:
+                print(f"  → {enviadas} notificacoes Telegram enviadas "
+                      f"({len(notificar) - enviadas} em cooldown ou duplicados)")
 
 
 def main() -> None:

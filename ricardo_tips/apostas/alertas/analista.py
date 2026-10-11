@@ -65,10 +65,22 @@ def _odds_minimas(prob: float, ev_desejado: float = 0.05) -> tuple[float, float]
 
 def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
          prob: float, racional: list[str]) -> None:
+    """Adiciona sinal se e util.
+
+    Filtros:
+    - prob >= 55% (minimo util)
+    - prob <= 92% (acima disso o mercado tipicamente ja fechou essa linha
+      ou a odd e tao baixa que nao se encontra na casa)
+    - odd alvo >= 1.15 (abaixo, a casa nao oferece)
+    """
+    if prob > 0.92:
+        return  # mercado provavelmente fechado — ja tao certo que casa suspende
     forca = _classifica_forca(prob)
     if forca == "ignora":
         return
     odd_be, odd_val = _odds_minimas(prob)
+    if odd_val < 1.15:
+        return  # odd alvo demasiado baixa — casa nao oferece live
     out.append(Sinal(
         tipo=tipo, mercado=mercado, lado=lado, linha=linha,
         prob_modelo=prob, odd_minima=odd_be, odd_valor=odd_val,

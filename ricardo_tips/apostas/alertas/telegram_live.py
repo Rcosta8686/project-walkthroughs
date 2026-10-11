@@ -20,6 +20,38 @@ from apostas.utils.logger import get_logger
 log = get_logger(__name__)
 
 
+def _fase_do_jogo(minuto: int) -> str:
+    """Emoji + texto curto conforme a fase do jogo."""
+    if minuto == 0:
+        return "⏱ A começar"
+    if minuto < 15:
+        return "🔥 Inicio"
+    if minuto < 30:
+        return "📈 1a parte cedo"
+    if minuto < 45:
+        return "⏳ Final 1a parte"
+    if minuto == 45:
+        return "☕ Intervalo"
+    if minuto < 60:
+        return "🔄 2a parte cedo"
+    if minuto < 75:
+        return "⚡ Final 2a parte"
+    if minuto < 85:
+        return "🏁 Reta final"
+    return "⏱ Descontos"
+
+
+def _emoji_mercado(mercado: str) -> str:
+    return {
+        "golos": "⚽",
+        "cantos": "🚩",
+        "cartoes": "🟨",
+        "btts": "🎯",
+        "remates": "💥",
+        "remates_a_baliza": "🎯",
+    }.get(mercado, "🎯")
+
+
 _URLS_CASAS = {
     "pinnacle":    "https://www.pinnacle.com/",
     "betano_uk":   "https://www.betano.pt/",
@@ -68,19 +100,18 @@ def enviar_sugestao_live(s: dict) -> None:
             # Sinal puro — modelo diz que esta aposta vale a pena, procura a odd
             odd_desejada = float(s.get("odd", 0))
             odd_be = round(1.0 / prob, 2) if prob > 0 else 0
+            fase = _fase_do_jogo(int(minuto) if str(minuto).isdigit() else 0)
+            # Mensagem narrativa com contexto
             texto = (
-                f"🎯 *SINAL DO ANALISTA* ({prob*100:.0f}%)\n"
+                f"{_emoji_mercado(mercado)} *{aposta_fmt}* ({prob*100:.0f}%)\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
-                f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
+                f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
                 f"\n"
-                f"*Aposta:* {aposta_fmt}\n"
-                f"*Prob modelo:* {prob*100:.1f}%\n"
-                f"*Odd minima (EV=0):* {odd_be}\n"
-                f"*Odd alvo (EV+5%):* {odd_desejada}\n"
+                f"🎯 Odd min *{odd_be}* · Odd alvo *{odd_desejada}* (+5% EV)\n"
                 f"\n"
-                f"_Procura esta odd no teu bookmaker._"
+                f"_Procura esta odd. Se bater o alvo, mete. Se nao, passa._"
             )
         else:
             try:
