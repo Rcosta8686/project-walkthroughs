@@ -31,7 +31,10 @@ from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_BASE = "https://api.sofascore.com/api/v1"
+# NOTA: o subdomain `api.sofascore.com` tem auth mais apertada que
+# devolve 403 mesmo com warmup/cookies. O dominio principal
+# `www.sofascore.com` serve a mesma API em `/api/v1/...` sem o 403.
+_BASE = "https://www.sofascore.com/api/v1"
 _WARMUP = "https://www.sofascore.com/"
 
 # Headers que a webapp Sofascore envia nos pedidos XHR a api.sofascore.com.
