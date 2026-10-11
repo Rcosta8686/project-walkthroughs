@@ -164,7 +164,8 @@ def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
                     "a vencer", "defesa a ceder", "big chances", "chasing",
                     "pressiona", "derby", "severo", "vermelho", "a atacar",
                     "jogo decidido", "equipas equilibradas", "jogo tranca",
-                    "em grande (", "gr ", "fecha", "arbitro")
+                    "em grande (", "gr ", "fecha", "arbitro",
+                    "unlucky", "regressao", "processo (xg)")
     tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
     if not tem_tom:
         return False
@@ -206,6 +207,9 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
         _sinal_cartoes(estado, prev, ctx, out, prob_minima)
     if not _estado_demasiado_cedo_para_sinal(estado, "remates"):
         _sinal_remates(estado, prev, ctx, out, prob_minima)
+    # Regressao xG: Rob Pizzola / Caan Berry. Processo (xG) > conversao (golos).
+    if estado.minuto >= MINUTO_MIN_REGRESSAO:
+        _sinal_regressao_xg(estado, prev, ctx, out, prob_minima)
 
     # Agrupar por (mercado, lado) e manter a linha MAIS ALTA (over) ou mais
     # BAIXA (under) com prob >= prob_minima. As casas abrem as linhas mais
@@ -488,6 +492,77 @@ def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob) -> None:
             prob_modelo=prob, odd_minima=odd_be, odd_valor=odd_val,
             racional=racional, forca=forca, titulo=titulo,
         ))
+
+
+# ─────────────── REGRESSAO xG (Rob Pizzola / Caan Berry) ───────────────
+# "A estatistica que apostas quase nunca e a melhor para a projectar."
+# Golos marcados = conversao (ruidosa). xG = processo (estavel).
+# Equipa com xG 2.0 e 0 golos vai marcar com mais probabilidade que
+# equipa com xG 0.3 e 1 golo — o processo diz golo iminente.
+
+GAP_XG_MIN = 1.2           # xG - golos >= 1.2 para considerar unlucky
+MINUTO_MIN_REGRESSAO = 55  # so no 2o tempo quando o xG ja e credivel
+
+
+def _sinal_regressao_xg(estado, prev, ctx, out, prob_min) -> None:
+    """Equipa com xG >> golos tem regressao positiva iminente.
+
+    Em vez de "quantos golos marcou" (conversao ruidosa), olhamos para
+    "quantas ocasioes de qualidade criou" (volume/processo). Se o gap
+    e grande e ha minutos restantes credıveis, apostamos no proximo
+    golo dessa equipa com boost sobre lam_rest base.
+    """
+    if estado.xg_casa is None or estado.xg_fora is None:
+        return
+    if prev.minutos_restantes < 10:
+        return
+
+    gap_casa = estado.xg_casa - estado.marcador_casa
+    gap_fora = estado.xg_fora - estado.marcador_fora
+
+    from math import exp
+
+    for lado, nome, gap, xg, golos, lam_rest in (
+        ("casa", estado.home, gap_casa, estado.xg_casa,
+         estado.marcador_casa, prev.lam_golos_casa_rest),
+        ("fora", estado.away, gap_fora, estado.xg_fora,
+         estado.marcador_fora, prev.lam_golos_fora_rest),
+    ):
+        if gap < GAP_XG_MIN:
+            continue
+        if golos >= 3:
+            continue  # ja marcou muito, nao e caso de "unlucky"
+
+        # Boost: lam_rest base ja incorpora xG rate, mas aqui amplificamos
+        # pelo gap acumulado nao-convertido (sinal de volume de ocasioes)
+        boost = 1.0 + min(0.30, 0.15 + (gap - GAP_XG_MIN) * 0.12)
+        lam_boosted = lam_rest * boost
+        p_marca = 1.0 - exp(-lam_boosted)
+        if p_marca < prob_min:
+            continue
+
+        racional = [
+            f"{nome} xG {xg:.1f} vs {golos} golo(s) — gap {gap:+.1f} (unlucky)",
+            "Processo (xG) diz: proximo golo e deles",
+        ]
+        bc_lado = (estado.big_chances_casa if lado == "casa"
+                   else estado.big_chances_fora)
+        if bc_lado and bc_lado >= 2:
+            racional.append(f"{bc_lado} big chances criadas")
+        if estado.momentum_actual == lado and "momentum" in ctx:
+            racional.append(ctx["momentum"])
+        if lado == "casa" and "defesa_fraca_fora" in ctx:
+            racional.append(ctx["defesa_fraca_fora"])
+        if lado == "fora" and "defesa_fraca_casa" in ctx:
+            racional.append(ctx["defesa_fraca_casa"])
+        if lado == "casa" and "jogador_chave_casa" in ctx:
+            racional.append(ctx["jogador_chave_casa"])
+        if lado == "fora" and "jogador_chave_fora" in ctx:
+            racional.append(ctx["jogador_chave_fora"])
+
+        titulo = f"{nome} marca (regressao xG)"
+        _add(out, "regressao_xg", "golo_equipa", f"marca_{lado}",
+             None, p_marca, racional, titulo)
 
 
 # ─────────────── GOLOS ───────────────

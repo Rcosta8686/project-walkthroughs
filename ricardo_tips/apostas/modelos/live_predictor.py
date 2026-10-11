@@ -127,6 +127,34 @@ def _fator_marcador(marcador_casa: int, marcador_fora: int, minuto: int) -> floa
     return _FATOR_MARCADOR.get((diff, fase), 1.0)
 
 
+# ───────── Priors de qualidade (Rob Pizzola: volume > conversao) ─────────
+# A estatistica que apostas quase nunca e a melhor para a projectar.
+# SoT (conversao) e ruidoso; shots (volume) e estavel. Projecta SoT a
+# partir do volume de remates × ratio shrinkado para a media europeia.
+_LIGA_SOT_RATIO = 0.35
+_SOT_SHRINK_K = 8   # remates ate assumir ratio actual (shrinkage Bayesian)
+
+
+def _sot_rate_processo(sot: int, shots: int, minuto: int) -> float:
+    """SoT/minuto a partir do VOLUME de remates (processo), nao SoT passado.
+
+    Com poucos remates (<_SOT_SHRINK_K), puxa para prior da liga.
+    Mais remates → confia mais no ratio actual.
+
+    Exemplo: 10 shots, 1 SoT ao min 60.
+      - Metodo antigo: 1/60 = 0.017 SoT/min → projecta ~0.5 SoT restantes
+      - Metodo novo: shots_rate 10/60 × ratio(10×10%+8×35%)/(10+8)
+                   = 0.167 × 0.21 = 0.035 → projecta ~1 SoT restante
+    """
+    if shots < 2 or minuto < 15:
+        return (12.0 / 90.0) * _LIGA_SOT_RATIO
+    ratio_actual = sot / shots
+    peso_actual = shots / (shots + _SOT_SHRINK_K)
+    ratio = peso_actual * ratio_actual + (1 - peso_actual) * _LIGA_SOT_RATIO
+    shots_rate = shots / minuto
+    return shots_rate * ratio
+
+
 def _poisson_cdf(k: int, lam: float) -> float:
     """F_Poisson(k, lam) = sum_{i=0..k} lam^i * e^-lam / i!"""
     if lam <= 0:
@@ -414,13 +442,14 @@ def prever(
     if minuto > 10:
         shots_rate_c = shots_c / minuto
         shots_rate_f = shots_f / minuto
-        sot_rate_c = sot_c / minuto
-        sot_rate_f = sot_f / minuto
+        # SoT via processo (volume × ratio shrinkado), nao sot_passado/minuto
+        sot_rate_c = _sot_rate_processo(sot_c, shots_c, minuto)
+        sot_rate_f = _sot_rate_processo(sot_f, shots_f, minuto)
         cantos_rate_c = cantos_c_act / minuto
         cantos_rate_f = cantos_f_act / minuto
     else:
         shots_rate_c = shots_rate_f = 12.0 / 90.0
-        sot_rate_c = sot_rate_f = 4.0 / 90.0
+        sot_rate_c = sot_rate_f = (12.0 / 90.0) * _LIGA_SOT_RATIO
         cantos_rate_c = cantos_rate_f = 5.3 / 90.0
 
     # Multiplicadores por equipa (chasing + momentum)

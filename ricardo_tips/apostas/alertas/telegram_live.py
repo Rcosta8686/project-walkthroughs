@@ -50,6 +50,7 @@ def _emoji_mercado(mercado: str) -> str:
         "remates": "💥",
         "remates_a_baliza": "🎯",
         "1x2": "🏆",
+        "golo_equipa": "📈",
     }.get(mercado, "🎯")
 
 
@@ -165,6 +166,10 @@ def _formatar_aposta(mercado: str, lado: str, linha: str | float) -> str:
         return f"{lado.upper()} {linha_str} remates"
     if mercado == "remates_a_baliza":
         return f"{lado.upper()} {linha_str} remates a baliza"
+    if mercado == "golo_equipa":
+        # lado = "marca_casa" ou "marca_fora"
+        quem = "CASA" if lado.endswith("_casa") else "FORA"
+        return f"{quem} marca (regressao xG)"
     if mercado == "1x2":
         return {"casa": "VITORIA CASA",
                 "empate": "EMPATE",
