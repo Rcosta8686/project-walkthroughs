@@ -148,8 +148,21 @@ class EstadoLive:
     dispossessed_fora: int | None = None
 
     # ─── Momentum derivado do graph ─────────────────────────────────
-    # 'casa'|'fora'|'equilibrado'. Baseado nos ultimos 10-15 min do graph
     momentum_actual: str | None = None
+
+    # ─── Formacao + ratings dos jogadores (de /lineups) ───────────────
+    formacao_casa: str | None = None            # ex "4-3-3"
+    formacao_fora: str | None = None
+    rating_medio_casa: float | None = None      # media dos 11 em campo (0-10)
+    rating_medio_fora: float | None = None
+    rating_top_casa: float | None = None        # jogador em campo com mais rating
+    rating_top_fora: float | None = None
+    jogador_chave_casa: str | None = None       # nome do top rating
+    jogador_chave_fora: str | None = None
+    rating_gr_casa: float | None = None         # rating do GR
+    rating_gr_fora: float | None = None
+    substituicoes_casa: int = 0                 # subs ja feitas
+    substituicoes_fora: int = 0
 
     # Raw payloads (debug / para análises futuras)
     _raw_event: dict = field(default_factory=dict, repr=False)
@@ -259,10 +272,19 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     if incidents_json:
         _preencher_cartoes(estado, incidents_json)
 
-    # Graph (xG momentum) - opcional, pode nao existir em todos os jogos
+    # Graph (xG momentum)
     graph_json = _get_json(f"/event/{event_id}/graph")
     if graph_json:
         _preencher_xg_recent(estado, graph_json)
+
+    # Lineups (formacao + ratings) — adiciona a camada "jogador em campo"
+    lineups_json = _get_json(f"/event/{event_id}/lineups")
+    if lineups_json:
+        _preencher_lineups(estado, lineups_json)
+
+    # Substituicoes dos incidents
+    if incidents_json:
+        _preencher_substituicoes(estado, incidents_json)
 
     return estado
 
@@ -446,6 +468,82 @@ def _preencher_cartoes(estado: EstadoLive, incidents_payload: dict) -> None:
             "equipa": "casa" if is_home else "fora",
             "classe": "red" if classe != "yellow" else "yellow",
         })
+
+
+def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
+    """Extrai formacao + ratings dos 11 em campo de cada equipa.
+
+    Estrutura esperada:
+      {
+        "home": {"formation": "4-3-3",
+                 "players": [{"player": {"name": "..."}, "statistics": {"rating": 7.1}, "substitute": false, ...}, ...]},
+        "away": {...}
+      }
+    """
+    for lado in ("home", "away"):
+        bloco = lineups_payload.get(lado) or {}
+        formacao = bloco.get("formation")
+        players = bloco.get("players", []) or []
+
+        # So os jogadores que estao em campo (nao substitutos + nao subbed off)
+        em_campo = []
+        for p in players:
+            if p.get("substitute"):
+                continue
+            # subbed off: muito variavel entre payloads
+            stats = p.get("statistics") or {}
+            if stats.get("substitutionOut") or stats.get("substitutedOut"):
+                continue
+            em_campo.append(p)
+
+        ratings = []
+        rating_top = -1.0
+        jogador_top = None
+        rating_gr = None
+        for p in em_campo:
+            stats = p.get("statistics") or {}
+            r = stats.get("rating")
+            if r is None:
+                continue
+            try:
+                r_f = float(r)
+            except (ValueError, TypeError):
+                continue
+            ratings.append(r_f)
+            nome = (p.get("player") or {}).get("name", "?")
+            # GR tem position 'G' tipicamente
+            if (p.get("position") == "G") or ((p.get("player") or {}).get("position") == "G"):
+                rating_gr = r_f
+            if r_f > rating_top:
+                rating_top = r_f
+                jogador_top = nome
+
+        media = sum(ratings) / len(ratings) if ratings else None
+
+        if lado == "home":
+            estado.formacao_casa = formacao
+            estado.rating_medio_casa = media
+            estado.rating_top_casa = rating_top if rating_top > 0 else None
+            estado.jogador_chave_casa = jogador_top
+            estado.rating_gr_casa = rating_gr
+        else:
+            estado.formacao_fora = formacao
+            estado.rating_medio_fora = media
+            estado.rating_top_fora = rating_top if rating_top > 0 else None
+            estado.jogador_chave_fora = jogador_top
+            estado.rating_gr_fora = rating_gr
+
+
+def _preencher_substituicoes(estado: EstadoLive, incidents_payload: dict) -> None:
+    """Conta substituicoes ja feitas por equipa."""
+    for inc in incidents_payload.get("incidents", []) or []:
+        if (inc.get("incidentType") or "").lower() != "substitution":
+            continue
+        is_home = bool(inc.get("isHome"))
+        if is_home:
+            estado.substituicoes_casa += 1
+        else:
+            estado.substituicoes_fora += 1
 
 
 def _preencher_xg_recent(estado: EstadoLive, graph_payload: dict) -> None:

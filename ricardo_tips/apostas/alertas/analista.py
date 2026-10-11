@@ -110,6 +110,7 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
 
     ctx = _construir_contexto(estado, prev)
     out: list[Sinal] = []
+    _sinal_1x2(estado, prev, ctx, out, prob_minima)
     _sinal_golos(estado, prev, ctx, out, prob_minima)
     _sinal_btts(estado, prev, ctx, out, prob_minima)
     _sinal_cantos(estado, prev, ctx, out, prob_minima)
@@ -138,7 +139,9 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
         else:  # under, nao
             if linha_s < linha_e:
                 melhores[key] = s
-    return [s for s in melhores.values() if s.prob_modelo >= prob_minima]
+    # 1X2 tem threshold proprio (PROB_MIN_1X2=0.35), outros usam prob_minima
+    return [s for s in melhores.values()
+            if s.prob_modelo >= (PROB_MIN_1X2 if s.mercado == "1x2" else prob_minima)]
 
 
 # ──────────────────── Contexto ricamente observado ────────────────────
@@ -226,7 +229,164 @@ def _construir_contexto(estado, prev) -> dict:
     if reds > 0:
         ctx["vermelho"] = f"{reds} vermelho(s) mostrado(s)"
 
+    # ─── Formacao + ratings dos jogadores em campo ────────────────────
+    if estado.rating_medio_casa is not None and estado.rating_medio_fora is not None:
+        diff = estado.rating_medio_casa - estado.rating_medio_fora
+        if abs(diff) >= 0.3:
+            melhor = estado.home if diff > 0 else estado.away
+            r_melhor = max(estado.rating_medio_casa, estado.rating_medio_fora)
+            r_pior = min(estado.rating_medio_casa, estado.rating_medio_fora)
+            ctx["rating_equipa"] = f"{melhor} a jogar melhor ({r_melhor:.1f} vs {r_pior:.1f} rating medio)"
+
+    # Jogador chave em grande forma
+    if estado.rating_top_casa is not None and estado.rating_top_casa >= 7.8:
+        ctx["jogador_chave_casa"] = f"{estado.jogador_chave_casa} em grande ({estado.rating_top_casa:.1f})"
+    if estado.rating_top_fora is not None and estado.rating_top_fora >= 7.8:
+        ctx["jogador_chave_fora"] = f"{estado.jogador_chave_fora} em grande ({estado.rating_top_fora:.1f})"
+
+    # GR em grande rating
+    if estado.rating_gr_casa is not None and estado.rating_gr_casa >= 7.5:
+        ctx["gr_casa_rating"] = f"GR {estado.home} em grande ({estado.rating_gr_casa:.1f})"
+    if estado.rating_gr_fora is not None and estado.rating_gr_fora >= 7.5:
+        ctx["gr_fora_rating"] = f"GR {estado.away} em grande ({estado.rating_gr_fora:.1f})"
+
+    # Formacao: 5-4-1/5-3-2 defensivo vs 4-3-3/3-4-3 ofensivo
+    def _tipo_formacao(f: str | None) -> str | None:
+        if not f:
+            return None
+        if f.startswith("5-") or f == "5-3-2" or f == "5-4-1":
+            return "defensiva"
+        if f.startswith("3-") or f in ("4-3-3", "3-4-3"):
+            return "ofensiva"
+        return "equilibrada"
+    tipo_c = _tipo_formacao(estado.formacao_casa)
+    tipo_f = _tipo_formacao(estado.formacao_fora)
+    if tipo_c and tipo_f and tipo_c != tipo_f:
+        ctx["formacoes"] = f"{estado.home} {estado.formacao_casa} ({tipo_c}) vs {estado.away} {estado.formacao_fora} ({tipo_f})"
+
     return ctx
+
+
+# ─────────────── 1X2 (resultado final) ───────────────
+
+# 1X2 raramente passa de 50% (ao contrario de over/under), por isso
+# tem thresholds proprios mais baixos.
+PROB_MIN_1X2 = 0.35
+
+
+def _sinal_1x2(estado, prev, ctx, out, prob_min) -> None:
+    """Prediz quem vence o jogo (resultado final 1/X/2)."""
+    diff = abs(estado.marcador_casa - estado.marcador_fora)
+    if diff >= 3 and estado.minuto >= 85:
+        return
+    if estado.minuto >= 88:
+        return
+
+    threshold = min(prob_min, PROB_MIN_1X2)
+    opcoes = [
+        ("casa", estado.home, prev.p_casa_vence),
+        ("empate", "Empate", prev.p_empate),
+        ("fora", estado.away, prev.p_fora_vence),
+    ]
+    opcoes.sort(key=lambda x: -x[2])
+
+    # Emite o favorito + possivel segundo com odd atractiva (ex: empate como
+    # value quando equipas estao equilibradas)
+    emitidos = 0
+    for lado, nome, prob in opcoes:
+        if prob < threshold:
+            break
+        if emitidos >= 2:
+            break
+        # So emite o segundo se estiver proximo do favorito (dentro de 10pp)
+        if emitidos > 0 and prob < opcoes[0][2] - 0.10:
+            break
+        _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob)
+        emitidos += 1
+
+
+def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob) -> None:
+
+    racional = []
+    titulo = (f"{estado.home} vence" if lado == "casa"
+              else f"{estado.away} vence" if lado == "fora"
+              else "Empate")
+
+    # Racional baseado no marcador actual
+    diff = estado.marcador_casa - estado.marcador_fora
+    if lado == "casa" and diff > 0:
+        racional.append(f"{estado.home} a vencer {estado.marcador_casa}-{estado.marcador_fora}")
+    elif lado == "fora" and diff < 0:
+        racional.append(f"{estado.away} a vencer {estado.marcador_fora}-{estado.marcador_casa}")
+    elif lado == "empate" and diff == 0:
+        racional.append(f"{estado.marcador_casa}-{estado.marcador_fora} ao min {estado.minuto}")
+    elif lado in ("casa", "fora") and diff == 0:
+        # Tied game, signal says someone will win from here
+        racional.append(f"{estado.home if lado == 'casa' else estado.away} tem de marcar para ganhar ({estado.minuto}')")
+    elif lado == "casa" and diff < 0:
+        racional.append(f"{estado.home} tem de reverter {estado.marcador_casa}-{estado.marcador_fora}")
+    elif lado == "fora" and diff > 0:
+        racional.append(f"{estado.away} tem de reverter ({estado.marcador_casa}-{estado.marcador_fora})")
+
+    # Rating medio da equipa
+    if "rating_equipa" in ctx and lado != "empate":
+        if ((lado == "casa" and estado.rating_medio_casa and estado.rating_medio_fora
+             and estado.rating_medio_casa > estado.rating_medio_fora)
+            or (lado == "fora" and estado.rating_medio_casa and estado.rating_medio_fora
+                and estado.rating_medio_fora > estado.rating_medio_casa)):
+            racional.append(ctx["rating_equipa"])
+
+    # Jogador chave
+    if lado == "casa" and "jogador_chave_casa" in ctx:
+        racional.append(ctx["jogador_chave_casa"])
+    if lado == "fora" and "jogador_chave_fora" in ctx:
+        racional.append(ctx["jogador_chave_fora"])
+
+    # Momentum
+    if "momentum" in ctx:
+        if (lado == "casa" and estado.momentum_actual == "casa") or \
+           (lado == "fora" and estado.momentum_actual == "fora"):
+            racional.append(ctx["momentum"])
+
+    # Formacoes
+    if "formacoes" in ctx and lado != "empate":
+        racional.append(ctx["formacoes"])
+
+    # Defesa fraca do adversario
+    if lado == "casa" and "defesa_fraca_fora" in ctx:
+        racional.append(ctx["defesa_fraca_fora"])
+    if lado == "fora" and "defesa_fraca_casa" in ctx:
+        racional.append(ctx["defesa_fraca_casa"])
+
+    # Jogo a fechar favorece empate
+    if lado == "empate" and "jogo_a_fechar" in ctx and estado.marcador_casa == estado.marcador_fora:
+        racional.append(ctx["jogo_a_fechar"])
+
+    # Contexto para empate: equilibrio
+    if lado == "empate" and estado.marcador_casa == estado.marcador_fora:
+        if estado.xg_recent_casa is not None and estado.xg_recent_fora is not None:
+            xg_rec = estado.xg_recent_casa + estado.xg_recent_fora
+            if xg_rec < 0.2 and estado.minuto >= 70:
+                racional.append(f"xG ultimos 15min apenas {xg_rec:.1f} — jogo tranca")
+        if (estado.rating_medio_casa is not None and estado.rating_medio_fora is not None
+                and abs(estado.rating_medio_casa - estado.rating_medio_fora) < 0.3):
+            racional.append(f"equipas equilibradas ({estado.rating_medio_casa:.1f} vs {estado.rating_medio_fora:.1f})")
+        if estado.minuto >= 75 and prev.minutos_restantes <= 15:
+            racional.append(f"{prev.minutos_restantes}min restam — equipas aceitam ponto")
+
+    if not racional:
+        racional.append(f"modelo {prob*100:.0f}% para resultado final")
+    # 1X2 passa por _add_1x2 que tem threshold proprio
+    odd_be, odd_val = _odds_minimas(prob)
+    if odd_val >= 1.15 and prob <= 0.92:
+        forca = ("forte" if prob >= 0.60
+                 else "normal" if prob >= 0.45
+                 else "fraco")
+        out.append(Sinal(
+            tipo="1x2_live", mercado="1x2", lado=lado, linha=None,
+            prob_modelo=prob, odd_minima=odd_be, odd_valor=odd_val,
+            racional=racional, forca=forca, titulo=titulo,
+        ))
 
 
 # ─────────────── GOLOS ───────────────
