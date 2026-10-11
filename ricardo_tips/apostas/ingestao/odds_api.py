@@ -414,7 +414,7 @@ def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi)
     if data is None:
         return
 
-    # Procurar jogo (±36h)
+    # Procurar jogo (±36h) com a orientação Odds API
     inicio = data - timedelta(hours=36)
     fim = data + timedelta(hours=36)
     jogo = s.scalar(
@@ -426,6 +426,34 @@ def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi)
             Jogo.data_utc <= fim,
         )
     )
+    # Se não encontrou, tenta a orientação INVERTIDA: football-data (que criou
+    # o jogo primeiro) é autoritativo para quem é casa/fora. A Odds API às
+    # vezes reporta orientado de forma diferente para fixtures em estádios
+    # neutros ou simplesmente por erro deles. Se o inverso bater, respeita
+    # a DB: troca nome_casa/nome_fora + casa/fora para que os outcomes 1x2
+    # mapeiem contra a orientação correcta.
+    if jogo is None:
+        jogo_invertido = s.scalar(
+            select(Jogo).where(
+                Jogo.liga_id == liga.id,
+                Jogo.casa_id == fora.id,
+                Jogo.fora_id == casa.id,
+                Jogo.data_utc >= inicio,
+                Jogo.data_utc <= fim,
+            )
+        )
+        if jogo_invertido is not None:
+            log.warning(
+                "Odds API orientação invertida vs DB: %s vs %s (Odds API) → "
+                "mantemos %s vs %s (DB). Odds re-mapeadas.",
+                nome_casa, nome_fora,
+                s.get(Equipa, jogo_invertido.casa_id).nome,
+                s.get(Equipa, jogo_invertido.fora_id).nome,
+            )
+            # Troca para alinhar com a DB
+            nome_casa, nome_fora = nome_fora, nome_casa
+            casa, fora = fora, casa
+            jogo = jogo_invertido
     if jogo is None:
         # Jogo futuro ainda não ingerido pelo football-data (CSVs só têm jogos
         # jogados). Cria aqui para que a análise live tenha a quem atribuir
