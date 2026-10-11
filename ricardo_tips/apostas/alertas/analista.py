@@ -116,67 +116,67 @@ def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive", mercado: str = "golo
 
 
 def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
-    """Verdadeira pergunta: 'apostaria a minha vida nisto?'
+    """Criterio Paulo Rebelo: 'tenho edge matematico sobre o mercado?'
 
-    Criterios *estritos* — o analista so arrisca quando TODOS batem:
-      1. Prob suficientemente alta para o lado escolhido:
-         - over/under: >= 68%
-         - 1X2: >= 48% (favorito claro)
-         - btts: >= 68%
-      2. Edge (prob x odd_valor) >= 1.05 (EV >= 5%)
-      3. 3+ racionais concretos para over/under
-         4+ racionais concretos para 1X2 (mais volatil)
-      4. Jogo maduro:
-         - over/under: minuto >= 50
-         - 1X2: minuto >= 65 (quase 2a parte)
-      5. Pelo menos UM sinal de dominio nos racionais (nao so stats
-         frias — tem de haver tom tipo "momentum", "dominante",
-         "em grande", "a jogar melhor")
+    Nao e 'tenho certeza'. E 'tenho esperança positiva com disciplina'.
+    Volume de bets +EV ao longo do tempo vence. Filtros:
+
+      1. Prob minima racional (sinal nao e random guess):
+         - over/under: >= 58%
+         - 1X2: >= 42% (favorito emerge)
+         - btts: >= 58%
+      2. Edge >= 1.03 (3% EV minimo)
+      3. 2+ racionais concretos (nao fallbacks)
+      4. Jogo com dados maduros:
+         - over/under: minuto >= 30
+         - 1X2: minuto >= 50 (favorito ja definido)
+      5. Pelo menos UM sinal observacional, nao so numero cru
+         (momentum, dominante, defesa a ceder, big chances, chasing,
+         derby, severo, vermelho, em grande, a jogar melhor, a atacar)
     """
-    # 1. Prob minima por tipo
     if sinal.mercado == "1x2":
-        if sinal.prob_modelo < 0.48:
+        if sinal.prob_modelo < 0.42:
             return False
     elif sinal.mercado == "btts":
-        if sinal.prob_modelo < 0.68:
+        if sinal.prob_modelo < 0.58:
             return False
     else:
-        if sinal.prob_modelo < 0.68:
+        if sinal.prob_modelo < 0.58:
             return False
 
-    # 2. Edge minimo
-    # Nota: odd_valor computada com margem 5% EV exacta, logo
-    # prob × odd_valor ~ 1.05 por desenho. Usamos 1.03 (3% EV) para
-    # permitir margem de arredondamento.
     if sinal.prob_modelo * sinal.odd_valor < 1.03:
         return False
 
-    # 3. Racionais concretos (nao fallbacks estatisticos)
     racionais_credíveis = []
     for r in sinal.racional:
         rl = r.lower()
-        # Exclui fallbacks tipo "modelo 70%" ou "0 cantos ao min X"
-        if rl.startswith(("modelo ", "0 ", "intensidade ")):
+        if rl.startswith(("modelo ", "0 ")):
             continue
         racionais_credíveis.append(r)
-    minimo_racionais = 4 if sinal.mercado == "1x2" else 3
-    if len(racionais_credíveis) < minimo_racionais:
+    if len(racionais_credíveis) < 2:
         return False
 
-    # 4. Jogo maduro
-    minuto_minimo = 65 if sinal.mercado == "1x2" else 50
+    minuto_minimo = 50 if sinal.mercado == "1x2" else 30
     if estado.minuto < minuto_minimo:
         return False
 
-    # 5. Pelo menos um sinal de "tom" (nao so estatisticas frias)
     palavras_tom = ("momentum", "dominante", "em grande", "a jogar melhor",
                     "a vencer", "defesa a ceder", "big chances", "chasing",
-                    "pressiona", "derby", "severo", "vermelho")
+                    "pressiona", "derby", "severo", "vermelho", "a atacar",
+                    "jogo decidido", "equipas equilibradas", "jogo tranca",
+                    "em grande (", "gr ", "fecha", "arbitro")
     tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
     if not tem_tom:
         return False
 
     return True
+
+
+def pontuar_sinal(sinal: Sinal) -> float:
+    """Score para ranking: edge x qualidade do racional x forca."""
+    edge = sinal.prob_modelo * sinal.odd_valor
+    qualidade = max(1, len(sinal.racional))
+    return edge * (qualidade ** 0.5) * sinal.forca_num
 
 
 def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",

@@ -673,13 +673,11 @@ def _correr_ciclo(args) -> None:
             notificar = []
             for s in todas_sugestoes:
                 if s.get("casa") == "ANALISTA":
-                    # Sinal do analista: so notifica se e de alta conviccao
-                    # ("apostava o meu proprio dinheiro"). Filtra sinais
-                    # fracos onde ainda e cedo para arriscar.
+                    # Sinal do analista: tem de passar o filtro Paulo
+                    # Rebelo (edge, racional, minuto maduro, tom).
                     if not s.get("_alta_conviccao"):
                         continue
-                    if float(s.get("prob_modelo", 0)) >= prob_min_telegram:
-                        notificar.append(s)
+                    notificar.append(s)
                 else:
                     # Sugestao com EV real
                     try:
@@ -688,17 +686,24 @@ def _correr_ciclo(args) -> None:
                         continue
                     if ev_val >= ev_min_telegram:
                         notificar.append(s)
-            # Deduplica entre ciclos: 1 notificacao por (event+mercado+lado+linha)
-            # a cada COOLDOWN_MIN min. Alem disso, limite de 1 sinal por jogo
-            # por ciclo (so o mais forte).
-            def _sort_key(s):
+            # Score para ranking: edge × √racionais × forca
+            def _score(s):
                 try:
-                    return -float(s.get("ev") or s.get("prob_modelo") or 0)
+                    prob = float(s.get("prob_modelo", 0))
+                    odd = float(s.get("odd", 0))
+                    edge = prob * odd
+                    return edge  # mais alto = melhor
                 except (ValueError, TypeError):
                     return 0
+            notificar.sort(key=_score, reverse=True)
+
+            # Max N notificacoes por ciclo (default 3) — top do ranking
+            max_por_ciclo = args.max_notif_por_ciclo
             enviadas = 0
             jogos_notificados_este_ciclo = set()
-            for s in sorted(notificar, key=_sort_key):
+            for s in notificar:
+                if enviadas >= max_por_ciclo:
+                    break
                 event_id = s.get("event_id")
                 mercado = s["mercado"]
                 lado = s["lado"]
@@ -707,7 +712,7 @@ def _correr_ciclo(args) -> None:
                 # Cooldown dedup entre ciclos
                 if _em_cooldown(event_id, mercado, lado, linha):
                     continue
-                # Max 1 notificacao por jogo por ciclo (sinal mais forte)
+                # Max 1 notificacao por jogo por ciclo
                 if jogo_key in jogos_notificados_este_ciclo:
                     continue
                 telegram_live.enviar_sugestao_live(s)
@@ -715,8 +720,8 @@ def _correr_ciclo(args) -> None:
                 jogos_notificados_este_ciclo.add(jogo_key)
                 enviadas += 1
             if enviadas:
-                print(f"  → {enviadas} notificacoes Telegram enviadas "
-                      f"({len(notificar) - enviadas} em cooldown ou duplicados)")
+                print(f"  → {enviadas}/{len(notificar)} notificacoes Telegram enviadas "
+                      f"(top {max_por_ciclo} do ranking)")
 
 
 def main() -> None:
@@ -743,6 +748,9 @@ def main() -> None:
                         help="Prob minima para o analista emitir sinal (default 0.70 = 70 por cento). "
                              "Sinais do analista aparecem mesmo sem odds da Odds API. "
                              "Baixa para 0.55 para veres mais fluxo.")
+    parser.add_argument("--max-notif-por-ciclo", type=int, default=3,
+                        help="Max notificacoes Telegram por ciclo (default 3). "
+                             "Ranking: top edge × √racionais × forca.")
     args = parser.parse_args()
 
     print("Scanner LIVE v2 iniciado.")
