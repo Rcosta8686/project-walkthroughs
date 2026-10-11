@@ -94,17 +94,62 @@ class EstadoLive:
     yellow_cards_fora: int = 0
     red_cards_casa: int = 0
     red_cards_fora: int = 0
-    fouls_casa: int | None = None          # faltas cometidas (precursor de cartoes)
+    fouls_casa: int | None = None
     fouls_fora: int | None = None
     arbitro: str | None = None
 
-    # Jogadores com cartão (nome, equipa, "yellow"/"red"), para
-    # detectar jogadores em risco de 5º amarelo (contexto cross-jornada)
+    # Jogadores com cartão
     cartoes_detalhe: list[dict] = field(default_factory=list)
 
-    # xG momentum: xG nos últimos 15 min (quando o graph está disponivel)
+    # xG momentum: xG nos últimos 15 min
     xg_recent_casa: float | None = None
     xg_recent_fora: float | None = None
+
+    # ─── Qualidade de ataque e distribuicao ───────────────────────────
+    final_third_entries_casa: int | None = None
+    final_third_entries_fora: int | None = None
+    pass_accuracy_casa: float | None = None   # 0-1 (overall)
+    pass_accuracy_fora: float | None = None
+    pass_accuracy_final_third_casa: float | None = None
+    pass_accuracy_final_third_fora: float | None = None
+    long_ball_accuracy_casa: float | None = None
+    long_ball_accuracy_fora: float | None = None
+    crosses_total_casa: int | None = None
+    crosses_total_fora: int | None = None
+    crosses_accuracy_casa: float | None = None
+    crosses_accuracy_fora: float | None = None
+
+    # ─── Defesa ───────────────────────────────────────────────────────
+    tackles_won_pct_casa: float | None = None
+    tackles_won_pct_fora: float | None = None
+    tackles_total_casa: int | None = None
+    tackles_total_fora: int | None = None
+    interceptions_casa: int | None = None
+    interceptions_fora: int | None = None
+    recoveries_casa: int | None = None
+    recoveries_fora: int | None = None
+    clearances_casa: int | None = None
+    clearances_fora: int | None = None
+    saves_casa: int | None = None             # defesas do guarda-redes
+    saves_fora: int | None = None
+
+    # ─── Duelos ──────────────────────────────────────────────────────
+    duels_won_pct_casa: float | None = None   # geral (ground + aerial)
+    duels_won_pct_fora: float | None = None
+    ground_duels_won_pct_casa: float | None = None
+    ground_duels_won_pct_fora: float | None = None
+    aerial_duels_won_pct_casa: float | None = None
+    aerial_duels_won_pct_fora: float | None = None
+    dribbles_won_casa: int | None = None
+    dribbles_won_fora: int | None = None
+    dribbles_total_casa: int | None = None
+    dribbles_total_fora: int | None = None
+    dispossessed_casa: int | None = None
+    dispossessed_fora: int | None = None
+
+    # ─── Momentum derivado do graph ─────────────────────────────────
+    # 'casa'|'fora'|'equilibrado'. Baseado nos ultimos 10-15 min do graph
+    momentum_actual: str | None = None
 
     # Raw payloads (debug / para análises futuras)
     _raw_event: dict = field(default_factory=dict, repr=False)
@@ -315,18 +360,51 @@ def _as_percent(v: Any) -> float:
     return float(str(v).replace("%", "")) / 100.0
 
 
+def _parse_frac(v: Any) -> int:
+    """Converte '34/50' em 34 (parte feita)."""
+    s = str(v).strip()
+    if "/" in s:
+        return int(s.split("/")[0])
+    return int(s)
+
+
 _MAPA_STATS = {
     # key normalizada → (attr_casa, attr_fora, converter)
-    "expected goals":        ("xg_casa", "xg_fora", float),
-    "total shots":           ("shots_total_casa", "shots_total_fora", int),
-    "shots on target":       ("shots_on_target_casa", "shots_on_target_fora", int),
-    "blocked shots":         ("shots_blocked_casa", "shots_blocked_fora", int),
-    "big chances":           ("big_chances_casa", "big_chances_fora", int),
-    "ball possession":       ("possession_casa", "possession_fora", _as_percent),
-    "corner kicks":          ("corners_casa", "corners_fora", int),
-    "yellow cards":          ("yellow_cards_casa", "yellow_cards_fora", int),
-    "red cards":             ("red_cards_casa", "red_cards_fora", int),
-    "fouls":                 ("fouls_casa", "fouls_fora", int),
+    "expected goals":          ("xg_casa", "xg_fora", float),
+    "total shots":             ("shots_total_casa", "shots_total_fora", int),
+    "shots on target":         ("shots_on_target_casa", "shots_on_target_fora", int),
+    "blocked shots":           ("shots_blocked_casa", "shots_blocked_fora", int),
+    "big chances":             ("big_chances_casa", "big_chances_fora", int),
+    "goalkeeper saves":        ("saves_casa", "saves_fora", int),
+    "ball possession":         ("possession_casa", "possession_fora", _as_percent),
+    "corner kicks":            ("corners_casa", "corners_fora", int),
+    "yellow cards":            ("yellow_cards_casa", "yellow_cards_fora", int),
+    "red cards":               ("red_cards_casa", "red_cards_fora", int),
+    "fouls":                   ("fouls_casa", "fouls_fora", int),
+
+    # Qualidade de distribuicao
+    "final third entries":     ("final_third_entries_casa", "final_third_entries_fora", int),
+    "passes":                  (None, None, None),  # ignorado (total)
+    "accurate passes":         ("pass_accuracy_casa", "pass_accuracy_fora", _as_percent),
+    "long balls":              (None, None, None),
+    "accurate long balls":     ("long_ball_accuracy_casa", "long_ball_accuracy_fora", _as_percent),
+    "crosses":                 ("crosses_total_casa", "crosses_total_fora", _parse_frac),
+    "accurate crosses":        ("crosses_accuracy_casa", "crosses_accuracy_fora", _as_percent),
+
+    # Defesa
+    "tackles":                 ("tackles_total_casa", "tackles_total_fora", int),
+    "tackles won":             ("tackles_won_pct_casa", "tackles_won_pct_fora", _as_percent),
+    "interceptions":           ("interceptions_casa", "interceptions_fora", int),
+    "recoveries":              ("recoveries_casa", "recoveries_fora", int),
+    "clearances":              ("clearances_casa", "clearances_fora", int),
+
+    # Duelos
+    "duels won":               ("duels_won_pct_casa", "duels_won_pct_fora", _as_percent),
+    "ground duels":            ("ground_duels_won_pct_casa", "ground_duels_won_pct_fora", _as_percent),
+    "aerial duels":            ("aerial_duels_won_pct_casa", "aerial_duels_won_pct_fora", _as_percent),
+    "dribbles":                ("dribbles_total_casa", "dribbles_total_fora", _parse_frac),
+    "successful dribbles":     ("dribbles_won_casa", "dribbles_won_fora", int),
+    "dispossessed":            ("dispossessed_casa", "dispossessed_fora", int),
 }
 
 
@@ -343,6 +421,8 @@ def _preencher_stats(estado: EstadoLive, stats_payload: dict) -> None:
                 if mapping is None:
                     continue
                 attr_c, attr_f, conv = mapping
+                if attr_c is None or conv is None:
+                    continue  # linha ignorada no mapping
                 try:
                     setattr(estado, attr_c, conv(item.get("home")))
                     setattr(estado, attr_f, conv(item.get("away")))
@@ -369,8 +449,10 @@ def _preencher_cartoes(estado: EstadoLive, incidents_payload: dict) -> None:
 
 
 def _preencher_xg_recent(estado: EstadoLive, graph_payload: dict) -> None:
-    """Soma o xG dos ultimos 15 minutos a partir da serie temporal."""
-    # Estrutura: graphPoints = [{minute: 12, value: 0.15}, ...]
+    """Soma o xG dos ultimos 15 minutos + detecta momentum actual.
+
+    Estrutura: graphPoints = [{minute: 12, value: 0.15}, ...]
+    """
     serie_casa = (graph_payload.get("home") or {}).get("graphPoints") or graph_payload.get("homeGraphPoints") or []
     serie_fora = (graph_payload.get("away") or {}).get("graphPoints") or graph_payload.get("awayGraphPoints") or []
     corte = estado.minuto - 15
@@ -380,6 +462,21 @@ def _preencher_xg_recent(estado: EstadoLive, graph_payload: dict) -> None:
     xg_f = sum(float(p.get("value", 0) or 0) for p in serie_fora if (p.get("minute") or 0) >= corte)
     estado.xg_recent_casa = xg_c
     estado.xg_recent_fora = xg_f
+
+    # Momentum: nos ultimos 10 min quem teve mais pressao?
+    corte_mom = estado.minuto - 10
+    if corte_mom < 0:
+        corte_mom = 0
+    mom_c = sum(float(p.get("value", 0) or 0) for p in serie_casa if (p.get("minute") or 0) >= corte_mom)
+    mom_f = sum(float(p.get("value", 0) or 0) for p in serie_fora if (p.get("minute") or 0) >= corte_mom)
+    diff = mom_c - mom_f
+    # Thresholds: diferenca > 0.3 xG no ultimo 10min = momentum claro
+    if diff > 0.3:
+        estado.momentum_actual = "casa"
+    elif diff < -0.3:
+        estado.momentum_actual = "fora"
+    else:
+        estado.momentum_actual = "equilibrado"
 
 
 def _tratar_percent(v: Any) -> float:

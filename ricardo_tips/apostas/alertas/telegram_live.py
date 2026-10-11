@@ -97,21 +97,23 @@ def enviar_sugestao_live(s: dict) -> None:
         aposta_fmt = _formatar_aposta(mercado, lado, linha)
 
         if casa == "ANALISTA":
-            # Sinal puro — modelo diz que esta aposta vale a pena, procura a odd
+            # Sinal puro — mensagem narrativa com racional
             odd_desejada = float(s.get("odd", 0))
             odd_be = round(1.0 / prob, 2) if prob > 0 else 0
             fase = _fase_do_jogo(int(minuto) if str(minuto).isdigit() else 0)
-            # Mensagem narrativa com contexto
+            # Racional vem como lista no sinal (nao esta no CSV atual, puxa de s se existir)
+            racional_str = s.get("racional_str", "")
+            racional_section = f"\n{racional_str}\n" if racional_str else ""
             texto = (
-                f"{_emoji_mercado(mercado)} *{aposta_fmt}* ({prob*100:.0f}%)\n"
+                f"{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
-                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
+                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
+                f"{racional_section}"
                 f"\n"
-                f"🎯 Odd min *{odd_be}* · Odd alvo *{odd_desejada}* (+5% EV)\n"
-                f"\n"
-                f"_Procura esta odd. Se bater o alvo, mete. Se nao, passa._"
+                f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
+                f"_Procura esta odd. Se bater o alvo, mete._"
             )
         else:
             try:

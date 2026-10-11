@@ -531,6 +531,7 @@ def _nome_aposta(mercado: str, lado: str, linha: float | None) -> str:
 
 def _sinal_para_sugestao(estado, sinal) -> dict:
     """Converte Sinal numa linha de sugestao para o CSV."""
+    racional_str = "\n".join(f"· {r}" for r in sinal.racional) if sinal.racional else ""
     return {
         "ts_scan": datetime.utcnow().isoformat(timespec="seconds"),
         "event_id": estado.event_id,
@@ -542,10 +543,10 @@ def _sinal_para_sugestao(estado, sinal) -> dict:
         "mercado": sinal.mercado,
         "lado": sinal.lado,
         "linha": "" if sinal.linha is None else str(sinal.linha),
-        "casa": "ANALISTA",      # mnemonico: nao e uma casa real, e sinal do modelo
-        "odd": sinal.odd_valor,  # odd desejada para EV+5%
+        "casa": "ANALISTA",
+        "odd": sinal.odd_valor,
         "prob_modelo": round(sinal.prob_modelo, 4),
-        "ev": "",                # sem EV concreto porque sem odd real
+        "ev": "",
         "xg_casa": estado.xg_casa or "",
         "xg_fora": estado.xg_fora or "",
         "shots_on_target_c": estado.shots_on_target_casa or "",
@@ -555,6 +556,9 @@ def _sinal_para_sugestao(estado, sinal) -> dict:
         "yellows_c": estado.yellow_cards_casa,
         "yellows_f": estado.yellow_cards_fora,
         "resultado": "", "lucro": "", "resolvido_em": "",
+        # Nao vai para CSV mas e passado ao Telegram em memoria:
+        "racional_str": racional_str,
+        "titulo": sinal.titulo,
     }
 
 
