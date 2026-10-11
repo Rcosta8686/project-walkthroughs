@@ -165,6 +165,66 @@ class OddsCorrentes(Base):
     )
 
 
+class EstadoLiveSnapshot(Base):
+    """Snapshot do estado de um jogo durante a transmissao in-play.
+
+    Gravado pelo scanner_live_v2 a cada ciclo. Permite:
+      - Backtest: dado o estado no min X, o que aconteceu ate ao fim?
+      - Calibrar coeficientes do live_predictor com dados proprios
+      - Identificar padroes (ex: 0-0 ao 80' com SoT 4+ tende a Over 0.5
+        no final)
+
+    event_id vem da Sofascore (unico global). jogo_id e ligacao ao
+    nosso Jogo (nullable porque podemos ter snapshots de jogos que
+    nunca entraram na BD).
+    """
+
+    __tablename__ = "estado_live_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    jogo_id: Mapped[int | None] = mapped_column(ForeignKey("jogos.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    liga: Mapped[str | None] = mapped_column(String(80))
+    home: Mapped[str] = mapped_column(String(100), nullable=False)
+    away: Mapped[str] = mapped_column(String(100), nullable=False)
+    minuto: Mapped[int] = mapped_column(Integer, nullable=False)
+    estado_jogo: Mapped[str | None] = mapped_column(String(30))
+
+    marcador_casa: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    marcador_fora: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    xg_casa: Mapped[float | None] = mapped_column(Float)
+    xg_fora: Mapped[float | None] = mapped_column(Float)
+    shots_total_casa: Mapped[int | None] = mapped_column(Integer)
+    shots_total_fora: Mapped[int | None] = mapped_column(Integer)
+    shots_on_target_casa: Mapped[int | None] = mapped_column(Integer)
+    shots_on_target_fora: Mapped[int | None] = mapped_column(Integer)
+    shots_blocked_casa: Mapped[int | None] = mapped_column(Integer)
+    shots_blocked_fora: Mapped[int | None] = mapped_column(Integer)
+    big_chances_casa: Mapped[int | None] = mapped_column(Integer)
+    big_chances_fora: Mapped[int | None] = mapped_column(Integer)
+    posse_casa: Mapped[float | None] = mapped_column(Float)   # 0.0-1.0
+    corners_casa: Mapped[int | None] = mapped_column(Integer)
+    corners_fora: Mapped[int | None] = mapped_column(Integer)
+    yellow_casa: Mapped[int | None] = mapped_column(Integer)
+    yellow_fora: Mapped[int | None] = mapped_column(Integer)
+    red_casa: Mapped[int | None] = mapped_column(Integer)
+    red_fora: Mapped[int | None] = mapped_column(Integer)
+    fouls_casa: Mapped[int | None] = mapped_column(Integer)
+    fouls_fora: Mapped[int | None] = mapped_column(Integer)
+
+    arbitro: Mapped[str | None] = mapped_column(String(100))
+
+    __table_args__ = (
+        # Permite dedupe (nao gravar snapshot do mesmo minuto duas vezes)
+        UniqueConstraint("event_id", "minuto", name="uq_snapshot_evento_minuto"),
+        Index("ix_snapshot_evento_ts", "event_id", "ts"),
+    )
+
+
 class Alinhamento(Base):
     __tablename__ = "alinhamentos"
 

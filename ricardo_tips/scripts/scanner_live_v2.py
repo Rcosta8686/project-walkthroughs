@@ -49,7 +49,7 @@ from apostas.modelos.live_predictor import ev_contra_odd  # noqa: E402
 from apostas.utils.config import get_env, project_root  # noqa: E402
 from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
-from apostas.utils.schema import Equipa, Liga  # noqa: E402
+from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -61,11 +61,13 @@ _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasattr(sofascore_live, "LIGAS_SOFASCORE_IDS") else ()
 
 CSV_COLUNAS = [
-    "ts_scan", "liga", "home", "away", "minuto", "marcador",
+    "ts_scan", "event_id", "liga", "home", "away", "minuto", "marcador",
     "mercado", "lado", "linha", "casa", "odd",
     "prob_modelo", "ev", "xg_casa", "xg_fora",
     "shots_on_target_c", "shots_on_target_f",
     "corners_c", "corners_f", "yellows_c", "yellows_f",
+    # Preenchidos por resolver_sugestoes_live.py:
+    "resultado", "lucro", "resolvido_em",
 ]
 
 
@@ -181,6 +183,56 @@ def _nome_db(sofa_nome: str) -> str:
     return _ALIAS_ODDS_API.get(sofa_nome, sofa_nome)
 
 
+def _gravar_snapshot(estado) -> None:
+    """Grava um snapshot do estado live para calibracao futura.
+
+    Idempotente por (event_id, minuto) — mesmo scanning dois ciclos no
+    mesmo minuto nao cria dois snapshots. Minuto 0 e snapshots a cada 2+
+    minutos tipicamente.
+    """
+    from datetime import datetime as _dt
+    with abrir_sessao() as s:
+        # Dedupe por event+minuto
+        existe = s.scalar(select(EstadoLiveSnapshot).where(
+            EstadoLiveSnapshot.event_id == int(estado.event_id),
+            EstadoLiveSnapshot.minuto == estado.minuto,
+        ))
+        if existe is not None:
+            return
+        snap = EstadoLiveSnapshot(
+            event_id=int(estado.event_id),
+            ts=_dt.utcnow(),
+            liga=estado.liga,
+            home=estado.home,
+            away=estado.away,
+            minuto=estado.minuto,
+            estado_jogo=str(estado.estado) if estado.estado is not None else None,
+            marcador_casa=estado.marcador_casa,
+            marcador_fora=estado.marcador_fora,
+            xg_casa=estado.xg_casa,
+            xg_fora=estado.xg_fora,
+            shots_total_casa=estado.shots_total_casa,
+            shots_total_fora=estado.shots_total_fora,
+            shots_on_target_casa=estado.shots_on_target_casa,
+            shots_on_target_fora=estado.shots_on_target_fora,
+            shots_blocked_casa=estado.shots_blocked_casa,
+            shots_blocked_fora=estado.shots_blocked_fora,
+            big_chances_casa=estado.big_chances_casa,
+            big_chances_fora=estado.big_chances_fora,
+            posse_casa=estado.possession_casa,
+            corners_casa=estado.corners_casa,
+            corners_fora=estado.corners_fora,
+            yellow_casa=estado.yellow_cards_casa,
+            yellow_fora=estado.yellow_cards_fora,
+            red_casa=estado.red_cards_casa,
+            red_fora=estado.red_cards_fora,
+            fouls_casa=estado.fouls_casa,
+            fouls_fora=estado.fouls_fora,
+            arbitro=estado.arbitro,
+        )
+        s.add(snap)
+
+
 def _puxar_expectativa(estado) -> "object | None":
     """Procura ratings historicos para as 2 equipas; devolve ExpectativaJogo."""
     with abrir_sessao() as s:
@@ -226,6 +278,7 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
             return
         sugestoes.append({
             "ts_scan": datetime.utcnow().isoformat(timespec="seconds"),
+            "event_id": estado.event_id,
             "liga": estado.liga,
             "home": estado.home,
             "away": estado.away,
@@ -246,6 +299,9 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
             "corners_f": estado.corners_fora or "",
             "yellows_c": estado.yellow_cards_casa,
             "yellows_f": estado.yellow_cards_fora,
+            "resultado": "",
+            "lucro": "",
+            "resolvido_em": "",
         })
 
     for bm in odds_json.get("bookmakers", []):
@@ -351,14 +407,18 @@ def _imprimir_estado(estado, prev) -> None:
         f"[{estado.minuto}'] {estado.marcador_casa}-{estado.marcador_fora}"
         f"{xg_str}{sot}{tot}{corners_s}{cards_s}{reds}{arb}{arb_tag}"
     )
+    # Modelo mostra probabilidade de total final bater as linhas
+    # tipicas de mercado (nao "mais +N nos restantes", que ao min 3' seria
+    # sempre quase 100% e confunde). As linhas sao as mais liquidas no
+    # pre-match / early live.
     print(
         f"    → model: "
-        f"P(+1 gol)={prev.p_mais_1_golo*100:.1f}%  "
-        f"P(Over 2.5)={prev.p_over_total(2.5)*100:.1f}%  "
+        f"P(O2.5 gol)={prev.p_over_total(2.5)*100:.1f}%  "
         f"P(BTTS)={prev.p_btts_final*100:.1f}%  "
-        f"P(+2 cantos)={prev.p_mais_cantos(2)*100:.1f}%  "
-        f"P(+1 card)={prev.p_mais_cartoes_amarelos(1)*100:.1f}%  "
-        f"P(+3 shots)={prev.p_mais_remates(3)*100:.1f}%"
+        f"P(O9.5 cnt)={prev.p_over_cantos_total(9.5)*100:.1f}%  "
+        f"P(O4.5 crd)={prev.p_over_cartoes_total(4.5)*100:.1f}%  "
+        f"P(O24.5 rem)={prev.p_over_remates_total(24.5)*100:.1f}%  "
+        f"P(O8.5 SoT)={prev.p_over_remates_a_baliza_total(8.5)*100:.1f}%"
     )
 
 
@@ -398,6 +458,11 @@ def _correr_ciclo(args) -> None:
             return
         if estado is None:
             continue
+        # Grava snapshot do estado para historico/calibracao futura (Nivel 2)
+        try:
+            _gravar_snapshot(estado)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Falha gravar snapshot %s: %s", estado.event_id, exc)
         # Puxa odds da Odds API
         sport = _sport_da_liga(estado.liga)
         if sport is None:
