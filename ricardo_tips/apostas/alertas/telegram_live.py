@@ -97,6 +97,12 @@ def enviar_sugestao_live(s: dict) -> None:
         sot_c = s.get("shots_on_target_c", "")
         sot_f = s.get("shots_on_target_f", "")
         aposta_fmt = _formatar_aposta(mercado, lado, linha)
+        try:
+            estrelas = int(s.get("estrelas") or 3)
+        except (TypeError, ValueError):
+            estrelas = 3
+        estrelas = max(1, min(5, estrelas))
+        estrelas_str = "⭐" * estrelas
 
         if casa == "ANALISTA":
             # Sinal puro — mensagem narrativa com racional
@@ -107,7 +113,7 @@ def enviar_sugestao_live(s: dict) -> None:
             racional_str = s.get("racional_str", "")
             racional_section = f"\n{racional_str}\n" if racional_str else ""
             texto = (
-                f"{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
+                f"{estrelas_str}  {_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
@@ -126,7 +132,7 @@ def enviar_sugestao_live(s: dict) -> None:
             url = _URLS_CASAS.get(casa, "")
             link_line = f"[Abrir casa]({url})" if url else f"Casa: {casa}"
             texto = (
-                f"🎯 *EV +{ev*100:.1f}%* LIVE\n"
+                f"{estrelas_str}  🎯 *EV +{ev*100:.1f}%* LIVE\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"

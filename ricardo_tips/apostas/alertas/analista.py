@@ -271,10 +271,16 @@ class Sinal:
     racional: list[str] = field(default_factory=list)
     forca: str = "normal"
     titulo: str = ""  # headline que capture o insight principal
+    estrelas: int = 3  # 1-5, calculado via calcular_estrelas() em runtime
 
     @property
     def forca_num(self) -> int:
         return {"forte": 3, "normal": 2, "fraco": 1}.get(self.forca, 0)
+
+    @property
+    def estrelas_str(self) -> str:
+        """Representacao visual: ★★★★★."""
+        return "⭐" * max(1, min(5, self.estrelas))
 
 
 def _classifica_forca(prob: float) -> str:
@@ -290,6 +296,71 @@ def _classifica_forca(prob: float) -> str:
 def _odds_minimas(prob: float, ev_desejado: float = 0.05) -> tuple[float, float]:
     prob_c = min(max(prob, 0.01), 0.95)
     return round(1.0 / prob_c, 2), round((1.0 + ev_desejado) / prob_c, 2)
+
+
+def calcular_estrelas(mercado: str, liga: str, prob: float) -> int:
+    """Devolve 1-5 estrelas baseadas no ROI historico de mercado + liga.
+
+    Dados Ricardo (1680 sinais, 2026-10-12):
+      Mercados fortes (ROI >= +10%): remates, btts, remates_a_baliza
+      Ligas fortes (ROI >= +10%): MLS, Portugal 2, Serie A, Regionalliga
+      Mercados fracos (ROI <= -8%): golos
+      Ligas fracas (ROI <= -8%): Brasileirao, PL, Ligue 1, Portugal Betclic
+
+    Score composto:
+      +2 mercado com ROI >= 10% (n>=30)      -2 ROI <= -10%
+      +1 mercado com ROI >= 3%  (n>=30)      -1 ROI <= -3%
+      +2 liga com ROI >= 10%    (n>=30)      -2 ROI <= -10%
+      +1 liga com ROI >= 3%     (n>=30)      -1 ROI <= -3%
+      +1 prob >= 0.80
+      -1 prob < 0.60
+
+    Mapeamento:
+      score >= 4 → 5⭐    score >= 2 → 4⭐    score >= 0 → 3⭐
+      score >= -2 → 2⭐   senao → 1⭐
+    """
+    try:
+        from apostas.modelos.live_predictor import _carregar_calibracao
+        calib = _carregar_calibracao()
+    except Exception:  # noqa: BLE001
+        return 3
+
+    score = 0
+    # Mercado
+    stats_m = (calib.get("por_mercado") or {}).get(mercado) or {}
+    if stats_m.get("n", 0) >= 30:
+        roi_m = stats_m.get("roi", 0)
+        if roi_m >= 10: score += 2
+        elif roi_m >= 3: score += 1
+        elif roi_m <= -10: score -= 2
+        elif roi_m <= -3: score -= 1
+
+    # Liga (substring match, nomes Sofascore variam)
+    liga_low = (liga or "").lower()
+    por_liga = calib.get("por_liga") or {}
+    stats_l = {}
+    for k, v in por_liga.items():
+        kl = k.lower()
+        if kl in liga_low or liga_low in kl:
+            stats_l = v
+            break
+    if stats_l.get("n", 0) >= 30:
+        roi_l = stats_l.get("roi", 0)
+        if roi_l >= 10: score += 2
+        elif roi_l >= 3: score += 1
+        elif roi_l <= -10: score -= 2
+        elif roi_l <= -3: score -= 1
+
+    # Prob base
+    if prob >= 0.80: score += 1
+    elif prob < 0.60: score -= 1
+
+    # Mapear
+    if score >= 4: return 5
+    if score >= 2: return 4
+    if score >= 0: return 3
+    if score >= -2: return 2
+    return 1
 
 
 def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
@@ -317,10 +388,12 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
     odd_be, odd_val = _odds_minimas(prob)
     if odd_val < 1.15:
         return
+    liga = estado.liga if estado is not None else ""
+    estrelas = calcular_estrelas(mercado, liga, prob)
     out.append(Sinal(
         tipo=tipo, mercado=mercado, lado=lado, linha=linha,
         prob_modelo=prob, odd_minima=odd_be, odd_valor=odd_val,
-        racional=racional, forca=forca, titulo=titulo,
+        racional=racional, forca=forca, titulo=titulo, estrelas=estrelas,
     ))
 
 
@@ -959,10 +1032,11 @@ def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob, racional_fade=None) ->
         forca = ("forte" if prob >= 0.60
                  else "normal" if prob >= 0.45
                  else "fraco")
+        estrelas = calcular_estrelas("1x2", estado.liga, prob)
         out.append(Sinal(
             tipo="1x2_live", mercado="1x2", lado=lado, linha=None,
             prob_modelo=prob, odd_minima=odd_be, odd_valor=odd_val,
-            racional=racional, forca=forca, titulo=titulo,
+            racional=racional, forca=forca, titulo=titulo, estrelas=estrelas,
         ))
 
 

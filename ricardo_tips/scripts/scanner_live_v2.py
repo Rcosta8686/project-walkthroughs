@@ -93,7 +93,7 @@ IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasatt
 CSV_COLUNAS = [
     "ts_scan", "event_id", "liga", "home", "away", "minuto", "marcador",
     "mercado", "lado", "linha", "casa", "odd",
-    "prob_modelo", "ev", "xg_casa", "xg_fora",
+    "prob_modelo", "ev", "estrelas", "xg_casa", "xg_fora",
     "shots_on_target_c", "shots_on_target_f",
     "corners_c", "corners_f", "yellows_c", "yellows_f",
     # Preenchidos por resolver_sugestoes_live.py:
@@ -560,6 +560,7 @@ def _sinal_para_sugestao(estado, sinal) -> dict:
         "odd": sinal.odd_valor,
         "prob_modelo": round(sinal.prob_modelo, 4),
         "ev": "",
+        "estrelas": sinal.estrelas,
         "xg_casa": estado.xg_casa or "",
         "xg_fora": estado.xg_fora or "",
         "shots_on_target_c": estado.shots_on_target_casa or "",

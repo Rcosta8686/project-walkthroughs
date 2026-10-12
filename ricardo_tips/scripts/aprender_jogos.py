@@ -195,6 +195,7 @@ def main() -> None:
         "n_amostras": len(rows),
         "por_mercado": {m: _hit_stats(lista) for m, lista in por_mercado.items()},
         "por_prob_bucket": {b: _hit_stats(lista) for b, lista in por_prob.items()},
+        "por_liga": {liga: _hit_stats(lista) for liga, lista in por_liga.items()},
         "roi_global": global_s["roi"],
     }
     CALIBRACAO_PATH.parent.mkdir(parents=True, exist_ok=True)
