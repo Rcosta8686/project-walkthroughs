@@ -162,6 +162,12 @@ class EstadoLive:
     #   None = sem dados suficientes
     narrativa_intencao: str | None = None
 
+    # ─── Contexto pre-jogo (H2H, forma, AI insights) — cache 24h ─────
+    h2h: dict = field(default_factory=dict)          # over_2_5_rate, btts_rate, media_golos_total
+    forma_casa: dict = field(default_factory=dict)   # wdl, pts, golos_marcados_media, sem_sofrer
+    forma_fora: dict = field(default_factory=dict)
+    ai_insights: list[str] = field(default_factory=list)  # textos Sofascore
+
     # ─── Formacao + ratings dos jogadores (de /lineups) ───────────────
     formacao_casa: str | None = None            # ex "4-3-3"
     formacao_fora: str | None = None
@@ -330,7 +336,44 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     if comments_json:
         _preencher_narrativa(estado, comments_json)
 
+    # Contexto pre-jogo (H2H, forma, AI insights) — cache 24h, so UMA chamada
+    # por jogo porque nao muda durante os 90min.
+    _preencher_contexto_pre(estado)
+
     return estado
+
+
+def _preencher_contexto_pre(estado: EstadoLive) -> None:
+    """Puxa H2H, forma recente, AI insights (cache 24h em disco)."""
+    try:
+        from apostas.ingestao import sofascore_contexto
+    except Exception:  # noqa: BLE001
+        return
+
+    # H2H + AI insights sao por event_id
+    try:
+        estado.h2h = sofascore_contexto.obter_h2h(estado.event_id) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("H2H falhou para %s: %s", estado.event_id, exc)
+    try:
+        estado.ai_insights = sofascore_contexto.obter_ai_insights(estado.event_id) or []
+    except Exception as exc:  # noqa: BLE001
+        log.debug("AI Insights falhou para %s: %s", estado.event_id, exc)
+
+    # Forma recente precisa de team_id. Obtemos do _raw_event ja gravado.
+    ev = estado._raw_event or {}
+    home_id = (ev.get("homeTeam") or {}).get("id")
+    away_id = (ev.get("awayTeam") or {}).get("id")
+    if home_id:
+        try:
+            estado.forma_casa = sofascore_contexto.obter_forma_recente(home_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Forma casa %s falhou: %s", home_id, exc)
+    if away_id:
+        try:
+            estado.forma_fora = sofascore_contexto.obter_forma_recente(away_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Forma fora %s falhou: %s", away_id, exc)
 
 
 # ───────────────────────── Helpers de parsing ─────────────────────────

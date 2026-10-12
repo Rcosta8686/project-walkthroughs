@@ -544,7 +544,9 @@ def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
                     "unlucky", "regressao", "processo (xg)",
                     "title race", "6-pointer", "permanencia", "sem stakes",
                     "luta por europa",
-                    "narrativa:", "a cercar", "jogo aberto", "controlado")
+                    "narrativa:", "a cercar", "jogo aberto", "controlado",
+                    "h2h:", "ma forma", "nao marca", "nao sofre",
+                    "em grande forma", "fortaleza")
     tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
     if not tem_tom:
         return False
@@ -761,6 +763,57 @@ def _construir_contexto(estado, prev) -> dict:
         ctx["narrativa"] = "Narrativa: jogo aberto, ocasioes dos dois lados"
     elif nar == "controlado":
         ctx["narrativa"] = "Narrativa: jogo controlado, pouco perigo"
+
+    # H2H: tendencia dos ultimos jogos entre estas 2 equipas
+    h2h = getattr(estado, "h2h", None) or {}
+    if h2h.get("n_jogos", 0) >= 4:
+        n = h2h["n_jogos"]
+        if h2h.get("over_2_5_rate", 0) >= 0.75:
+            ctx["h2h_overs"] = f"H2H: {int(h2h['over_2_5_rate']*n)}/{n} com over 2.5 ({h2h.get('media_golos_total', 0):.1f} golos/jogo)"
+        elif h2h.get("over_2_5_rate", 1) <= 0.25:
+            ctx["h2h_unders"] = f"H2H: so {int(h2h['over_2_5_rate']*n)}/{n} com over 2.5 — jogos fechados"
+        if h2h.get("btts_rate", 0) >= 0.75:
+            ctx["h2h_btts"] = f"H2H: BTTS em {int(h2h['btts_rate']*n)}/{n} jogos"
+
+    # Forma recente (ultimos 5)
+    fc = getattr(estado, "forma_casa", None) or {}
+    ff = getattr(estado, "forma_fora", None) or {}
+    if fc.get("n_jogos", 0) >= 3:
+        wdl = fc.get("wdl", "")
+        if wdl.count("W") >= 4:
+            ctx["forma_casa_quente"] = f"{estado.home} em grande forma ({wdl})"
+        elif wdl.count("L") >= 3:
+            ctx["forma_casa_fria"] = f"{estado.home} em ma forma ({wdl})"
+        if fc.get("sem_marcar", 0) >= 2:
+            ctx["casa_seca"] = f"{estado.home} nao marca ha {fc['sem_marcar']} jogo(s)"
+        if fc.get("sem_sofrer", 0) >= 3:
+            ctx["casa_fortaleza"] = f"{estado.home} nao sofre ha {fc['sem_sofrer']} jogos"
+    if ff.get("n_jogos", 0) >= 3:
+        wdl = ff.get("wdl", "")
+        if wdl.count("W") >= 4:
+            ctx["forma_fora_quente"] = f"{estado.away} em grande forma ({wdl})"
+        elif wdl.count("L") >= 3:
+            ctx["forma_fora_fria"] = f"{estado.away} em ma forma ({wdl})"
+        if ff.get("sem_marcar", 0) >= 2:
+            ctx["fora_seca"] = f"{estado.away} nao marca ha {ff['sem_marcar']} jogo(s)"
+        if ff.get("sem_sofrer", 0) >= 3:
+            ctx["fora_fortaleza"] = f"{estado.away} nao sofre ha {ff['sem_sofrer']} jogos"
+
+    # AI Insights: pegar os 2-3 mais relevantes (filtrar lixo generico)
+    ai = getattr(estado, "ai_insights", None) or []
+    insights_relevantes = []
+    palavras_chave = ("scored in", "conceded", "won", "lost", "clean sheet",
+                      "both teams", "over 2", "under 2", "home matches",
+                      "away matches", "last 5", "last 10", "red card",
+                      "yellow card", "corner")
+    for s in ai[:10]:
+        sl = s.lower()
+        if any(k in sl for k in palavras_chave) and len(s) < 150:
+            insights_relevantes.append(s)
+        if len(insights_relevantes) >= 2:
+            break
+    if insights_relevantes:
+        ctx["ai_insights"] = " | ".join(insights_relevantes)
 
     return ctx
 
