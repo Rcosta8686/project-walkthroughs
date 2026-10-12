@@ -302,7 +302,9 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
         prob = calibrar_prob(prob, mercado)
     except Exception:  # noqa: BLE001
         pass
-    # Filtro contextual late game: estado real do jogo em vez de relogio
+    # Filtro contextual late game: estado real do jogo em vez de relogio.
+    # Jogo sem stakes relaxa o filtro para under/BTTS NAO (ambos aceitam
+    # ponto) e aperta para overs. Jogo importante faz o oposto.
     if estado is not None and prev is not None:
         valido, razao = _contexto_late_valido(estado, prev, mercado, lado)
         if not valido:
@@ -371,6 +373,35 @@ def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive", mercado: str = "golo
     return minuto < min_min or minuto > min_max
 
 
+def _liga_id_para_classif(liga: str) -> int | None:
+    """Procura o tournament_id Sofascore a partir do nome da liga."""
+    try:
+        from apostas.ingestao.sofascore_live import LIGAS_SOFASCORE_IDS
+    except Exception:  # noqa: BLE001
+        return None
+    n = (liga or "").lower()
+    for name, id_ in LIGAS_SOFASCORE_IDS.items():
+        if name.lower() in n or n in name.lower():
+            return id_
+    return None
+
+
+def importancia_do_jogo(estado) -> tuple[float, str | None]:
+    """Factor 0.7-1.3 + descricao, baseado na classificacao da liga.
+
+    Usa cache de 12h em disco (sofascore_classificacao). Falha silenciosa:
+    devolve (1.0, None) se nao conseguir obter a tabela.
+    """
+    liga_id = _liga_id_para_classif(estado.liga)
+    if not liga_id:
+        return 1.0, None
+    try:
+        from apostas.ingestao.sofascore_classificacao import importancia_jogo
+        return importancia_jogo(liga_id, estado.home, estado.away)
+    except Exception:  # noqa: BLE001
+        return 1.0, None
+
+
 def _contexto_late_valido(estado: "EstadoLive", prev: "PrevisaoLive",
                            mercado: str, lado: str) -> tuple[bool, str | None]:
     """Analise contextual de 2a parte final (min 70+).
@@ -382,12 +413,19 @@ def _contexto_late_valido(estado: "EstadoLive", prev: "PrevisaoLive",
       - Jogo apertado com chasing REAL (momentum do perdedor, big chances
         pendentes, xG recent alto): OPORTUNIDADE, mantem sinal
       - 1X2 com underdog a aguentar vantagem no fim: ok se nao for lixo
+      - IMPORTANCIA DO JOGO (classificacao): title race/descida relaxa
+        filtros (jogo importa, equipas vao arriscar), sem stakes aperta.
 
     Devolve (valido, razao_rejeicao). razao=None quando valido.
     Antes do minuto 70 passa sempre (ja filtrado por _estado_demasiado_cedo).
     """
     if estado.minuto < 70:
         return True, None
+
+    # Importancia do jogo altera os cortes:
+    #  - importancia >= 1.2 → jogo-chave, equipas vao arriscar → RELAXA
+    #  - importancia <= 0.8 → sem stakes, aceita o ponto → APERTA
+    importancia, _ = importancia_do_jogo(estado)
 
     diff = abs(estado.marcador_casa - estado.marcador_fora)
     xg_rec_c = estado.xg_recent_casa or 0
@@ -405,28 +443,32 @@ def _contexto_late_valido(estado: "EstadoLive", prev: "PrevisaoLive",
         # Unders e 1X2 do lider ok
 
     # 2. Empate late (min 75+) com xG recente colapsado → ambos aceitam ponto
-    #    xG_recent < 0.15 em 15min = jogo tranca, nao vai haver mais nada
+    #    Jogo importante (title race / descida): equipas vao arriscar mesmo
+    #    com xG baixo → NAO corta. Jogo sem stakes: xG baixo e definitivo.
     if (estado.minuto >= 75 and diff == 0 and xg_rec_tot < 0.15
-            and bc_pendentes == 0):
+            and bc_pendentes == 0 and importancia < 1.2):
         if lado in ("over", "sim"):
+            if importancia <= 0.8:
+                return False, f"Empate ao {estado.minuto}' sem stakes — ambos aceitam ponto"
             return False, f"Empate ao {estado.minuto}' com xG ultimos 15min {xg_rec_tot:.2f} — jogo tranca"
 
-    # 3. 1-golo late (min 80+) sem chasing real → favorito gere o tempo
-    #    Chasing real = losing team tem momentum OU big chances pendentes
-    #    OU xG recente dela > 0.3 nos ultimos 15 min
-    if estado.minuto >= 80 and diff == 1:
+    # 3. 1-golo late (min 80+) sem chasing real → favorito gere o tempo.
+    #    Jogo importante: perdedor ARRISCA tudo, mesmo sem metricas de
+    #    chasing acumuladas → relaxa. Sem stakes: perdedor desiste.
+    if estado.minuto >= 80 and diff == 1 and importancia < 1.2:
         casa_perde = estado.marcador_casa < estado.marcador_fora
         xg_rec_perdedor = xg_rec_c if casa_perde else xg_rec_f
         mom_perdedor = (estado.momentum_actual == "casa" and casa_perde) \
                        or (estado.momentum_actual == "fora" and not casa_perde)
         bc_perdedor = bc_c if casa_perde else bc_f
-        chasing_real = mom_perdedor or bc_perdedor >= 2 or xg_rec_perdedor >= 0.3
+        # Em jogo sem stakes, exige MAIS evidencia de chasing (threshold maior)
+        xg_min_chasing = 0.4 if importancia <= 0.8 else 0.3
+        chasing_real = mom_perdedor or bc_perdedor >= 2 or xg_rec_perdedor >= xg_min_chasing
 
         if not chasing_real:
-            # Jogo controlado pelo lider → nao emite overs, nao emite 1X2 do
-            # perdedor
             if lado in ("over", "sim", "marca_casa", "marca_fora"):
-                return False, f"Lider gere {estado.minuto}+ sem chasing real (sem momentum/big chances/xG) — jogo controlado"
+                suffix = " (jogo sem stakes)" if importancia <= 0.8 else ""
+                return False, f"Lider gere {estado.minuto}+ sem chasing real{suffix} — jogo controlado"
             if mercado == "1x2":
                 perdedor_lado = "casa" if casa_perde else "fora"
                 if lado == perdedor_lado:
@@ -491,7 +533,9 @@ def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
                     "pressiona", "derby", "severo", "vermelho", "a atacar",
                     "jogo decidido", "equipas equilibradas", "jogo tranca",
                     "em grande (", "gr ", "fecha", "arbitro",
-                    "unlucky", "regressao", "processo (xg)")
+                    "unlucky", "regressao", "processo (xg)",
+                    "title race", "6-pointer", "permanencia", "sem stakes",
+                    "luta por europa")
     tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
     if not tem_tom:
         return False
@@ -689,6 +733,14 @@ def _construir_contexto(estado, prev) -> dict:
     tipo_f = _tipo_formacao(estado.formacao_fora)
     if tipo_c and tipo_f and tipo_c != tipo_f:
         ctx["formacoes"] = f"{estado.home} {estado.formacao_casa} ({tipo_c}) vs {estado.away} {estado.formacao_fora} ({tipo_f})"
+
+    # Importancia do jogo (classificacao da liga, cache 12h)
+    try:
+        imp, imp_desc = importancia_do_jogo(estado)
+        if imp_desc:
+            ctx["importancia_jogo"] = imp_desc
+    except Exception:  # noqa: BLE001
+        pass
 
     return ctx
 
