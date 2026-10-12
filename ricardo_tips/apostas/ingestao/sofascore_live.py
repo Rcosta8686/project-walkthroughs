@@ -150,6 +150,18 @@ class EstadoLive:
     # ─── Momentum derivado do graph ─────────────────────────────────
     momentum_actual: str | None = None
 
+    # ─── Commentary (narrativa Sofascore) ────────────────────────────
+    # Ultimas N "jogadas" descritas pela Sofascore (0 = mais recente).
+    # Lemos o endpoint /event/{id}/comments e extraimos padroes de
+    # intencao: ataque, defesa, perigo, controle.
+    narrativa_ultimos_min: list[str] = field(default_factory=list)
+    # Agregado derivado da narrativa dos ultimos ~15 min:
+    #   "pressao_casa" / "pressao_fora": uma equipa claramente a cercar
+    #   "aberto": golos nos dois lados possiveis
+    #   "controlado": jogo parado, pouco perigo
+    #   None = sem dados suficientes
+    narrativa_intencao: str | None = None
+
     # ─── Formacao + ratings dos jogadores (de /lineups) ───────────────
     formacao_casa: str | None = None            # ex "4-3-3"
     formacao_fora: str | None = None
@@ -312,6 +324,11 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     # Substituicoes dos incidents
     if incidents_json:
         _preencher_substituicoes(estado, incidents_json)
+
+    # Commentary: narrativa do jogo (o que esta a acontecer no campo)
+    comments_json = _get_json(f"/event/{event_id}/comments")
+    if comments_json:
+        _preencher_narrativa(estado, comments_json)
 
     return estado
 
@@ -571,6 +588,110 @@ def _preencher_substituicoes(estado: EstadoLive, incidents_payload: dict) -> Non
             estado.substituicoes_casa += 1
         else:
             estado.substituicoes_fora += 1
+
+
+# Palavras-chave que identificam intencao narrativa (lowercase).
+# Sofascore commentary vem em ingles e e geralmente curto/factual.
+_KEYWORDS_PERIGO = (
+    "big chance", "clear chance", "golden opportunity",
+    "goal-bound", "goalbound", "fingertip save", "point-blank",
+    "almost scored", "superb save", "crucial save",
+)
+_KEYWORDS_ATAQUE = (
+    "attack", "attacking", "pressing", "pressure", "offensive",
+    "assault", "driving forward", "pushes forward", "pushing forward",
+    "builds up", "building up", "surges forward", "finds space",
+)
+_KEYWORDS_DEFESA = (
+    "defend", "defensive", "clear", "cleared", "clearance",
+    "block", "blocked", "intercept", "interception",
+    "sits back", "sitting back", "camped",
+)
+_KEYWORDS_CONTROLO = (
+    "possession", "patient", "controlling", "controls",
+    "triangle", "ball retention", "comfortable", "composed",
+)
+
+
+def _preencher_narrativa(estado: EstadoLive, comments_payload: dict) -> None:
+    """Extrai narrativa dos comentarios Sofascore e deriva intencao.
+
+    Analisa os ultimos ~15 min de comentarios para detectar:
+      - 'pressao_casa' / 'pressao_fora': uma equipa claramente a cercar
+      - 'aberto': ambos criam ocasioes
+      - 'controlado': jogo parado, pouco perigo
+    """
+    comments = comments_payload.get("comments") or []
+    if not comments:
+        return
+
+    corte_min = max(0, estado.minuto - 15)
+    recentes = []
+    perigo_c = ataque_c = defesa_c = controlo_c = 0
+    perigo_f = ataque_f = defesa_f = controlo_f = 0
+
+    for c in comments:
+        time = c.get("time")
+        if time is None:
+            continue
+        try:
+            t = int(time)
+        except (TypeError, ValueError):
+            continue
+        if t < corte_min:
+            continue
+        text = (c.get("text") or "").strip()
+        if not text:
+            continue
+        texto_low = text.lower()
+        is_home = c.get("isHome")
+        # Guardar amostra para debug/narrativa
+        if len(recentes) < 8:
+            recentes.append(f"{t}' {text[:120]}")
+
+        def _count(keywords, texto):
+            return sum(1 for k in keywords if k in texto)
+
+        n_perigo = _count(_KEYWORDS_PERIGO, texto_low)
+        n_ataque = _count(_KEYWORDS_ATAQUE, texto_low)
+        n_defesa = _count(_KEYWORDS_DEFESA, texto_low)
+        n_controlo = _count(_KEYWORDS_CONTROLO, texto_low)
+
+        if is_home is True:
+            perigo_c += n_perigo; ataque_c += n_ataque
+            defesa_c += n_defesa; controlo_c += n_controlo
+        elif is_home is False:
+            perigo_f += n_perigo; ataque_f += n_ataque
+            defesa_f += n_defesa; controlo_f += n_controlo
+        else:
+            # Sem lado atribuido: comenta jogo em geral; distribui metade
+            # mas conta so se e sinal forte (perigo)
+            perigo_c += n_perigo * 0.5
+            perigo_f += n_perigo * 0.5
+
+    estado.narrativa_ultimos_min = recentes
+
+    # Classificar intencao
+    score_c = perigo_c * 3 + ataque_c
+    score_f = perigo_f * 3 + ataque_f
+    total_eventos = (perigo_c + perigo_f + ataque_c + ataque_f
+                     + defesa_c + defesa_f + controlo_c + controlo_f)
+
+    if total_eventos < 2:
+        estado.narrativa_intencao = None
+        return
+
+    # Pressao clara de uma equipa (muito mais acoes de ataque/perigo)
+    if score_c > 0 and score_c >= 2 * max(score_f, 1):
+        estado.narrativa_intencao = "pressao_casa"
+    elif score_f > 0 and score_f >= 2 * max(score_c, 1):
+        estado.narrativa_intencao = "pressao_fora"
+    elif perigo_c >= 1 and perigo_f >= 1:
+        estado.narrativa_intencao = "aberto"
+    elif (defesa_c + defesa_f + controlo_c + controlo_f) >= 2 * (ataque_c + ataque_f + 1):
+        estado.narrativa_intencao = "controlado"
+    else:
+        estado.narrativa_intencao = None
 
 
 def _preencher_xg_recent(estado: EstadoLive, graph_payload: dict) -> None:

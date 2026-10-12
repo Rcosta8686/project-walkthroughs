@@ -480,6 +480,14 @@ def _contexto_late_valido(estado: "EstadoLive", prev: "PrevisaoLive",
         if xg_rec_tot < 0.2 and bc_pendentes == 0:
             return False, f"Pressao baixa ao {estado.minuto}' (xG recent {xg_rec_tot:.2f}) — SoT nao vem"
 
+    # 5. Narrativa Sofascore corrobora. Se os comentarios dizem "controlado"
+    #    (jogo parado, pouco perigo), nao emite over mesmo que outras
+    #    metricas pareçam sugerir. E se dizem "aberto" ou "a cercar",
+    #    ABRE excepcao em casos limite (xG recent baixo mas narrativa quente).
+    narrativa = getattr(estado, "narrativa_intencao", None)
+    if narrativa == "controlado" and lado in ("over", "sim"):
+        return False, f"Narrativa Sofascore: jogo controlado ao {estado.minuto}'"
+
     return True, None
 
 
@@ -535,7 +543,8 @@ def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
                     "em grande (", "gr ", "fecha", "arbitro",
                     "unlucky", "regressao", "processo (xg)",
                     "title race", "6-pointer", "permanencia", "sem stakes",
-                    "luta por europa")
+                    "luta por europa",
+                    "narrativa:", "a cercar", "jogo aberto", "controlado")
     tem_tom = any(any(p in r.lower() for p in palavras_tom) for r in sinal.racional)
     if not tem_tom:
         return False
@@ -741,6 +750,17 @@ def _construir_contexto(estado, prev) -> dict:
             ctx["importancia_jogo"] = imp_desc
     except Exception:  # noqa: BLE001
         pass
+
+    # Narrativa Sofascore (comentarios dos ultimos 15 min)
+    nar = getattr(estado, "narrativa_intencao", None)
+    if nar == "pressao_casa":
+        ctx["narrativa"] = f"Narrativa: {estado.home} a cercar (ultimos 15min)"
+    elif nar == "pressao_fora":
+        ctx["narrativa"] = f"Narrativa: {estado.away} a cercar (ultimos 15min)"
+    elif nar == "aberto":
+        ctx["narrativa"] = "Narrativa: jogo aberto, ocasioes dos dois lados"
+    elif nar == "controlado":
+        ctx["narrativa"] = "Narrativa: jogo controlado, pouco perigo"
 
     return ctx
 
