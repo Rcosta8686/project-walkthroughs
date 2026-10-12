@@ -205,37 +205,121 @@ def main() -> None:
     print(f"  Modelo lera deste ficheiro para afinar previsoes.")
     print("─" * 90)
 
-    # Learnings textuais
-    print(f"\n{'=' * 90}")
-    print("  LEARNINGS")
-    print("=" * 90)
-    melhores_mercados = sorted(
-        por_mercado.items(),
-        key=lambda x: -_hit_stats(x[1])["roi"]
-    )
-    piores_mercados = sorted(
-        por_mercado.items(),
-        key=lambda x: _hit_stats(x[1])["roi"]
-    )
-    if melhores_mercados:
-        m, lista = melhores_mercados[0]
-        s = _hit_stats(lista)
-        if s["n"] >= 5:
-            print(f"  ✓ MELHOR mercado: {m}  (ROI {s['roi']:+.1f}%, hit {s['hit_rate']:.1f}%)")
-    if piores_mercados and piores_mercados[0][0] != (melhores_mercados[0][0] if melhores_mercados else None):
-        m, lista = piores_mercados[0]
-        s = _hit_stats(lista)
-        if s["n"] >= 5 and s["roi"] < -5:
-            print(f"  ✗ PIOR mercado: {m}  (ROI {s['roi']:+.1f}%, hit {s['hit_rate']:.1f}%)")
+    # ─────────────── RESUMO DIARIO: forcas, fraquezas, trajectoria ──────────
+    _resumo_diario(rows, por_mercado, por_liga, por_prob)
 
-    # Calibracao: identifica buckets sobre-confiantes
+
+def _resumo_diario(rows, por_mercado, por_liga, por_prob) -> None:
+    """Resumo humano: forcas, fraquezas, em observacao, trajectoria.
+
+    Nao substitui a calibracao (que ja corre em paralelo). Da uma leitura
+    pratica: onde apostar com confianca, onde desconfiar, o que esta
+    verde demais para julgar.
+    """
+    N_MIN_FORTE = 15   # amostra minima para dar como "forte"
+    N_MIN_FRACO = 10   # amostra minima para dar como "fraco"
+    ROI_FORTE   = 3    # ROI >= +3% com n>=15 = ponto forte
+    ROI_FRACO   = -5   # ROI <= -5% com n>=10 = ponto fraco
+
+    def _categorize(items):
+        """Classifica categorias em (fortes, fracas, observacao)."""
+        fortes, fracas, obs = [], [], []
+        for nome, lista in items:
+            s = _hit_stats(lista)
+            if s["n"] < 5:
+                continue
+            if s["n"] >= N_MIN_FORTE and s["roi"] >= ROI_FORTE:
+                fortes.append((nome, s))
+            elif s["n"] >= N_MIN_FRACO and s["roi"] <= ROI_FRACO:
+                fracas.append((nome, s))
+            else:
+                obs.append((nome, s))
+        fortes.sort(key=lambda x: -x[1]["roi"])
+        fracas.sort(key=lambda x: x[1]["roi"])
+        return fortes, fracas, obs
+
+    print(f"\n{'=' * 90}")
+    print("  RESUMO DIARIO  — onde estas forte, onde precisas melhorar")
+    print("=" * 90)
+
+    # Trajectoria ultimos 7 dias (se ts_scan existe)
+    from datetime import datetime, timedelta
+    def _data_do_row(r):
+        ts = (r.get("ts_scan") or "")[:10]
+        try:
+            return datetime.strptime(ts, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    datas = [d for d in (_data_do_row(r) for r in rows) if d is not None]
+    if datas:
+        hoje = max(datas)
+        corte_7d = hoje - timedelta(days=7)
+        rows_7d = [r for r in rows if (_data_do_row(r) or hoje) >= corte_7d]
+        if len(rows_7d) >= 10:
+            s7 = _hit_stats(rows_7d)
+            s_total = _hit_stats(rows)
+            delta_roi = s7["roi"] - s_total["roi"]
+            tag = ("↑ a melhorar" if delta_roi > 3
+                   else "↓ a piorar" if delta_roi < -3
+                   else "→ estavel")
+            print(f"\n  TRAJECTORIA (ultimos 7 dias vs total):  {tag}")
+            print(f"    7d:    n={s7['n']:>3}  hit={s7['hit_rate']:>5.1f}%  ROI={s7['roi']:>+6.1f}%")
+            print(f"    total: n={s_total['n']:>3}  hit={s_total['hit_rate']:>5.1f}%  ROI={s_total['roi']:>+6.1f}%")
+
+    # ONDE ESTAS FORTE
+    print(f"\n  ✓ PONTOS FORTES (n>={N_MIN_FORTE}, ROI>=+{ROI_FORTE}%)")
+    print("  " + "─" * 86)
+    fortes_m, _, _ = _categorize(por_mercado.items())
+    fortes_l, _, _ = _categorize(por_liga.items())
+    tudo_forte = ([("mercado", n, s) for n, s in fortes_m[:3]]
+                  + [("liga", n, s) for n, s in fortes_l[:3]])
+    if not tudo_forte:
+        print(f"    (ainda nenhuma categoria com amostra suficiente E ROI positivo)")
+    for cat, n, s in tudo_forte:
+        print(f"    {cat:7s} {n:<30s}  n={s['n']:>3}  hit={s['hit_rate']:>5.1f}%  ROI={s['roi']:>+6.1f}%")
+
+    # ONDE ESTAS FRACO
+    print(f"\n  ✗ PRECISAS DOMINAR (n>={N_MIN_FRACO}, ROI<={ROI_FRACO}%)")
+    print("  " + "─" * 86)
+    _, fracas_m, _ = _categorize(por_mercado.items())
+    _, fracas_l, _ = _categorize(por_liga.items())
+    tudo_fraco = ([("mercado", n, s) for n, s in fracas_m[:3]]
+                  + [("liga", n, s) for n, s in fracas_l[:3]])
+    if not tudo_fraco:
+        print(f"    (ainda nenhuma categoria sistematicamente deficitaria)")
+    for cat, n, s in tudo_fraco:
+        print(f"    {cat:7s} {n:<30s}  n={s['n']:>3}  hit={s['hit_rate']:>5.1f}%  ROI={s['roi']:>+6.1f}%")
+
+    # EM OBSERVACAO (poucos dados ainda — nao julgar)
+    print(f"\n  ⋯ EM OBSERVACAO (sem amostra suficiente para julgar)")
+    print("  " + "─" * 86)
+    _, _, obs_m = _categorize(por_mercado.items())
+    _, _, obs_l = _categorize(por_liga.items())
+    obs_pequenos = [(c, n, s) for c, lst in (("mercado", obs_m), ("liga", obs_l))
+                    for n, s in lst if s["n"] < N_MIN_FRACO]
+    if obs_pequenos:
+        for cat, n, s in obs_pequenos[:5]:
+            print(f"    {cat:7s} {n:<30s}  n={s['n']:>3}  (precisa mais {max(0, N_MIN_FRACO - s['n'])} sinais)")
+    else:
+        print(f"    (tudo com amostra >= {N_MIN_FRACO})")
+
+    # Calibracao (persiste)
+    print(f"\n  ⚙ CALIBRACAO POR BUCKET (modelo esta a dizer a verdade?)")
+    print("  " + "─" * 86)
     for b in ("55-65%", "65-75%", "75-85%", "85%+"):
         if b in por_prob:
             s = _hit_stats(por_prob[b])
             exp = {"55-65%": 60, "65-75%": 70, "75-85%": 80, "85%+": 90}[b]
-            if s["n"] >= 10 and s["hit_rate"] < exp - 8:
-                print(f"  ⚠ Bucket {b}: modelo CONFIANTE DEMAIS "
-                      f"(previa ~{exp}% mas acerta {s['hit_rate']:.0f}%)")
+            gap = s["hit_rate"] - exp
+            if s["n"] < 10:
+                tag = "⋯ poucos dados"
+            elif abs(gap) < 7:
+                tag = "✓ calibrado"
+            elif gap < 0:
+                tag = f"↑ confiante demais ({gap:+.0f}pp)"
+            else:
+                tag = f"↓ conservador ({gap:+.0f}pp)"
+            print(f"    bucket {b:<7s}  n={s['n']:>3}  previsto~{exp}%  real={s['hit_rate']:>5.1f}%  {tag}")
 
     print("")
 
