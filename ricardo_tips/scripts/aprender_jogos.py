@@ -40,13 +40,20 @@ CSV_PATH = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
 CALIBRACAO_PATH = project_root() / "dados" / "calibracao_live.json"
 
 
-def _carregar_resolvidos() -> list[dict]:
-    """So entradas com resultado W/L/push gravado."""
+def _carregar_resolvidos(desde: str | None = None) -> list[dict]:
+    """So entradas com resultado W/L/push gravado.
+
+    Se ``desde`` passado (YYYY-MM-DD), filtra pelo ts_scan >= esse dia.
+    Util para comparar antes/depois de ajustes ao modelo.
+    """
     if not CSV_PATH.exists():
         return []
     with CSV_PATH.open(encoding="utf-8") as fp:
-        return [r for r in csv.DictReader(fp)
+        rows = [r for r in csv.DictReader(fp)
                 if (r.get("resultado") or "").strip() in ("W", "L", "push")]
+    if desde:
+        rows = [r for r in rows if (r.get("ts_scan") or "")[:10] >= desde]
+    return rows
 
 
 def _hit_stats(rows: list[dict]) -> dict:
@@ -108,9 +115,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mercado", default=None,
                         help="Filtrar por mercado (golos, cantos, 1x2, etc)")
+    parser.add_argument("--desde", default=None,
+                        help="So sinais a partir desta data (YYYY-MM-DD). "
+                             "Util para avaliar o modelo apos um ajuste: "
+                             "ex. --desde 2026-10-12 para ver so sinais "
+                             "pos-calibracao.")
     args = parser.parse_args()
 
-    rows = _carregar_resolvidos()
+    rows = _carregar_resolvidos(desde=args.desde)
     if args.mercado:
         rows = [r for r in rows if r["mercado"] == args.mercado]
 
@@ -119,8 +131,13 @@ def main() -> None:
         print("Primeiro corre: python scripts/resolver_sugestoes_live.py")
         return
 
+    filtro = ""
+    if args.desde:
+        filtro += f"  desde {args.desde}"
+    if args.mercado:
+        filtro += f"  mercado={args.mercado}"
     print(f"\n{'=' * 90}")
-    print(f"  APRENDER DOS JOGOS  —  {len(rows)} sinais resolvidos")
+    print(f"  APRENDER DOS JOGOS  —  {len(rows)} sinais resolvidos{filtro}")
     print("=" * 90)
 
     global_s = _hit_stats(rows)
