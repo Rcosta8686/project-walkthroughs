@@ -82,14 +82,14 @@ EFICIENCIA_LIGA = [
     ("campeonato brasileiro",0.60),
 ]
 
-# Ligas onde o modelo esta DEMONSTRAVELMENTE a perder dinheiro (dados Ricardo).
+# Ligas onde o modelo esta DEMONSTRAVELMENTE a perder dinheiro.
 # Sinais destas ligas sao ainda emitidos para terminal, mas NAO para Telegram.
-# Reavaliar quando acumulares 100+ sinais com modelo pos-fix-SoT.
+# Revisto 2026-10-12 com 1680 sinais: LaLiga 2 saiu (n=379, +6.8% ROI,
+# a amostra inicial de 54 sinais era enganadora). Brasileirao continua
+# com n=447 e ROI -14% — mantido.
 LIGAS_BLACKLIST_TELEGRAM = frozenset({
-    "brasileir",              # -42% ROI, 190 sinais
+    "brasileir",              # n=447, ROI -14%, perda -62u (ainda o pior)
     "campeonato brasileiro",
-    "laliga 2",               # -35% ROI, 54 sinais
-    "hypermotion",
 })
 
 
@@ -293,7 +293,8 @@ def _odds_minimas(prob: float, ev_desejado: float = 0.05) -> tuple[float, float]
 
 
 def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
-         prob: float, racional: list[str], titulo: str = "") -> None:
+         prob: float, racional: list[str], titulo: str = "",
+         estado=None, prev=None) -> None:
     # Calibracao: aplica blend 40/60 com hit rate historico do bucket.
     # Dados Ricardo mostraram shift -15pp sistematico em todos os buckets.
     try:
@@ -301,6 +302,11 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
         prob = calibrar_prob(prob, mercado)
     except Exception:  # noqa: BLE001
         pass
+    # Filtro contextual late game: estado real do jogo em vez de relogio
+    if estado is not None and prev is not None:
+        valido, razao = _contexto_late_valido(estado, prev, mercado, lado)
+        if not valido:
+            return
     if prob > 0.92:
         return
     forca = _classifica_forca(prob)
@@ -316,21 +322,34 @@ def _add(out: list, tipo: str, mercado: str, lado: str, linha: float | None,
     ))
 
 
-# Minutos minimos por mercado. Dados Ricardo (653 sinais) mostraram:
+# Minutos minimos por mercado. Dados Ricardo (1680 sinais) mostraram:
 #   0-30'  hit 49.5%  ROI -27.8%
-#   30-45' hit 49.2%  ROI -28.9%
-#   45-60' hit 60.6%  ROI -12.3%
-#   60-75' hit 64.2%  ROI  -8.5%   ← sweet spot
-# → Antes do intervalo o modelo e random (<=50%). Thresholds puxados
-# para o segundo tempo onde o padrao realmente consolida.
+#   30-45' hit 63.2%  ROI  -6.5%
+#   45-60' hit 75.0%  ROI +10.6%  ← sweet spot
+#   60-75' hit 76.0%  ROI  +9.6%  ← sweet spot
+#   75+'   hit 66.5%  ROI -11.3%  ← zona de erro (intensidade satura)
 MINUTO_MIN_POR_MERCADO = {
     "1x2":              50,  # resultado final — favorito so emerge no 2o tempo
     "golos":            45,  # score shape consolida apos intervalo
     "btts":             45,
-    "cantos":           40,  # padrao de pressao fiavel na 1a metade do 2o tempo
+    "cantos":           40,
     "cartoes":          40,
     "remates":          40,
-    "remates_a_baliza": 50,  # pior mercado nos dados — mais exigente
+    "remates_a_baliza": 50,
+}
+
+# Safety net absoluta — nos ultimos minutos finais raramente ha
+# tempo para novo evento. NAO e cutoff baseado em performance; e
+# limite fisico. A analise contextual (_contexto_late_valido) decide
+# o resto baseado no estado real do jogo.
+MINUTO_MAX_POR_MERCADO = {
+    "1x2":              88,
+    "golos":            88,
+    "btts":             88,
+    "cantos":           88,
+    "cartoes":          90,
+    "remates":          88,
+    "remates_a_baliza": 85,
 }
 
 # Conviccao minima (prob × odd_valor) para EMITIR o sinal no Telegram.
@@ -339,12 +358,87 @@ CONVICCAO_MINIMA_TELEGRAM = 1.10  # ~10% edge esperado
 
 
 def _estado_demasiado_cedo_para_sinal(estado: "EstadoLive", mercado: str = "golos") -> bool:
-    """True se o jogo esta demasiado no inicio para este mercado.
+    """True se o jogo esta fora da janela util para este mercado.
 
-    Antes do minuto minimo, qualquer sinal cai no baseline pre-match
-    disfarçado — nao vale a pena enviar.
+    Minuto minimo e maximo sao safety nets (modelo nao fiavel cedo demais,
+    tempo fisico esgotado tarde demais). O "cutoff do min 75" nao e um
+    muro — ver `_contexto_late_valido` para julgar o 2o tempo final por
+    estado do jogo em vez de pelo relogio.
     """
-    return estado.minuto < MINUTO_MIN_POR_MERCADO.get(mercado, 25)
+    minuto = estado.minuto
+    min_min = MINUTO_MIN_POR_MERCADO.get(mercado, 25)
+    min_max = MINUTO_MAX_POR_MERCADO.get(mercado, 88)
+    return minuto < min_min or minuto > min_max
+
+
+def _contexto_late_valido(estado: "EstadoLive", prev: "PrevisaoLive",
+                           mercado: str, lado: str) -> tuple[bool, str | None]:
+    """Analise contextual de 2a parte final (min 70+).
+
+    Em vez de cortar por relogio, examina o ESTADO REAL do jogo:
+      - Jogo decidido (diff >= 3): intensidade colapsa, nao emite overs
+      - Empate late com baixo xG recent: ambos aceitam empate, nao emite
+        overs (golos/BTTS/cantos/remates) mas ok para unders
+      - Jogo apertado com chasing REAL (momentum do perdedor, big chances
+        pendentes, xG recent alto): OPORTUNIDADE, mantem sinal
+      - 1X2 com underdog a aguentar vantagem no fim: ok se nao for lixo
+
+    Devolve (valido, razao_rejeicao). razao=None quando valido.
+    Antes do minuto 70 passa sempre (ja filtrado por _estado_demasiado_cedo).
+    """
+    if estado.minuto < 70:
+        return True, None
+
+    diff = abs(estado.marcador_casa - estado.marcador_fora)
+    xg_rec_c = estado.xg_recent_casa or 0
+    xg_rec_f = estado.xg_recent_fora or 0
+    xg_rec_tot = xg_rec_c + xg_rec_f
+    bc_c = estado.big_chances_casa or 0
+    bc_f = estado.big_chances_fora or 0
+    bc_pendentes = max(0, (bc_c + bc_f) - (estado.marcador_casa + estado.marcador_fora))
+
+    # 1. Jogo decidido (3+ golos de diferenca) → intensidade colapsa
+    #    Qualquer "over" fica a depender de garbage time → cortar.
+    if diff >= 3:
+        if lado in ("over", "sim", "marca_casa", "marca_fora"):
+            return False, "Jogo decidido (3+ golos diff) — intensidade final baixa"
+        # Unders e 1X2 do lider ok
+
+    # 2. Empate late (min 75+) com xG recente colapsado → ambos aceitam ponto
+    #    xG_recent < 0.15 em 15min = jogo tranca, nao vai haver mais nada
+    if (estado.minuto >= 75 and diff == 0 and xg_rec_tot < 0.15
+            and bc_pendentes == 0):
+        if lado in ("over", "sim"):
+            return False, f"Empate ao {estado.minuto}' com xG ultimos 15min {xg_rec_tot:.2f} — jogo tranca"
+
+    # 3. 1-golo late (min 80+) sem chasing real → favorito gere o tempo
+    #    Chasing real = losing team tem momentum OU big chances pendentes
+    #    OU xG recente dela > 0.3 nos ultimos 15 min
+    if estado.minuto >= 80 and diff == 1:
+        casa_perde = estado.marcador_casa < estado.marcador_fora
+        xg_rec_perdedor = xg_rec_c if casa_perde else xg_rec_f
+        mom_perdedor = (estado.momentum_actual == "casa" and casa_perde) \
+                       or (estado.momentum_actual == "fora" and not casa_perde)
+        bc_perdedor = bc_c if casa_perde else bc_f
+        chasing_real = mom_perdedor or bc_perdedor >= 2 or xg_rec_perdedor >= 0.3
+
+        if not chasing_real:
+            # Jogo controlado pelo lider → nao emite overs, nao emite 1X2 do
+            # perdedor
+            if lado in ("over", "sim", "marca_casa", "marca_fora"):
+                return False, f"Lider gere {estado.minuto}+ sem chasing real (sem momentum/big chances/xG) — jogo controlado"
+            if mercado == "1x2":
+                perdedor_lado = "casa" if casa_perde else "fora"
+                if lado == perdedor_lado:
+                    return False, f"Perdedor sem chasing ao {estado.minuto}' — virada improvavel"
+
+    # 4. SoT especifico: late game SoT = tiros desesperados fora
+    #    Se minuto >= 80 e nao ha pressao (xG recent baixo), SoT nao cai
+    if mercado == "remates_a_baliza" and estado.minuto >= 80 and lado == "over":
+        if xg_rec_tot < 0.2 and bc_pendentes == 0:
+            return False, f"Pressao baixa ao {estado.minuto}' (xG recent {xg_rec_tot:.2f}) — SoT nao vem"
+
+    return True, None
 
 
 def _conviccao_alta(sinal: Sinal, estado: "EstadoLive") -> bool:
@@ -730,6 +824,10 @@ def _emitir_sinal_1x2(estado, prev, ctx, out, lado, prob, racional_fade=None) ->
 
     if not racional:
         racional.append(f"modelo {prob*100:.0f}% para resultado final")
+    # Filtro contextual late game
+    valido, _razao = _contexto_late_valido(estado, prev, "1x2", lado)
+    if not valido:
+        return
     # 1X2 passa por _add_1x2 que tem threshold proprio
     odd_be, odd_val = _odds_minimas(prob)
     if odd_val >= 1.15 and prob <= 0.92:
@@ -811,7 +909,7 @@ def _sinal_regressao_xg(estado, prev, ctx, out, prob_min) -> None:
 
         titulo = f"{nome} marca (regressao xG)"
         _add(out, "regressao_xg", "golo_equipa", f"marca_{lado}",
-             None, p_marca, racional, titulo)
+             None, p_marca, racional, titulo, estado=estado, prev=prev)
 
 
 # ─────────────── GOLOS ───────────────
@@ -848,7 +946,7 @@ def _sinal_golos(estado, prev, ctx, out, prob_min) -> None:
                     racional.append(f"xG total {xg_tot:.1f} > {golos} golos actuais")
             if not racional:
                 racional.append(f"{prev.minutos_restantes}min restam, modelo espera +{int(linha - golos + 0.5)}")
-            _add(out, "over_golos_live", "golos", "over", linha, p_over, racional, titulo)
+            _add(out, "over_golos_live", "golos", "over", linha, p_over, racional, titulo, estado=estado, prev=prev)
 
         if p_under >= prob_min:
             racional = []
@@ -865,7 +963,7 @@ def _sinal_golos(estado, prev, ctx, out, prob_min) -> None:
                     racional.append(f"xG ultimos 15min apenas {xg_rec:.1f}")
             if not racional:
                 racional.append(f"{golos} golos ao min {estado.minuto}, pouca intensidade")
-            _add(out, "under_golos_live", "golos", "under", linha, p_under, racional, titulo)
+            _add(out, "under_golos_live", "golos", "under", linha, p_under, racional, titulo, estado=estado, prev=prev)
 
 
 # ─────────────── BTTS ───────────────
@@ -891,7 +989,7 @@ def _sinal_btts(estado, prev, ctx, out, prob_min) -> None:
             racional.append(ctx["defesa_fraca_fora"])
         if "chasing" in ctx:
             racional.append(ctx["chasing"])
-        _add(out, "btts_sim", "btts", "sim", None, p_sim, racional, titulo)
+        _add(out, "btts_sim", "btts", "sim", None, p_sim, racional, titulo, estado=estado, prev=prev)
 
     if p_nao >= prob_min and estado.minuto >= 65:
         racional = []
@@ -908,7 +1006,7 @@ def _sinal_btts(estado, prev, ctx, out, prob_min) -> None:
             racional.append(ctx["keeper_fora_grande"])
         if "jogo_a_fechar" in ctx:
             racional.append(ctx["jogo_a_fechar"])
-        _add(out, "btts_nao", "btts", "nao", None, p_nao, racional, titulo)
+        _add(out, "btts_nao", "btts", "nao", None, p_nao, racional, titulo, estado=estado, prev=prev)
 
 
 # ─────────────── CANTOS ───────────────
@@ -944,7 +1042,7 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(f"{blocked} remates bloqueados — cantos a caminho")
             if (estado.crosses_total_casa or 0) + (estado.crosses_total_fora or 0) > 15:
                 racional.append("Jogo pelos cruzamentos — cantos consequencia")
-            _add(out, "cantos_over", "cantos", "over", linha, p_over, racional, titulo)
+            _add(out, "cantos_over", "cantos", "over", linha, p_over, racional, titulo, estado=estado, prev=prev)
 
         if p_under >= prob_min:
             racional = []
@@ -958,7 +1056,7 @@ def _sinal_cantos(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(f"Jogo decidido ({estado.marcador_casa}-{estado.marcador_fora}) ao min {estado.minuto}")
             if not racional:
                 racional.append(f"{cantos} cantos ao min {estado.minuto}, pouca cadencia")
-            _add(out, "cantos_under", "cantos", "under", linha, p_under, racional, titulo)
+            _add(out, "cantos_under", "cantos", "under", linha, p_under, racional, titulo, estado=estado, prev=prev)
 
 
 # ─────────────── CARTOES ───────────────
@@ -990,7 +1088,7 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
             if not racional:
                 rate = amarelos / max(estado.minuto, 1)
                 racional.append(f"{amarelos} amarelos ao min {estado.minuto} ({rate*90:.1f}/90min)")
-            _add(out, "cards_over", "cartoes", "over", linha, p_over, racional, titulo)
+            _add(out, "cards_over", "cartoes", "over", linha, p_over, racional, titulo, estado=estado, prev=prev)
 
         # UNDER cartoes: so late no jogo e sem contexto de agressividade
         try:
@@ -1010,7 +1108,7 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(f"arbitro {estado.arbitro} brando")
             if not racional:
                 racional.append(f"so {amarelos} amarelos ao min {estado.minuto}")
-            _add(out, "cards_under", "cartoes", "under", linha, p_under, racional, titulo)
+            _add(out, "cards_under", "cartoes", "under", linha, p_under, racional, titulo, estado=estado, prev=prev)
 
 
 # ─────────────── REMATES ───────────────
@@ -1044,7 +1142,7 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["momentum"])
             if "big_chances_pendentes" in ctx:
                 racional.append(ctx["big_chances_pendentes"])
-            _add(out, "shots_over", "remates", "over", linha, p, racional, titulo)
+            _add(out, "shots_over", "remates", "over", linha, p, racional, titulo, estado=estado, prev=prev)
 
     # Projeccao por equipa — mostramos sempre no racional para user
     # comparar com linhas do mercado (ex: casa oferece Over 11.5 que
@@ -1078,4 +1176,4 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
                 racional.append(ctx["keeper_fora_grande"])
             if rate_sot * 90 >= 7:
                 racional.append(f"{sot} SoT ao min {estado.minuto} ({rate_sot*90:.1f}/90min)")
-            _add(out, "sot_over", "remates_a_baliza", "over", linha, p, racional, titulo)
+            _add(out, "sot_over", "remates_a_baliza", "over", linha, p, racional, titulo, estado=estado, prev=prev)

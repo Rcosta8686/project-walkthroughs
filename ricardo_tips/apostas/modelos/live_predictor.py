@@ -71,10 +71,10 @@ def _carregar_calibracao() -> dict:
 def calibrar_prob(prob_modelo: float, mercado: str = "golos") -> float:
     """Aplica calibracao aprendida. Reduz over-confidence identificado.
 
-    Dados Ricardo (653 sinais) mostraram que o modelo tem shift linear
-    de ~-15pp em TODOS os buckets (60%→44%, 70%→54%, 80%→63%, 90%→77%).
-    Blend 40/60 (modelo/historico) corrige quase perfeitamente este bias
-    quando ha amostra credivel (n>=20 por bucket).
+    Dados Ricardo (1680 sinais, 2026-10-12) mostraram:
+      - buckets baixos (<75%) ficaram calibrados com blend 40/60
+      - buckets altos (>=75%) ainda confiantes -8pp a -11pp
+    → blend AGRESSIVO 25/75 para buckets altos, 40/60 para baixos.
     """
     calib = _carregar_calibracao()
     por_bucket = calib.get("por_prob_bucket", {})
@@ -86,12 +86,12 @@ def calibrar_prob(prob_modelo: float, mercado: str = "golos") -> float:
               "85%+")
     stats = por_bucket.get(bucket)
     if stats is None or stats.get("n", 0) < 20:
-        # Sem amostra credivel: aplicar shift conservador uniforme de -8pp
-        # (metade do bias medido, para evitar over-correction em buckets novos)
         return max(0.01, prob_modelo - 0.08)
     hit_rate_real = stats.get("hit_rate", 50) / 100.0
-    # Blend 40/60: 40% modelo original + 60% hit rate real do bucket.
-    # Testado contra bias linear: converge para hit rate real com erro <3pp.
+    # Buckets altos ainda sobre-confiantes: puxa mais para a realidade.
+    if bucket in ("75-85%", "85%+"):
+        return 0.25 * prob_modelo + 0.75 * hit_rate_real
+    # Buckets baixos: calibrados com blend 40/60.
     return 0.4 * prob_modelo + 0.6 * hit_rate_real
 
 
