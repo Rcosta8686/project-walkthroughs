@@ -69,12 +69,22 @@ def _carregar_calibracao() -> dict:
 
 
 def calibrar_prob(prob_modelo: float, mercado: str = "golos") -> float:
-    """Aplica calibracao aprendida. Reduz over-confidence identificado.
+    """Aplica calibracao aprendida. ASSIMETRICA baseada em dados reais.
 
-    Dados Ricardo (1680 sinais, 2026-10-12) mostraram:
-      - buckets baixos (<75%) ficaram calibrados com blend 40/60
-      - buckets altos (>=75%) ainda confiantes -8pp a -11pp
-    → blend AGRESSIVO 25/75 para buckets altos, 40/60 para baixos.
+    Dados Ricardo pos-fix (874 sinais, 2026-10-12):
+      bucket 55-65%  real 75%  → modelo CONSERVADOR +15pp
+      bucket 65-75%  real 81%  → modelo CONSERVADOR +11pp
+      bucket 75-85%  real 79%  → calibrado ✓
+      bucket 85%+    real 81%  → confiante demais -9pp
+
+    Logica assimetrica:
+      - Se modelo e CONFIANTE DEMAIS (real < previsto): blend 25/75
+        (puxa para baixo agressivamente, evita emitir sinais inflacionados)
+      - Se modelo e CONSERVADOR (real >= previsto): devolve prob_modelo
+        inalterada (nao reduz artificialmente — isso rejeitaria sinais bons)
+
+    Isto respeita o espirito de Rob Pizzola: calibrar na direccao que
+    corrige o bias, nao distorcer na direccao errada.
     """
     calib = _carregar_calibracao()
     por_bucket = calib.get("por_prob_bucket", {})
@@ -86,13 +96,16 @@ def calibrar_prob(prob_modelo: float, mercado: str = "golos") -> float:
               "85%+")
     stats = por_bucket.get(bucket)
     if stats is None or stats.get("n", 0) < 20:
-        return max(0.01, prob_modelo - 0.08)
+        return prob_modelo
     hit_rate_real = stats.get("hit_rate", 50) / 100.0
-    # Buckets altos ainda sobre-confiantes: puxa mais para a realidade.
-    if bucket in ("75-85%", "85%+"):
-        return 0.25 * prob_modelo + 0.75 * hit_rate_real
-    # Buckets baixos: calibrados com blend 40/60.
-    return 0.4 * prob_modelo + 0.6 * hit_rate_real
+    # Modelo CONSERVADOR (real >= prob): NAO reduzir, deixar passar o sinal
+    # bom. Opcionalmente poderia puxar PARA CIMA mas isso sobrevaloriza odds
+    # — melhor ficar fiel ao modelo e deixar o lucro acumular.
+    if hit_rate_real >= prob_modelo:
+        return prob_modelo
+    # Modelo CONFIANTE DEMAIS (real < prob): puxa para baixo com blend 25/75
+    # para evitar emitir sinais inflacionados.
+    return 0.25 * prob_modelo + 0.75 * hit_rate_real
 
 
 # ───────────── Fatores empíricos (ajustar quando houver dados Ricardo) ─────────────
