@@ -93,7 +93,8 @@ IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasatt
 CSV_COLUNAS = [
     "ts_scan", "event_id", "liga", "home", "away", "minuto", "marcador",
     "mercado", "lado", "linha", "casa", "odd",
-    "prob_modelo", "ev", "estrelas", "xg_casa", "xg_fora",
+    "prob_modelo", "p_mercado", "p_final", "verificar",
+    "ev", "estrelas", "xg_casa", "xg_fora",
     "shots_on_target_c", "shots_on_target_f",
     "corners_c", "corners_f", "yellows_c", "yellows_f",
     # Preenchidos por resolver_sugestoes_live.py:
@@ -363,7 +364,12 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
         # NOVO: skip linhas ja decididas (Over 2.5 num 4-2 = inutil)
         if not _linha_live(mercado, lado, linha, estado):
             return
-        ev = ev_contra_odd(prob, odd)
+        # §19 blend p_modelo × p_mercado (w=0.3). O EV e calculado em
+        # cima da p_final, nao da p_modelo pura. Flag "verificar" quando
+        # discrepancia >10pp OU EV_puro >15% (sinal de problema de dados).
+        from apostas.modelos.blend_mercado import aplicar_blend
+        blend_data = aplicar_blend(prob, odd)
+        ev = blend_data["ev"]
         if ev < ev_min:
             return
         sugestoes.append({
@@ -380,6 +386,9 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
             "casa": casa,
             "odd": round(odd, 2),
             "prob_modelo": round(prob, 4),
+            "p_mercado": blend_data["p_mercado"],
+            "p_final": blend_data["p_final"],
+            "verificar": blend_data["verificar"],
             "ev": round(ev, 4),
             "xg_casa": estado.xg_casa if estado.xg_casa is not None else "",
             "xg_fora": estado.xg_fora if estado.xg_fora is not None else "",
@@ -681,6 +690,10 @@ def _correr_ciclo(args) -> None:
                 # mas nao notifica para evitar perdas acumuladas.
                 if analista.liga_na_blacklist(s.get("liga", "")):
                     continue
+                # §19.3 doc estrategias: sinais com discrepancia grande
+                # p_modelo vs p_mercado (>10pp) ou EV_puro >15% CONTINUAM
+                # a ir para Telegram, mas com flag ⚠ VERIFICAR para o user
+                # julgar (onze? lesao? dados corrompidos?). Nao esconder.
                 if s.get("casa") == "ANALISTA":
                     # Sinal do analista: tem de passar o filtro Paulo
                     # Rebelo (edge, racional, minuto maduro, tom).

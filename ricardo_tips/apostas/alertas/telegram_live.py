@@ -103,6 +103,11 @@ def enviar_sugestao_live(s: dict) -> None:
             estrelas = 3
         estrelas = max(1, min(5, estrelas))
         estrelas_str = "⭐" * estrelas
+        # §19.3 flag "verificar": sinal com p_modelo muito longe do mercado
+        # (gap >10pp) ou EV puro >15%. Nao se recusa, avisa-se para o user
+        # confirmar se nao e lesao/onze errado antes de meter stake grande.
+        verificar = bool(s.get("verificar"))
+        verificar_str = "⚠ VERIFICAR — " if verificar else ""
 
         if casa == "ANALISTA":
             # Sinal puro — mensagem narrativa com racional
@@ -113,7 +118,7 @@ def enviar_sugestao_live(s: dict) -> None:
             racional_str = s.get("racional_str", "")
             racional_section = f"\n{racional_str}\n" if racional_str else ""
             texto = (
-                f"{estrelas_str}  {_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
+                f"{estrelas_str}  {verificar_str}{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
@@ -132,7 +137,7 @@ def enviar_sugestao_live(s: dict) -> None:
             url = _URLS_CASAS.get(casa, "")
             link_line = f"[Abrir casa]({url})" if url else f"Casa: {casa}"
             texto = (
-                f"{estrelas_str}  🎯 *EV +{ev*100:.1f}%* LIVE\n"
+                f"{estrelas_str}  {verificar_str}🎯 *EV +{ev*100:.1f}%* LIVE\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
