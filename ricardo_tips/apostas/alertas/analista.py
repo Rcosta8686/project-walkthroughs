@@ -84,13 +84,48 @@ EFICIENCIA_LIGA = [
 
 # Ligas onde o modelo esta DEMONSTRAVELMENTE a perder dinheiro.
 # Sinais destas ligas sao ainda emitidos para terminal, mas NAO para Telegram.
-# Revisto 2026-10-12 com 1680 sinais: LaLiga 2 saiu (n=379, +6.8% ROI,
-# a amostra inicial de 54 sinais era enganadora). Brasileirao continua
-# com n=447 e ROI -14% — mantido.
+# Revisto 2026-10-14 com 1927 sinais: Brasileirao continua -16% ROI, PL -12%,
+# Ligue 1 -21%. Ligas Big-5 marquesinhas tendem a ser as mais eficientes
+# (Caan Berry).
 LIGAS_BLACKLIST_TELEGRAM = frozenset({
-    "brasileir",              # n=447, ROI -14%, perda -62u (ainda o pior)
+    "brasileir",              # n=497, ROI -16%
     "campeonato brasileiro",
+    "ligue 1",                # n=98, ROI -21% (sem (FRA) para apanhar o nome puro)
 })
+
+# MODO VENCEDOR (whitelist). So notifica Telegram se:
+#   mercado esta em MERCADOS_VENCEDORES  OR
+#   liga contem substring em LIGAS_VENCEDORAS
+# Resto fica no terminal + CSV para dados mas nao gasta atencao.
+# Dados reais 2026-10-14 (n=1927, resolver fix):
+MERCADOS_VENCEDORES = frozenset({
+    "remates",            # n=239, ROI +28%
+    "btts",               # n=40,  ROI +20%
+    "remates_a_baliza",   # n=159, ROI +15%
+})
+LIGAS_VENCEDORAS = frozenset({
+    "mls",                # n=56,  ROI +37%
+    "liga portugal 2",    # n=61,  ROI +27%
+    "serie a",            # n=219, ROI +8%
+    "serie b",            # n=33,  ROI +5.5% (ainda n baixo mas direccao certa)
+    "laliga 2",           # n=379, ROI +6.8%
+    "hypermotion",        # alias LaLiga 2
+    "ligue 2",            # n=57,  ROI +8%
+    "regionalliga",       # n=41,  ROI +12%
+})
+
+
+def passa_zona_vencedora(mercado: str, liga: str) -> bool:
+    """Modo vencedor: filtra para Telegram so sinais em zonas lucrativas.
+
+    Returns True se:
+      mercado e historicamente lucrativo (remates/btts/sot) OU
+      liga e historicamente lucrativa (MLS, Portugal 2, Serie A, etc)
+    """
+    if mercado in MERCADOS_VENCEDORES:
+        return True
+    liga_low = (liga or "").lower()
+    return any(k in liga_low for k in LIGAS_VENCEDORAS)
 
 
 def _match_liga_substring(liga: str, mapa: list) -> float:

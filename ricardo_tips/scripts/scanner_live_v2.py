@@ -697,6 +697,12 @@ def _correr_ciclo(args) -> None:
                 # mais dados mas nao notifica Telegram.
                 if s.get("mercado") == "1x2":
                     continue
+                # MODO VENCEDOR: so notifica se mercado vencedor OR liga
+                # vencedora (dados reais n=1927). Resto fica no terminal.
+                if not analista.passa_zona_vencedora(
+                    s.get("mercado", ""), s.get("liga", "")
+                ):
+                    continue
                 # §19.3 doc estrategias: sinais com discrepancia grande
                 # p_modelo vs p_mercado (>10pp) ou EV_puro >15% CONTINUAM
                 # a ir para Telegram, mas com flag ⚠ VERIFICAR para o user
