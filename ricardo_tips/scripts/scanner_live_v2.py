@@ -690,6 +690,13 @@ def _correr_ciclo(args) -> None:
                 # mas nao notifica para evitar perdas acumuladas.
                 if analista.liga_na_blacklist(s.get("liga", "")):
                     continue
+                # Mercado 1X2 live: dados reais (n=188, ROI -27%, hit 54%)
+                # mostraram que o modelo nao bate a casa aqui. Previsao
+                # live de resultado final e NOTORIAMENTE dificil (um golo
+                # vira o jogo). Deixa aparecer no terminal para acumular
+                # mais dados mas nao notifica Telegram.
+                if s.get("mercado") == "1x2":
+                    continue
                 # §19.3 doc estrategias: sinais com discrepancia grande
                 # p_modelo vs p_mercado (>10pp) ou EV_puro >15% CONTINUAM
                 # a ir para Telegram, mas com flag ⚠ VERIFICAR para o user
