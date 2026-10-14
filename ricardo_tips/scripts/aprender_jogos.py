@@ -190,6 +190,26 @@ def main() -> None:
     for liga, lista in sorted(por_liga.items(), key=lambda x: -_hit_stats(x[1])["roi"]):
         print(_formatar(_hit_stats(lista), liga))
 
+    # Por DIA (progressao: estamos a melhorar?)
+    por_dia = defaultdict(list)
+    for r in rows:
+        dia = (r.get("ts_scan") or "")[:10]
+        if dia:
+            por_dia[dia].append(r)
+    if por_dia:
+        print(f"\n{'─' * 90}")
+        print("  POR DIA  (progressao temporal: estamos a melhorar?)")
+        print("─" * 90)
+        lucro_acumulado = 0.0
+        for dia in sorted(por_dia.keys()):
+            lista = por_dia[dia]
+            s = _hit_stats(lista)
+            lucro_acumulado += s["lucro"]
+            tendencia = ("↑" if s["roi"] > 5 else "↓" if s["roi"] < -5 else "→")
+            print(f"  {dia}  {tendencia}  n={s['n']:>4}  W={s['W']:>3}  L={s['L']:>3}  "
+                  f"hit={s['hit_rate']:>5.1f}%  ROI={s['roi']:>+6.1f}%  "
+                  f"dia={s['lucro']:>+6.2f}u  acum={lucro_acumulado:>+7.2f}u")
+
     # Gravar calibracao json para o modelo usar
     calibracao = {
         "n_amostras": len(rows),
