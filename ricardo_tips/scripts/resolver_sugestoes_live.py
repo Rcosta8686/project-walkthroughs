@@ -127,6 +127,23 @@ def _wl_por_mercado(mercado: str, lado: str, linha: str, res: dict) -> str | Non
                 return "W" if f >= c else "L"
             if lado == "12":
                 return "W" if c != f else "L"
+        if mercado == "1x2":
+            # Resultado final: lado = casa / empate / fora
+            c = res["golos_casa"]
+            f = res["golos_fora"]
+            if lado == "casa":
+                return "W" if c > f else "L"
+            if lado == "fora":
+                return "W" if f > c else "L"
+            if lado == "empate":
+                return "W" if c == f else "L"
+        if mercado == "golo_equipa":
+            # Regressao xG: equipa marca pelo menos 1 golo
+            # lado = "marca_casa" ou "marca_fora"
+            if lado == "marca_casa":
+                return "W" if res["golos_casa"] >= 1 else "L"
+            if lado == "marca_fora":
+                return "W" if res["golos_fora"] >= 1 else "L"
     except (ValueError, KeyError):
         return None
     return None
