@@ -175,17 +175,39 @@ Quando o pre_live diario encontrar Juventus vs equipa fraca:
 
 **Testes:** +12 perfil_equipa + +17 filtros_m6 = 66 totais a passar.
 
-### Commit 4 (futuro) — integrar tudo no pre_live_diario
+### Commit 4 — integrar tudo no pre_live_diario (FEITO 2026-10-15)
 
-- Pre_live_diario: para cada jogo com sinal:
-  1. Obter perfil das 2 equipas → ajustar lam (ex. caudal ofensivo)
-  2. Puxar odds pre-match (futuro)
-  3. Aplicar blend(p_modelo, p_mercado) do blend_mercado
-  4. Correr passa_filtros_m6() como gate final
-  5. Chamar gravar_snapshot() com momento="abertura"
-  6. Chamar banca.estado_banca_actual() antes de emitir → stop-loss
-  7. Stake = stake_flat(5.0)
-  8. Grava Sugestao com odd_referencia
+**pre_live_diario.py agora:**
+- **Banca gate (M13):** no inicio chama `banca.estado_banca_actual()`,
+  mostra saldo + perda_dia, se `pode_apostar=False` marca
+  `telegram_bloqueado_stop=True` e Telegram nao e enviado.
+- **Perfil equipa integrado (M10/ask user):** por jogo chama
+  `perfil_equipa.obter_perfil(home_id)` e `(away_id)`.
+  - Se perfil `virar_jogos_pct >= 0.35` → `lam_golos += 0.08` (jogos
+    mais abertos quando equipa com cauda ofensiva anda em desvantagem).
+- **Filtro M6 por sinal:** cada sinal passa por `ContextoFiltro` +
+  `passa_filtros_m6()`. Nao-passa fica so em "SINAIS REJEITADOS PELO M6
+  (apenas contexto)" com motivo mostrado.
+- **CLV snapshot (M2):** cada sinal aprovado chama
+  `clv_tracker.gravar_snapshot(..., momento="pre_live_12h")` para marcar
+  o momento de emissao. Odds reais entram no commit 5.
+- **Stake flat (M13):** cada sinal mostra `stake 5 CHF`. Cabecalho
+  Telegram mostra "Stake total: CHF X".
+- **Formatacao:** linha extra "🔎 Equipa: vira 45%, 18 rem/90 atras,
+  carga 3×7d" quando perfil tiver dados fortes.
+
+**Caveats:**
+- EV/odd no M6 sao placeholders (0.05/2.0) porque pre_live_diario ainda
+  nao le odds pre-match. Isto bypassa P1/P5/P8 por agora. O commit 5
+  vai ler odds reais do Sofascore/Odds API e calcular EV real.
+
+**Testes:** 66/66 continuam a passar (nenhum teste velho partido).
+
+### Commit 5 — odds pré-match reais no pre_live_diario (fase 2)
+
+Integrar: `obter_odds_prematch_sofascore(event_id)` ou leitura
+odds_correntes do The Odds API → calcular p_mercado via tirar_margem →
+`blend(p_modelo, p_mercado, w=0.3)` → EV real → sinal.
 
 ### Commit 5 — integrar tudo no pre_live_diario e scanner_live_v2
 

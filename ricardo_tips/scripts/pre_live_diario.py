@@ -23,8 +23,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apostas.alertas import analista  # noqa: E402
+from apostas.alertas.filtros import ContextoFiltro, passa_filtros_m6  # noqa: E402
 from apostas.alertas.telegram_cliente import cliente  # noqa: E402
-from apostas.ingestao import sofascore_live, sofascore_classificacao, sofascore_contexto  # noqa: E402
+from apostas.ingestao import sofascore_classificacao, sofascore_contexto, sofascore_live  # noqa: E402
+from apostas.modelos import banca, clv_tracker, perfil_equipa  # noqa: E402
+from apostas.modelos.banca import STAKE_FLAT_CHF_DEFAULT  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 
 log = get_logger(__name__)
@@ -35,6 +38,8 @@ LAM_CANTOS_BASE = 10.5
 LAM_CARDS_BASE = 4.0
 LAM_SHOTS_BASE = 24.0           # 12 por equipa
 LAM_SOT_BASE = 24.0 * 0.35      # ~8.4 (ratio liga)
+
+STAKE_FLAT_CHF = STAKE_FLAT_CHF_DEFAULT    # 5 CHF por sinal (M13)
 
 
 def _poisson_cdf(k: int, lam: float) -> float:
@@ -124,10 +129,24 @@ def _analisar_jogo(evento: dict) -> dict | None:
     forma_c = sofascore_contexto.obter_forma_recente(home_id) if home_id else {}
     forma_f = sofascore_contexto.obter_forma_recente(away_id) if away_id else {}
 
-    # Lambda estimates — AJUSTADO por H2H + forma (varia por jogo)
+    # Perfil comportamental (M-doc user ask) — cache 24h via BD
+    perfil_c = perfil_equipa.obter_perfil(home_id) if home_id else None
+    perfil_f = perfil_equipa.obter_perfil(away_id) if away_id else None
+
+    # Lambda estimates — AJUSTADO por H2H + forma + perfil (varia por jogo)
     media_h2h = h2h.get("media_golos_total")
     lam_golos = _ajustar_lam_com_h2h(LAM_GOLOS_BASE, media_h2h)
     lam_golos = _ajustar_lam_com_forma(lam_golos, forma_c, forma_f)
+
+    # Ajuste de perfil: se uma das equipas tem caudal_atras alto e perfil
+    # indica que vira jogos (>35%), aumenta ligeiramente lam_golos (jogos
+    # mais abertos). Decisao conservadora para nao distorcer demasiado.
+    caudal_bonus = 0.0
+    if perfil_c and perfil_c.virar_jogos_pct and perfil_c.virar_jogos_pct > 0.35:
+        caudal_bonus += 0.08
+    if perfil_f and perfil_f.virar_jogos_pct and perfil_f.virar_jogos_pct > 0.35:
+        caudal_bonus += 0.08
+    lam_golos += caudal_bonus
 
     # Sinais nos mercados que REALMENTE sabemos modelar pre-match:
     # golos e BTTS (temos lam ajustado por equipa). Remates/SoT precisariam
@@ -191,6 +210,9 @@ def _analisar_jogo(evento: dict) -> dict | None:
         "forma_c": forma_c,
         "forma_f": forma_f,
         "ai_insights": _ai_insights_relevantes(ai),
+        "perfil_c": perfil_c,
+        "perfil_f": perfil_f,
+        "lam_golos": lam_golos,
     }
 
 
@@ -206,11 +228,11 @@ def _formatar_jogo(j: dict) -> str:
         if s["mercado"] == "btts":
             desc = "BTTS SIM"
         elif s["mercado"] == "golos":
-            # Over 2.5 golos / Under 3.5 golos
             desc = f"{s['lado'].capitalize()} {linha_str} golos"
         else:
             desc = f"{s['lado'].capitalize()} {linha_str} {s['mercado']}"
-        linhas.append(f"{estrelas} {s['emoji']} {desc} · {s['prob']*100:.0f}%")
+        stake_txt = f" · stake {STAKE_FLAT_CHF:.0f} CHF" if s.get("stake") else ""
+        linhas.append(f"{estrelas} {s['emoji']} {desc} · {s['prob']*100:.0f}%{stake_txt}")
 
     # Contexto H2H
     h2h = j["h2h"]
@@ -230,6 +252,23 @@ def _formatar_jogo(j: dict) -> str:
     if ff.get("wdl"):
         linhas.append(f"  {j['away']}: {ff['wdl']} · "
                        f"{ff['golos_marcados_media']:.1f}m-{ff['golos_sofridos_media']:.1f}s")
+
+    # Perfil comportamental (quando disponivel) — padroes importantes
+    for nome, perfil in (("home", j.get("perfil_c")), ("away", j.get("perfil_f"))):
+        if not perfil or perfil.n_jogos_analisados < 3:
+            continue
+        equipa = j["home"] if nome == "home" else j["away"]
+        partes = []
+        if perfil.virar_jogos_pct is not None and perfil.virar_jogos_pct >= 0.30:
+            partes.append(f"vira {perfil.virar_jogos_pct*100:.0f}%")
+        if perfil.remates_atras_90 is not None and perfil.remates_atras_90 >= 14:
+            partes.append(f"{perfil.remates_atras_90:.0f} rem/90 atras")
+        if perfil.cantos_atras_90 is not None and perfil.cantos_atras_90 >= 6:
+            partes.append(f"{perfil.cantos_atras_90:.0f} cantos atras")
+        if perfil.carga_jogos_7d is not None and perfil.carga_jogos_7d >= 3:
+            partes.append(f"carga {perfil.carga_jogos_7d}×7d")
+        if partes:
+            linhas.append(f"  🔎 {equipa}: {', '.join(partes)}")
 
     # AI insights (max 2 em formato curto)
     for ins in j["ai_insights"][:2]:
@@ -253,6 +292,21 @@ def main() -> None:
     print(f"\n{'=' * 90}")
     print(f"  PRE-LIVE DIARIO  —  {data_iso}")
     print("=" * 90)
+
+    # ─── M13: banca gate antes de analisar ───
+    try:
+        estado = banca.estado_banca_actual()
+        print(f"\n💰 Banca: CHF {estado.saldo_atual:.2f} | "
+              f"perda hoje: CHF {estado.perda_dia:.2f} | "
+              f"stake flat: CHF {STAKE_FLAT_CHF:.2f}")
+        if not estado.pode_apostar:
+            print(f"⛔ STOP: {estado.motivo} — nao envio sinais Telegram.")
+            telegram_bloqueado_stop = True
+        else:
+            telegram_bloqueado_stop = False
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Banca indisponivel: %s", exc)
+        telegram_bloqueado_stop = False
 
     # Fetch TODOS os jogos (sem filtro API-side por ids_ligas que pode falhar
     # devido a divergencia entre uniqueTournament.id e tournament.id).
@@ -298,28 +352,86 @@ def main() -> None:
         if not resultado:
             print("sem contexto")
             continue
-        n_sinais = len(resultado["sinais"])
-        if n_sinais:
-            estrelas_max = max(s["estrelas"] for s in resultado["sinais"])
-            print(f"✓ {n_sinais} sinal(ais), top {estrelas_max}⭐")
+
+        # ─── M6: filtro final 8 pontos + anotacao stake + snapshot CLV ───
+        sinais_passaram = []
+        for s in resultado["sinais"]:
+            ctx = ContextoFiltro(
+                ev=0.05,  # placeholder — pre_live nao calcula EV sem odds
+                odd=2.0,  # placeholder; proxima iteracao usa odd pre-match real
+                mercado=s["mercado"],
+                liga=liga,
+                dados_recentes=True,
+                momento="abertura",
+                stake_pretendida_chf=STAKE_FLAT_CHF,
+                stop_loss_hoje_atingido=telegram_bloqueado_stop,
+            )
+            rf = passa_filtros_m6(ctx)
+            s["m6_passou"] = rf.passou
+            s["m6_razao"] = rf.razao()
+            s["stake"] = STAKE_FLAT_CHF if rf.passou else 0.0
+            # Grava snapshot (momento "pre_live_12h") — sem odds reais ainda
+            # mas marca o sinal como "foi emitido".
+            if rf.passou and resultado.get("event_id"):
+                try:
+                    clv_tracker.gravar_snapshot(
+                        sofascore_event_id=int(resultado["event_id"]),
+                        mercado=s["mercado"], linha=s.get("linha"),
+                        lado=s["lado"], odd=2.0,  # placeholder
+                        casa="modelo_pre_live", momento="pre_live_12h",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("snapshot falhou: %s", exc)
+            if rf.passou:
+                sinais_passaram.append(s)
+        resultado["sinais_filtrados"] = sinais_passaram
+
+        n_total = len(resultado["sinais"])
+        n_m6 = len(sinais_passaram)
+        if n_m6:
+            estrelas_max = max(s["estrelas"] for s in sinais_passaram)
+            print(f"✓ {n_m6}/{n_total} sinal(ais) passam M6, top {estrelas_max}⭐")
+        elif n_total:
+            print(f"∅ {n_total} sinais mas 0 passam M6 (contexto so)")
         else:
-            print("sem sinais fortes (mostrado para contexto)")
+            print("sem sinais fortes (contexto)")
         jogos_analisados.append(resultado)
 
-    jogos_com_sinais = [j for j in jogos_analisados if j["sinais"]]
+    # Agora distinguimos entre: tem sinais QUE PASSARAM M6 vs so contexto
+    jogos_com_sinais_m6 = [
+        j for j in jogos_analisados if j.get("sinais_filtrados")
+    ]
+    jogos_sinais_rejeitados = [
+        j for j in jogos_analisados
+        if j["sinais"] and not j.get("sinais_filtrados")
+    ]
     jogos_sem_sinais = [j for j in jogos_analisados if not j["sinais"]]
 
-    # Ordena com-sinais por melhor estrela
-    jogos_com_sinais.sort(
-        key=lambda j: -max(s["estrelas"] for s in j["sinais"])
+    # Ordena por melhor estrela entre sinais que passaram
+    jogos_com_sinais_m6.sort(
+        key=lambda j: -max(s["estrelas"] for s in j["sinais_filtrados"])
     )
 
     print(f"\n{'=' * 90}")
-    print(f"  JOGOS COM SINAIS PRE-MATCH  —  {len(jogos_com_sinais)}")
+    print(f"  JOGOS COM SINAIS PRE-MATCH APROVADOS (M6)  —  {len(jogos_com_sinais_m6)}")
     print("=" * 90)
-    for j in jogos_com_sinais:
+    for j in jogos_com_sinais_m6:
+        # Mostra so sinais aprovados
+        j_mostrar = dict(j, sinais=j["sinais_filtrados"])
         print()
-        print(_formatar_jogo(j))
+        print(_formatar_jogo(j_mostrar))
+
+    if jogos_sinais_rejeitados:
+        print(f"\n{'=' * 90}")
+        print(f"  SINAIS REJEITADOS PELO M6 (apenas contexto)  —  {len(jogos_sinais_rejeitados)}")
+        print("=" * 90)
+        for j in jogos_sinais_rejeitados:
+            print()
+            print(_formatar_jogo(j))
+            # Mostra o motivo da rejeicao
+            for s in j["sinais"]:
+                if not s.get("m6_passou"):
+                    print(f"    ⨯ {s['mercado']}: {s.get('m6_razao', 'rejeitado')}")
 
     if jogos_sem_sinais:
         print(f"\n{'=' * 90}")
@@ -329,20 +441,27 @@ def main() -> None:
             print()
             print(_formatar_jogo(j))
 
-    if args.telegram and jogos_com_sinais:
+    # ─── Telegram: so sinais que passaram M6 e so se stop-loss nao bateu ───
+    if args.telegram and jogos_com_sinais_m6 and not telegram_bloqueado_stop:
         print(f"\n{'─' * 90}")
         print("  Enviando para Telegram...")
-        cab = f"📅 *PRE-LIVE {data_iso}*  ·  {len(jogos_com_sinais)} jogo(s) com sinais\n"
+        n_sinais = sum(len(j["sinais_filtrados"]) for j in jogos_com_sinais_m6)
+        stake_total = n_sinais * STAKE_FLAT_CHF
+        cab = (f"📅 *PRE-LIVE {data_iso}*  ·  {len(jogos_com_sinais_m6)} jogo(s), "
+                f"{n_sinais} sinal(ais)\n💰 Stake total: CHF {stake_total:.0f}")
         try:
             cliente().enviar(cab)
         except Exception as exc:  # noqa: BLE001
             log.warning("Falha a enviar cabecalho: %s", exc)
-        for j in jogos_com_sinais:
+        for j in jogos_com_sinais_m6:
             try:
-                cliente().enviar(_formatar_jogo(j))
+                j_tg = dict(j, sinais=j["sinais_filtrados"])
+                cliente().enviar(_formatar_jogo(j_tg))
             except Exception as exc:  # noqa: BLE001
                 log.warning("Falha a enviar jogo %s: %s", j.get("event_id"), exc)
-        print(f"  {len(jogos_com_sinais)} jogo(s) enviado(s).")
+        print(f"  {len(jogos_com_sinais_m6)} jogo(s) enviado(s).")
+    elif args.telegram and telegram_bloqueado_stop:
+        print("\n⛔ Telegram NAO enviado: stop-loss diario atingido.")
 
     print()
 
