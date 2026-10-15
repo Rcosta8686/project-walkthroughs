@@ -124,47 +124,50 @@ def _analisar_jogo(evento: dict) -> dict | None:
     forma_c = sofascore_contexto.obter_forma_recente(home_id) if home_id else {}
     forma_f = sofascore_contexto.obter_forma_recente(away_id) if away_id else {}
 
-    # Lambda estimates
+    # Lambda estimates — AJUSTADO por H2H + forma (varia por jogo)
     media_h2h = h2h.get("media_golos_total")
     lam_golos = _ajustar_lam_com_h2h(LAM_GOLOS_BASE, media_h2h)
     lam_golos = _ajustar_lam_com_forma(lam_golos, forma_c, forma_f)
 
-    lam_shots = LAM_SHOTS_BASE
-    lam_sot = LAM_SOT_BASE
-    lam_cantos = LAM_CANTOS_BASE
-
-    # Sinais nos mercados vencedores
+    # Sinais nos mercados que REALMENTE sabemos modelar pre-match:
+    # golos e BTTS (temos lam ajustado por equipa). Remates/SoT precisariam
+    # de dados per-team de remates por jogo que nao temos pre-match.
     sinais = []
 
-    # Over remates (linha padrao 22.5 e 20.5)
-    # Threshold 0.60: pre-match tem incerteza natural maior que live
-    for linha in (22.5, 24.5, 26.5):
-        p = _p_over(linha, lam_shots)
-        if p >= 0.60:
-            sinais.append({
-                "mercado": "remates", "linha": linha, "lado": "over",
-                "prob": p, "emoji": _emoji_mercado("remates"),
-            })
-            break
+    # Over 2.5 golos
+    p_over_25 = _p_over(2.5, lam_golos)
+    if p_over_25 >= 0.60:
+        sinais.append({
+            "mercado": "golos", "linha": 2.5, "lado": "over",
+            "prob": p_over_25, "emoji": _emoji_mercado("golos"),
+        })
 
-    # SoT over
-    for linha in (7.5, 8.5, 9.5):
-        p = _p_over(linha, lam_sot)
-        if p >= 0.60:
+    # Over 1.5 golos (sinal mais seguro, threshold mais alto)
+    if not sinais:  # so se nao emitiu Over 2.5
+        p_over_15 = _p_over(1.5, lam_golos)
+        if p_over_15 >= 0.78:
             sinais.append({
-                "mercado": "remates_a_baliza", "linha": linha, "lado": "over",
-                "prob": p, "emoji": _emoji_mercado("remates_a_baliza"),
+                "mercado": "golos", "linha": 1.5, "lado": "over",
+                "prob": p_over_15, "emoji": _emoji_mercado("golos"),
             })
-            break
 
-    # BTTS (via H2H rate + Poisson)
+    # Under 3.5 (defensivo — para jogos com lam baixo)
+    if lam_golos < 2.2:
+        p_under_35 = _poisson_cdf(3, lam_golos)
+        if p_under_35 >= 0.78:
+            sinais.append({
+                "mercado": "golos", "linha": 3.5, "lado": "under",
+                "prob": p_under_35, "emoji": _emoji_mercado("golos"),
+            })
+
+    # BTTS (via H2H rate + Poisson com lam dividido 50/50)
     if h2h.get("n_jogos", 0) >= 5:
         btts_rate = h2h["btts_rate"]
         p_casa_marca = 1 - math.exp(-lam_golos / 2)
         p_fora_marca = 1 - math.exp(-lam_golos / 2)
         p_btts_poisson = p_casa_marca * p_fora_marca
         p_btts_final = 0.5 * p_btts_poisson + 0.5 * btts_rate
-        if p_btts_final >= 0.57:
+        if p_btts_final >= 0.60:
             sinais.append({
                 "mercado": "btts", "linha": None, "lado": "sim",
                 "prob": p_btts_final, "emoji": _emoji_mercado("btts"),
@@ -202,8 +205,11 @@ def _formatar_jogo(j: dict) -> str:
         linha_str = str(s["linha"]) if s["linha"] is not None else ""
         if s["mercado"] == "btts":
             desc = "BTTS SIM"
+        elif s["mercado"] == "golos":
+            # Over 2.5 golos / Under 3.5 golos
+            desc = f"{s['lado'].capitalize()} {linha_str} golos"
         else:
-            desc = f"Over {linha_str} {s['mercado']}"
+            desc = f"{s['lado'].capitalize()} {linha_str} {s['mercado']}"
         linhas.append(f"{estrelas} {s['emoji']} {desc} · {s['prob']*100:.0f}%")
 
     # Contexto H2H
