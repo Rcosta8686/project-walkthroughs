@@ -244,25 +244,37 @@ def main() -> None:
 
     data_iso = args.data or date.today().isoformat()
 
-    # Ligas-foco: zonas vencedoras + Big-5 (para dados), excluindo blacklist
-    ligas_ids = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values())
-
     print(f"\n{'=' * 90}")
     print(f"  PRE-LIVE DIARIO  —  {data_iso}")
     print("=" * 90)
 
-    eventos = sofascore_live.listar_jogos_do_dia(data_iso, ids_ligas=ligas_ids)
-    print(f"\n{len(eventos)} jogos agendados nas ligas-foco.")
+    # Fetch TODOS os jogos (sem filtro API-side por ids_ligas que pode falhar
+    # devido a divergencia entre uniqueTournament.id e tournament.id).
+    # Filtramos depois em Python por nome, mais robusto.
+    eventos = sofascore_live.listar_jogos_do_dia(data_iso)
+    print(f"\n{len(eventos)} jogos agendados totais (todas as competicoes).")
 
-    # Filtra blacklist (Brasileirao, Ligue 1 por default) e so processa top-N
+    # Filtra: nao-blacklist E (zona vencedora OR liga Big-5/UCL para contexto)
+    _ligas_focus_substr = ("premier league", "laliga", "serie a", "serie b",
+                            "bundesliga", "ligue 1", "ligue 2", "liga portugal",
+                            "champions league", "europa league", "conference league",
+                            "championship", "hypermotion", "mls", "regionalliga")
+
+    def _passa_focus(liga: str) -> bool:
+        n = (liga or "").lower()
+        return any(k in n for k in _ligas_focus_substr)
+
     eventos_filtrados = []
     for e in eventos:
         liga = (e.get("tournament") or {}).get("name", "")
         if analista.liga_na_blacklist(liga):
             continue
+        if not _passa_focus(liga):
+            continue
         eventos_filtrados.append(e)
+    print(f"{len(eventos_filtrados)} jogos nas ligas-foco (apos blacklist).")
     eventos_filtrados = eventos_filtrados[: args.max_jogos]
-    print(f"{len(eventos_filtrados)} jogos a analisar (apos blacklist + limite).\n")
+    print(f"A analisar top {len(eventos_filtrados)} (limite {args.max_jogos}).\n")
 
     jogos_com_sinais = []
     for i, ev in enumerate(eventos_filtrados, 1):

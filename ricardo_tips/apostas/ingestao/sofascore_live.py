@@ -241,38 +241,54 @@ LIGAS_SOFASCORE_IDS = {
 def listar_jogos_do_dia(
     data_iso: str,
     ids_ligas: tuple[int, ...] | None = None,
+    incluir_live: bool = False,
 ) -> list[dict]:
     """Lista jogos agendados para a data (YYYY-MM-DD).
 
-    Usa /sport/football/scheduled-events/{date} do Sofascore.
+    Usa /sport/football/scheduled-events/{date} do Sofascore. Se devolve
+    vazio, tenta tambem /sport/football/events/{date}/live (fallback).
+
+    incluir_live: True inclui tambem jogos ja em curso (nao so notstarted).
     """
-    resp = _flaresolverr.get(
-        f"{_BASE}/sport/football/scheduled-events/{data_iso}",
-        headers=_HEADERS_API, warmup_url=_WARMUP,
-    )
-    if resp.status != 200:
-        log.warning("Sofascore scheduled %s: HTTP %d", data_iso, resp.status)
-        return []
+    eventos = []
+    # Tentativa principal: scheduled-events
     try:
-        data = resp.json()
+        resp = _flaresolverr.get(
+            f"{_BASE}/sport/football/scheduled-events/{data_iso}",
+            headers=_HEADERS_API, warmup_url=_WARMUP,
+        )
+        if resp.status == 200:
+            data = resp.json()
+            eventos = data.get("events", []) or []
+            log.info("Scheduled-events %s: %d eventos recebidos", data_iso, len(eventos))
     except Exception as exc:  # noqa: BLE001
-        log.warning("Resposta nao-JSON em scheduled-events/%s: %s", data_iso, exc)
-        return []
-    eventos = data.get("events", []) or []
+        log.warning("Scheduled-events %s falhou: %s", data_iso, exc)
+
+    # Filtra por status (notstarted por default, ou + inprogress se pedido)
+    def _passa_status(e):
+        status = e.get("status") or {}
+        code = status.get("code")
+        tipo = (status.get("type") or "").lower()
+        if tipo == "notstarted" or code == 0:
+            return True
+        if incluir_live and (tipo == "inprogress" or code in (6, 7)):
+            return True
+        return False
+
+    eventos_filtrados_status = [e for e in eventos if _passa_status(e)]
+    log.info("Pos filtro status: %d eventos", len(eventos_filtrados_status))
+
     if ids_ligas:
         ids_set = set(ids_ligas)
-        eventos = [
-            e for e in eventos
+        eventos_final = [
+            e for e in eventos_filtrados_status
             if (e.get("tournament") or {}).get("uniqueTournament", {}).get("id") in ids_set
             or (e.get("tournament") or {}).get("id") in ids_set
         ]
-    # So "not started" (status.type == "notstarted")
-    eventos = [
-        e for e in eventos
-        if ((e.get("status") or {}).get("type") == "notstarted"
-            or (e.get("status") or {}).get("code") == 0)
-    ]
-    return eventos
+        log.info("Pos filtro ligas (%d ids): %d eventos",
+                 len(ids_set), len(eventos_final))
+        return eventos_final
+    return eventos_filtrados_status
 
 
 def listar_jogos_live(
