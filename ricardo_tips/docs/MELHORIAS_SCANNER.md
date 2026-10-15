@@ -105,23 +105,51 @@ Quando o pre_live diario encontrar Juventus vs equipa fraca:
 
 **Testes:** 30/30 passam, todos com valores exactos do doc.
 
-### Commit 2 — snapshot de odds pré-match (M2 operacional)
+### Commit 2 — schema + CLV tracker + banca (FEITO 2026-10-15)
 
-**Nova tabela** `odds_snapshots`:
-- `id, jogo_id, mercado, lado, linha, odd, casa, timestamp, momento`
-- `momento ∈ {"abertura", "+1h", "pre_onzes", "pos_onzes", "fecho"}`
+**Schema (3 tabelas novas, nao mexem nas existentes):**
+- `OddsSnapshotPrelive` — snapshot de odds pre-match
+  - `sofascore_event_id, mercado, linha, lado, odd, casa, momento, timestamp`
+  - `momento ∈ {"abertura", "+1h", "pre_onzes", "pos_onzes", "fecho"}`
+  - Usa sofascore_event_id directamente (evita matching com jogos.id)
+- `EquipaPerfil` — perfil comportamental acumulado (ver secçao Perfil Equipa)
+- `BancaRegisto` — snapshot diario de banca + stop-loss state
 
-**Script** `scripts/snapshot_odds_prelive.py`:
-- Corre varias vezes por dia via Task Scheduler
-- Abertura: 24h antes do kickoff
-- +1h, pré-onzes (90min antes), pós-onzes (45min antes), fecho (5min antes)
+**Migracao SEM perder dados:**
+- `scripts/migrar_m2_m13.py` corre `Base.metadata.create_all()` que so cria
+  o que falta. Nao mexe nas 1927 sugestoes existentes.
 
-**Scanner live** passa a guardar snapshot a cada ciclo.
+**Modulo `apostas/modelos/clv_tracker.py`:**
+- `gravar_snapshot(...)` — insere linha em OddsSnapshotPrelive
+- `calcular_clv_sinal(evento, mercado, linha, lado, odd_apostada)` →
+  `CLVResultado` com clv_vs_casa, clv_vs_justa, momento usado, casa.
+- Logica: procura por ordem decrescente de proximidade ao kickoff
+  (fecho > pos_onzes > pre_onzes > +1h > abertura).
+- Tira margem automaticamente quando os dois lados do mercado estao
+  disponiveis no mesmo momento/casa.
 
-**Script** `scripts/mostrar_clv.py`:
-- Para cada sugestão passada: `clv = odd_apostada / odd_fecho_justa - 1`
-- Agrupa por mercado/liga/momento
-- Relatório mostra CLV **antes** do lucro
+**Modulo `apostas/modelos/banca.py`:**
+- `saldo_actual()` — ultimo BancaRegisto ou default 50 CHF
+- `estado_banca_actual()` → `EstadoBanca` com perda_dia, perda_semana,
+  apostas abertas, pode_apostar + motivo (stop-loss)
+- `gravar_snapshot_hoje()` — upsert do registo diario
+- Constantes: `BANCA_INICIAL_CHF_DEFAULT=50`, `STAKE_FLAT_CHF_DEFAULT=5`,
+  `STOP_LOSS_DIA_PCT=0.05`, `STOP_LOSS_SEMANA_PCT=0.10`
+
+**Script `scripts/banca_status.py`:**
+- Mostra snapshot do estado banca + decide se podemos apostar
+- Exit code 0 (ok) ou 2 (stop-loss) para encadear em .bat
+
+**Testes:** +7 testes clv_tracker (totais 37/37).
+
+### Commit 3 — pre_live_diario integra odds pre-match + grava sugestoes
+
+Pendente. Fluxo:
+- `obter_odds_prematch_sofascore(event_id)` em sofascore_live.py
+- Pre-live diario: para cada jogo, lê odds pre-match, aplica blend()
+  do blend_mercado.py, gera sinal com `odd_referencia`.
+- Grava `Sugestao` na BD (com event_id Sofascore no texto notas).
+- Chama `gravar_snapshot(..., momento="pre_live_12h")`.
 
 ### Commit 3 — perfil de equipa
 

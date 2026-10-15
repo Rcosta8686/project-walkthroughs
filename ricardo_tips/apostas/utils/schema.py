@@ -289,3 +289,118 @@ class ApostaReal(Base):
     # ganho | perdido | reembolso | pendente
     resultado: Mapped[str | None] = mapped_column(String(10))
     lucro: Mapped[float | None] = mapped_column(Float)
+
+
+# ═════════════════════════ MELHORIAS M1-M14 ═══════════════════════════════
+# Tabelas novas (nao mexem nas existentes). Adicionadas 2026-10-15.
+
+
+class OddsSnapshotPrelive(Base):
+    """Snapshot de odds pré-match num momento especifico (M2 — CLV).
+
+    Usa sofascore_event_id directamente para evitar matching com jogos.id.
+    O momento permite calcular CLV = odd_apostada / odd_fecho_justa - 1.
+
+    Momentos canonicos: "abertura" | "+1h" | "pre_onzes" | "pos_onzes" | "fecho"
+    """
+
+    __tablename__ = "odds_snapshot_prelive"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sofascore_event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    mercado: Mapped[str] = mapped_column(String(30), nullable=False)
+    linha: Mapped[float | None] = mapped_column(Float)
+    lado: Mapped[str] = mapped_column(String(20), nullable=False)
+    odd: Mapped[float] = mapped_column(Float, nullable=False)
+    casa: Mapped[str] = mapped_column(String(40), nullable=False)
+    momento: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_odds_snap_evento_mercado",
+            "sofascore_event_id", "mercado", "linha", "lado", "momento",
+        ),
+    )
+
+
+class EquipaPerfil(Base):
+    """Perfil comportamental acumulado por equipa (user ask 2026-10-15).
+
+    Actualizado a cada 24h a partir dos ultimos 10-20 jogos.
+    Serve para enriquecer analise pre-match: ex. "Juventus tem caudal
+    ofensivo de 18 remates/90 quando perde" — ajusta λ_remates quando
+    jogo esperado for em desvantagem.
+
+    sofascore_team_id como chave: Sofascore é a fonte canónica (user).
+    """
+
+    __tablename__ = "equipa_perfil"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sofascore_team_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, unique=True, index=True
+    )
+    nome: Mapped[str] = mapped_column(String(100), nullable=False)
+    liga: Mapped[str | None] = mapped_column(String(80))
+
+    # Comportamento quando perde (caudal ofensivo em desvantagem)
+    remates_atras_90: Mapped[float | None] = mapped_column(Float)
+    sot_atras_90: Mapped[float | None] = mapped_column(Float)
+    cantos_atras_90: Mapped[float | None] = mapped_column(Float)
+    golos_em_atraso_media: Mapped[float | None] = mapped_column(Float)
+    virar_jogos_pct: Mapped[float | None] = mapped_column(Float)  # 0.0-1.0
+
+    # Padrao por parte
+    remates_1a_parte_media: Mapped[float | None] = mapped_column(Float)
+    remates_2a_parte_media: Mapped[float | None] = mapped_column(Float)
+    cantos_1a_parte_media: Mapped[float | None] = mapped_column(Float)
+    cantos_2a_parte_media: Mapped[float | None] = mapped_column(Float)
+
+    # Baseline
+    remates_media_90: Mapped[float | None] = mapped_column(Float)
+    sot_media_90: Mapped[float | None] = mapped_column(Float)
+    cantos_media_90: Mapped[float | None] = mapped_column(Float)
+    cards_media_90: Mapped[float | None] = mapped_column(Float)
+    fouls_media_90: Mapped[float | None] = mapped_column(Float)
+    golos_marcados_90: Mapped[float | None] = mapped_column(Float)
+    golos_sofridos_90: Mapped[float | None] = mapped_column(Float)
+
+    # Fadiga e carga
+    carga_jogos_7d: Mapped[int | None] = mapped_column(Integer)
+    carga_jogos_14d: Mapped[int | None] = mapped_column(Integer)
+    viagens_longas_14d: Mapped[int | None] = mapped_column(Integer)
+
+    # Meta
+    n_jogos_analisados: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    data_atualizacao: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+    # Notas livres (padroes nao-numericos)
+    notas: Mapped[str | None] = mapped_column(Text)
+
+
+class BancaRegisto(Base):
+    """Registo diario de banca para tracking + stop-loss (M13).
+
+    Snapshot do saldo + apostas abertas no fim do dia. Usado para
+    calcular perda_dia e perda_semana vs limites.
+    """
+
+    __tablename__ = "banca_registo"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True, unique=True
+    )
+    saldo_chf: Mapped[float] = mapped_column(Float, nullable=False)
+    apostas_abertas_stake: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    apostas_abertas_num: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lucro_dia: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    stop_loss_atingido: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=0  # 0=False, 1=True (sqlite)
+    )
+    notas: Mapped[str | None] = mapped_column(Text)
