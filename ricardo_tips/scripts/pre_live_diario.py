@@ -137,9 +137,10 @@ def _analisar_jogo(evento: dict) -> dict | None:
     sinais = []
 
     # Over remates (linha padrao 22.5 e 20.5)
+    # Threshold 0.60: pre-match tem incerteza natural maior que live
     for linha in (22.5, 24.5, 26.5):
         p = _p_over(linha, lam_shots)
-        if p >= 0.68:
+        if p >= 0.60:
             sinais.append({
                 "mercado": "remates", "linha": linha, "lado": "over",
                 "prob": p, "emoji": _emoji_mercado("remates"),
@@ -149,7 +150,7 @@ def _analisar_jogo(evento: dict) -> dict | None:
     # SoT over
     for linha in (7.5, 8.5, 9.5):
         p = _p_over(linha, lam_sot)
-        if p >= 0.68:
+        if p >= 0.60:
             sinais.append({
                 "mercado": "remates_a_baliza", "linha": linha, "lado": "over",
                 "prob": p, "emoji": _emoji_mercado("remates_a_baliza"),
@@ -159,19 +160,18 @@ def _analisar_jogo(evento: dict) -> dict | None:
     # BTTS (via H2H rate + Poisson)
     if h2h.get("n_jogos", 0) >= 5:
         btts_rate = h2h["btts_rate"]
-        # Poisson com lam dividido
         p_casa_marca = 1 - math.exp(-lam_golos / 2)
         p_fora_marca = 1 - math.exp(-lam_golos / 2)
         p_btts_poisson = p_casa_marca * p_fora_marca
         p_btts_final = 0.5 * p_btts_poisson + 0.5 * btts_rate
-        if p_btts_final >= 0.65:
+        if p_btts_final >= 0.57:
             sinais.append({
                 "mercado": "btts", "linha": None, "lado": "sim",
                 "prob": p_btts_final, "emoji": _emoji_mercado("btts"),
             })
 
-    if not sinais:
-        return None
+    # Devolve sempre o resultado — mesmo sem sinais, queremos ver H2H/forma
+    # para contexto manual. Lista de sinais pode ficar vazia.
 
     # Rank por estrelas
     for s in sinais:
@@ -251,8 +251,10 @@ def main() -> None:
     # Fetch TODOS os jogos (sem filtro API-side por ids_ligas que pode falhar
     # devido a divergencia entre uniqueTournament.id e tournament.id).
     # Filtramos depois em Python por nome, mais robusto.
-    eventos = sofascore_live.listar_jogos_do_dia(data_iso)
-    print(f"\n{len(eventos)} jogos agendados totais (todas as competicoes).")
+    # incluir_live=True: jogos ja a decorrer sao uteis (ex. ver UEL 18:45 HT
+    # enquanto o 21:00 nao comecou).
+    eventos = sofascore_live.listar_jogos_do_dia(data_iso, incluir_live=True)
+    print(f"\n{len(eventos)} jogos agendados+live totais (todas as competicoes).")
 
     # Filtra: nao-blacklist E (zona vencedora OR liga Big-5/UCL para contexto)
     _ligas_focus_substr = ("premier league", "laliga", "serie a", "serie b",
@@ -276,7 +278,7 @@ def main() -> None:
     eventos_filtrados = eventos_filtrados[: args.max_jogos]
     print(f"A analisar top {len(eventos_filtrados)} (limite {args.max_jogos}).\n")
 
-    jogos_com_sinais = []
+    jogos_analisados = []
     for i, ev in enumerate(eventos_filtrados, 1):
         home = (ev.get("homeTeam") or {}).get("name", "?")
         away = (ev.get("awayTeam") or {}).get("name", "?")
@@ -287,17 +289,23 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"✗ ({exc})")
             continue
-        if resultado:
-            n_sinais = len(resultado["sinais"])
-            estrelas_max = max((s["estrelas"] for s in resultado["sinais"]), default=0)
+        if not resultado:
+            print("sem contexto")
+            continue
+        n_sinais = len(resultado["sinais"])
+        if n_sinais:
+            estrelas_max = max(s["estrelas"] for s in resultado["sinais"])
             print(f"✓ {n_sinais} sinal(ais), top {estrelas_max}⭐")
-            jogos_com_sinais.append(resultado)
         else:
-            print("sem sinais fortes")
+            print("sem sinais fortes (mostrado para contexto)")
+        jogos_analisados.append(resultado)
 
-    # Ordena por melhor estrela
+    jogos_com_sinais = [j for j in jogos_analisados if j["sinais"]]
+    jogos_sem_sinais = [j for j in jogos_analisados if not j["sinais"]]
+
+    # Ordena com-sinais por melhor estrela
     jogos_com_sinais.sort(
-        key=lambda j: -max((s["estrelas"] for s in j["sinais"]), default=0)
+        key=lambda j: -max(s["estrelas"] for s in j["sinais"])
     )
 
     print(f"\n{'=' * 90}")
@@ -307,10 +315,17 @@ def main() -> None:
         print()
         print(_formatar_jogo(j))
 
+    if jogos_sem_sinais:
+        print(f"\n{'=' * 90}")
+        print(f"  OUTROS JOGOS DO DIA (sem sinal forte)  —  {len(jogos_sem_sinais)}")
+        print("=" * 90)
+        for j in jogos_sem_sinais:
+            print()
+            print(_formatar_jogo(j))
+
     if args.telegram and jogos_com_sinais:
         print(f"\n{'─' * 90}")
         print("  Enviando para Telegram...")
-        # Mensagem agregada: cabeca + 1 jogo por bloco
         cab = f"📅 *PRE-LIVE {data_iso}*  ·  {len(jogos_com_sinais)} jogo(s) com sinais\n"
         try:
             cliente().enviar(cab)
