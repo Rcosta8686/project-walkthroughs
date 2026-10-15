@@ -64,6 +64,8 @@ def main() -> None:
              "'soft-books' (Pinnacle como fair price vs Betano/bet365/etc, "
              "DEFAULT — estratégia com edge real contra casas menos eficientes).",
     )
+    parser.add_argument("--telegram", action="store_true",
+                        help="Envia resumo das sugestoes para o Telegram.")
     args = parser.parse_args()
 
     ref = datetime.fromisoformat(args.referencia) if args.referencia else datetime.utcnow()
@@ -142,6 +144,56 @@ def main() -> None:
     print(f"{'='*78}")
     print(f"  Total: {len(sugestoes)} sugestões. Stake sugerido (flat): €{len(sugestoes)}.")
     print(f"{'='*78}\n")
+
+    # ─── Telegram (--telegram) ───
+    if args.telegram and sugestoes:
+        try:
+            from apostas.alertas.telegram_cliente import cliente  # noqa: PLC0415
+            from apostas.modelos.banca import (  # noqa: PLC0415
+                STAKE_FLAT_CHF_DEFAULT, estado_banca_actual,
+            )
+            try:
+                estado = estado_banca_actual()
+                if not estado.pode_apostar:
+                    print(f"⛔ Telegram bloqueado: {estado.motivo}")
+                    return
+            except Exception:  # noqa: BLE001
+                estado = None
+
+            stake = STAKE_FLAT_CHF_DEFAULT
+            total_chf = len(sugestoes) * stake
+            cab = (f"🎯 *EV FIM-DE-SEMANA*  ·  {cabecalho}\n"
+                   f"{len(sugestoes)} sugestoes · stake {stake:.0f} CHF cada = "
+                   f"CHF {total_chf:.0f} total")
+            cliente().enviar(cab)
+
+            # Agrupa por liga, max 5 jogos por msg Telegram
+            for liga_nome, items in sorted(por_liga.items()):
+                linhas = [f"🏆 *{liga_nome}*"]
+                items_ord = sorted(items, key=lambda x: (x.jogo.data_utc, -x.sugestao.ev))[:10]
+                for s in items_ord:
+                    data = s.jogo.data_utc.strftime("%a %d/%m %H:%M")
+                    prob = s.sugestao.prob_modelo * 100
+                    odd = s.sugestao.odd_referencia
+                    ev = s.sugestao.ev * 100
+                    mercado_raw = s.sugestao.mercado.split("@")[0]
+                    if mercado_raw == "golos":
+                        aposta = f"{s.sugestao.lado.upper()} {s.sugestao.linha}"
+                    else:
+                        etiqueta = {"casa": "1", "empate": "X", "fora": "2"}[s.sugestao.lado]
+                        aposta = f"1X2 {etiqueta}"
+                    onde = f" @{s.casa_soft}" if hasattr(s, "casa_soft") else ""
+                    linhas.append(
+                        f"⚽ {data} {s.casa.nome[:14]} vs {s.fora.nome[:14]}\n"
+                        f"   {aposta}{onde} · odd {odd:.2f} · EV +{ev:.1f}%"
+                    )
+                try:
+                    cliente().enviar("\n".join(linhas))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠ Falha a enviar liga {liga_nome}: {exc}")
+            print(f"\n✓ {len(sugestoes)} sugestoes enviadas para Telegram.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠ Falha envio Telegram: {exc}")
 
 
 if __name__ == "__main__":

@@ -108,15 +108,52 @@ Também é usado como gate pelo `pre_live_diario.py` — se perdeste 5% hoje ou 
 
 ---
 
-## Resumo horário diário
+## 4. EV Fim-de-Semana (Odds API Pinnacle vs softs) — Sexta 10h00
 
-| Hora | Que acontece |
+Complementar ao fluxo 2 — este usa a Odds API (Pinnacle como fair price)
+para encontrar sinais onde Betano/bet365 pagam mais que a probabilidade real.
+
+### Passos
+- Name: `Ricardo EV Fim-de-Semana`
+- Trigger: Weekly, **Friday** @ 10:00:00
+- Action → Program: `C:\...\ricardo_tips\automacao\ev_fim_de_semana_auto.bat`
+- Action → Start in: `C:\...\ricardo_tips`
+
+Faz 2 passos:
+1. `atualizar_dados.py` — puxa fixtures + odds Pinnacle+softs via Odds API
+2. `prever_fim_de_semana.py --modo soft-books --mercado todos --telegram`
+
+Log em `dados\ev_fim_de_semana.log`.
+
+> **Nota:** Odds API consome créditos (free tier: 500/mês). Se não quiseres gastar, podes usar só o fluxo 2 (`fim_de_semana_auto.bat`) que usa Sofascore gratuito.
+
+---
+
+## 5. Relatório CLV semanal (M14) — Domingo 22h00
+
+Mostra closing line value médio dos últimos 7 dias por mercado + total.
+CLV > 0 confirma que o scanner tem edge real.
+
+### Passos
+- Name: `Ricardo CLV Semanal`
+- Trigger: Weekly, **Sunday** @ 22:00:00
+- Action → Program: `C:\...\ricardo_tips\automacao\relatorio_clv_semanal.bat`
+
+Envia resumo para Telegram: `n=X CLV +N.NN% positivo NN%`.
+
+---
+
+## Resumo horário
+
+| Dia / hora | Fluxo |
 |---|---|
-| 09:00 (sexta) | Fim-de-semana auto → Telegram com sex+sáb+dom (40 jogos max) |
-| 12:00 | Pre-live diário → Telegram com jogos de hoje |
-| 13:30 | Scanner live tarde |
-| 18:00 | Scanner live noite 1 |
-| 20:30 | Scanner live noite 2 |
+| **Diário 12:00** | Pre-live diário Sofascore → Telegram |
+| **Diário 13:30** | Scanner live tarde |
+| **Diário 18:00** | Scanner live noite 1 |
+| **Diário 20:30** | Scanner live noite 2 |
+| **Sexta 09:00** | Fim-de-semana Sofascore (40 jogos sex+sáb+dom) |
+| **Sexta 10:00** | EV Fim-de-semana Odds API (Pinnacle vs softs) |
+| **Domingo 22:00** | Relatório CLV semanal |
 
 ---
 

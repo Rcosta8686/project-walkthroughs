@@ -25,9 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from apostas.alertas import analista  # noqa: E402
 from apostas.alertas.filtros import ContextoFiltro, passa_filtros_m6  # noqa: E402
 from apostas.alertas.telegram_cliente import cliente  # noqa: E402
-from apostas.ingestao import sofascore_classificacao, sofascore_contexto, sofascore_live  # noqa: E402
+from apostas.ingestao import (  # noqa: E402
+    sofascore_classificacao, sofascore_contexto, sofascore_live, sofascore_odds,
+)
 from apostas.modelos import banca, clv_tracker, perfil_equipa  # noqa: E402
 from apostas.modelos.banca import STAKE_FLAT_CHF_DEFAULT  # noqa: E402
+from apostas.modelos.blend_mercado import aplicar_blend  # noqa: E402
+from apostas.modelos.melhorias import ev as _ev_calc, tirar_margem  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 
 log = get_logger(__name__)
@@ -133,6 +137,14 @@ def _analisar_jogo(evento: dict) -> dict | None:
     perfil_c = perfil_equipa.obter_perfil(home_id) if home_id else None
     perfil_f = perfil_equipa.obter_perfil(away_id) if away_id else None
 
+    # Odds pre-match do Sofascore (gratis via flaresolverr) — M1
+    odds_prematch = {}
+    try:
+        if event_id:
+            odds_prematch = sofascore_odds.obter_odds_prematch(int(event_id))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("odds prematch falhou %s: %s", event_id, exc)
+
     # Lambda estimates — AJUSTADO por H2H + forma + perfil (varia por jogo)
     media_h2h = h2h.get("media_golos_total")
     lam_golos = _ajustar_lam_com_h2h(LAM_GOLOS_BASE, media_h2h)
@@ -149,47 +161,83 @@ def _analisar_jogo(evento: dict) -> dict | None:
     lam_golos += caudal_bonus
 
     # Sinais nos mercados que REALMENTE sabemos modelar pre-match:
-    # golos e BTTS (temos lam ajustado por equipa). Remates/SoT precisariam
-    # de dados per-team de remates por jogo que nao temos pre-match.
+    # golos e BTTS. Quando ha odds pre-match, aplicar blend p_mercado×p_modelo
+    # e calcular EV real; sem odds, cai no modelo so.
     sinais = []
 
-    # Over 2.5 golos
-    p_over_25 = _p_over(2.5, lam_golos)
-    if p_over_25 >= 0.60:
-        sinais.append({
-            "mercado": "golos", "linha": 2.5, "lado": "over",
-            "prob": p_over_25, "emoji": _emoji_mercado("golos"),
-        })
+    def _odd_e_ev(mercado_odds_key: str, lado: str, p_modelo: float):
+        """Procura odd + ao mesmo tempo da oposta (para tirar margem).
+        Devolve (odd, p_mercado, p_final, ev) ou (None, None, p_modelo, None).
+        """
+        bloco = odds_prematch.get(mercado_odds_key)
+        if not bloco or lado not in bloco:
+            return None, None, p_modelo, None
+        odd = bloco[lado]
+        # Tirar margem usando o lado oposto
+        opostos = {"over": "under", "under": "over", "sim": "nao", "nao": "sim"}
+        oposto = opostos.get(lado)
+        if oposto and oposto in bloco:
+            probs, _m = tirar_margem([odd, bloco[oposto]])
+            p_mercado = probs[0]
+        else:
+            p_mercado = 1.0 / odd
+        # Blend: 30% modelo, 70% mercado (defensivo pre-match)
+        blend_result = aplicar_blend(p_modelo, odd)
+        p_final = blend_result["p_final"]
+        ev_real = _ev_calc(p_final, odd)
+        return odd, p_mercado, p_final, ev_real
 
-    # Over 1.5 golos (sinal mais seguro, threshold mais alto)
-    if not sinais:  # so se nao emitiu Over 2.5
-        p_over_15 = _p_over(1.5, lam_golos)
-        if p_over_15 >= 0.78:
+    # Over 2.5 golos
+    p_over_25_modelo = _p_over(2.5, lam_golos)
+    if p_over_25_modelo >= 0.55:
+        odd, p_mkt, p_fin, ev_real = _odd_e_ev("golos_2.5", "over", p_over_25_modelo)
+        # Emite se modelo diz >= 0.60 OU se tem odd + EV positivo
+        if p_over_25_modelo >= 0.60 or (ev_real is not None and ev_real >= 0.03):
+            sinais.append({
+                "mercado": "golos", "linha": 2.5, "lado": "over",
+                "prob": p_fin, "prob_modelo": p_over_25_modelo,
+                "prob_mercado": p_mkt, "odd": odd, "ev": ev_real,
+                "emoji": _emoji_mercado("golos"),
+            })
+
+    # Over 1.5 golos
+    if not sinais:
+        p_over_15_modelo = _p_over(1.5, lam_golos)
+        odd, p_mkt, p_fin, ev_real = _odd_e_ev("golos_1.5", "over", p_over_15_modelo)
+        if p_over_15_modelo >= 0.78 or (ev_real is not None and ev_real >= 0.03):
             sinais.append({
                 "mercado": "golos", "linha": 1.5, "lado": "over",
-                "prob": p_over_15, "emoji": _emoji_mercado("golos"),
+                "prob": p_fin, "prob_modelo": p_over_15_modelo,
+                "prob_mercado": p_mkt, "odd": odd, "ev": ev_real,
+                "emoji": _emoji_mercado("golos"),
             })
 
     # Under 3.5 (defensivo — para jogos com lam baixo)
     if lam_golos < 2.2:
-        p_under_35 = _poisson_cdf(3, lam_golos)
-        if p_under_35 >= 0.78:
+        p_under_35_modelo = _poisson_cdf(3, lam_golos)
+        odd, p_mkt, p_fin, ev_real = _odd_e_ev("golos_3.5", "under", p_under_35_modelo)
+        if p_under_35_modelo >= 0.78 or (ev_real is not None and ev_real >= 0.03):
             sinais.append({
                 "mercado": "golos", "linha": 3.5, "lado": "under",
-                "prob": p_under_35, "emoji": _emoji_mercado("golos"),
+                "prob": p_fin, "prob_modelo": p_under_35_modelo,
+                "prob_mercado": p_mkt, "odd": odd, "ev": ev_real,
+                "emoji": _emoji_mercado("golos"),
             })
 
-    # BTTS (via H2H rate + Poisson com lam dividido 50/50)
+    # BTTS
     if h2h.get("n_jogos", 0) >= 5:
         btts_rate = h2h["btts_rate"]
         p_casa_marca = 1 - math.exp(-lam_golos / 2)
         p_fora_marca = 1 - math.exp(-lam_golos / 2)
         p_btts_poisson = p_casa_marca * p_fora_marca
-        p_btts_final = 0.5 * p_btts_poisson + 0.5 * btts_rate
-        if p_btts_final >= 0.60:
+        p_btts_modelo = 0.5 * p_btts_poisson + 0.5 * btts_rate
+        odd, p_mkt, p_fin, ev_real = _odd_e_ev("btts", "sim", p_btts_modelo)
+        if p_btts_modelo >= 0.60 or (ev_real is not None and ev_real >= 0.03):
             sinais.append({
                 "mercado": "btts", "linha": None, "lado": "sim",
-                "prob": p_btts_final, "emoji": _emoji_mercado("btts"),
+                "prob": p_fin, "prob_modelo": p_btts_modelo,
+                "prob_mercado": p_mkt, "odd": odd, "ev": ev_real,
+                "emoji": _emoji_mercado("btts"),
             })
 
     # Devolve sempre o resultado — mesmo sem sinais, queremos ver H2H/forma
@@ -231,8 +279,15 @@ def _formatar_jogo(j: dict) -> str:
             desc = f"{s['lado'].capitalize()} {linha_str} golos"
         else:
             desc = f"{s['lado'].capitalize()} {linha_str} {s['mercado']}"
+        # EV real + odd real quando temos
+        if s.get("odd") and s.get("ev") is not None:
+            extras = f" · odd {s['odd']:.2f} · EV {s['ev']*100:+.1f}%"
+        else:
+            extras = ""
         stake_txt = f" · stake {STAKE_FLAT_CHF:.0f} CHF" if s.get("stake") else ""
-        linhas.append(f"{estrelas} {s['emoji']} {desc} · {s['prob']*100:.0f}%{stake_txt}")
+        linhas.append(
+            f"{estrelas} {s['emoji']} {desc} · {s['prob']*100:.0f}%{extras}{stake_txt}"
+        )
 
     # Contexto H2H
     h2h = j["h2h"]
@@ -372,11 +427,15 @@ def main() -> None:
             continue
 
         # ─── M6: filtro final 8 pontos + anotacao stake + snapshot CLV ───
+        # Agora usa EV e odd REAIS quando disponiveis (ou fallback neutral)
         sinais_passaram = []
         for s in resultado["sinais"]:
+            # EV real se temos odd; senao placeholder "neutro" para passar M6-P1
+            ev_real = s.get("ev") if s.get("ev") is not None else 0.05
+            odd_real = s.get("odd") if s.get("odd") else 2.0
             ctx = ContextoFiltro(
-                ev=0.05,  # placeholder — pre_live nao calcula EV sem odds
-                odd=2.0,  # placeholder; proxima iteracao usa odd pre-match real
+                ev=ev_real,
+                odd=odd_real,
                 mercado=s["mercado"],
                 liga=liga,
                 dados_recentes=True,
@@ -388,15 +447,15 @@ def main() -> None:
             s["m6_passou"] = rf.passou
             s["m6_razao"] = rf.razao()
             s["stake"] = STAKE_FLAT_CHF if rf.passou else 0.0
-            # Grava snapshot (momento "pre_live_12h") — sem odds reais ainda
-            # mas marca o sinal como "foi emitido".
+            # Grava snapshot com ODD REAL do Sofascore (quando temos)
             if rf.passou and resultado.get("event_id"):
                 try:
                     clv_tracker.gravar_snapshot(
                         sofascore_event_id=int(resultado["event_id"]),
                         mercado=s["mercado"], linha=s.get("linha"),
-                        lado=s["lado"], odd=2.0,  # placeholder
-                        casa="modelo_pre_live", momento="pre_live_12h",
+                        lado=s["lado"], odd=odd_real,
+                        casa="sofascore" if s.get("odd") else "modelo_pre_live",
+                        momento="pre_live_12h",
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.debug("snapshot falhou: %s", exc)
