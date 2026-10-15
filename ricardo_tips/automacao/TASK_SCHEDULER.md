@@ -1,98 +1,119 @@
-# Task Scheduler Windows — os 3 fluxos automatizados
+# Task Scheduler Windows — 4 fluxos automatizados
 
-Depois destes passos, o teu PC envia sinais para o Telegram sem precisares
-de fazer nada:
+Configuração final (confirmada 2026-10-15):
 
-- **Diariamente às 12h00** → `pre_live_diario_auto.bat` → análise pre-match do dia
-- **Sexta-feira às 09h00** → `fim_de_semana_auto.bat` → análise sex+sáb+dom
-- **3 janelas por dia** → `scanner_live_v2_auto.bat` → scanner live durante jogos
-
-Pré-requisitos (já tens):
-- Python + venv instalado em `C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\venv\`
-- Docker Desktop com flaresolverr container (`docker start flaresolverr` nos .bats cobre o re-start)
-- Token Telegram configurado em `.env`
+| Dia / hora | Tarefa | Frequência |
+|---|---|---|
+| **Diário 13h30** | `pre_live_diario_auto.bat` | Todos os dias |
+| **24/24** | `scanner_live_v2_auto.bat` | Correr sempre (restart on crash) |
+| **Sexta 12h00** | ⭐ `ev_fim_de_semana_auto.bat` | Só sexta |
+| **Domingo 22h00** | `relatorio_clv_semanal.bat` | Só domingo |
 
 ---
 
 ## Pré-trabalho (1 vez só)
 
-Abre PowerShell em `ricardo_tips\` e corre:
-
 ```powershell
+cd ricardo_tips
 git pull
 venv\Scripts\python.exe scripts\migrar_m2_m13.py
 venv\Scripts\python.exe scripts\atualizar_perfis_equipa.py
 ```
 
-Explicação:
-- `migrar_m2_m13.py` cria as 3 tabelas novas (OddsSnapshot, EquipaPerfil, BancaRegisto) **sem apagar** nada dos teus 1927 sinais.
-- `atualizar_perfis_equipa.py` popula perfis das equipas que jogam hoje (~15 min no 1º run; depois cache 24h).
+Verifica Docker Desktop está aberto (`docker ps` deve mostrar `flaresolverr`).
 
 ---
 
-## 1. Pre-live diário — 12h00 todos os dias
+## 1. Pre-live Diário — 13h30 todos os dias
 
-### Passos no Task Scheduler
-
-1. Abre **Task Scheduler** (Windows + R → `taskschd.msc`).
-2. **Create Task** (não "Basic Task" — queremos mais opções).
-3. **General**:
-   - Name: `Ricardo Pre-Live 12h`
+### Passos
+1. Abre **Task Scheduler** (`Win+R` → `taskschd.msc`).
+2. **Create Task** → tab **General**:
+   - Name: `Ricardo Pre-Live 13h30`
    - Run whether user is logged on or not ✓
    - Run with highest privileges ✓
-4. **Triggers** → New:
-   - Begin the task: `On a schedule`
-   - Daily, start at **12:00:00**, recur every 1 day.
-5. **Actions** → New:
-   - Action: Start a program
-   - Program/script: `C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\automacao\pre_live_diario_auto.bat`
+3. **Triggers** → New:
+   - On a schedule, Daily, start at **13:30:00**, recur every 1 day
+4. **Actions** → New:
+   - Program: `C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\automacao\pre_live_diario_auto.bat`
    - Start in: `C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips`
-6. **Conditions** → desactiva "Start the task only if the computer is on AC power" (para portáteis).
-7. **Settings** → "Allow task to be run on demand" ✓
-8. OK. Vai pedir a password da conta Windows.
+5. **Conditions**: desactiva "Start only if on AC power" (para portáteis)
+6. **Settings**: "Allow task to be run on demand" ✓
 
-### Testar imediatamente
-Botão direito na tarefa → **Run**. Verifica em `ricardo_tips\dados\pre_live_diario.log`.
+Log: `dados\pre_live_diario.log`
 
 ---
 
-## 2. Fim-de-semana — Sexta 09h00
+## 2. Scanner Live — 24/24
 
-Mesmos passos, com estas diferenças:
+Correr permanentemente (restart automático se cair).
 
-- Name: `Ricardo Fim-de-Semana Sexta`
-- Trigger: Weekly, **Friday** @ 09:00:00
-- Action → Program: `C:\...\ricardo_tips\automacao\fim_de_semana_auto.bat`
+### Passos
+1. **Create Task** → **General**:
+   - Name: `Ricardo Scanner Live 24h`
+   - Run whether user is logged on or not ✓
+   - Run with highest privileges ✓
+2. **Triggers** → New **2 triggers**:
+   - **Trigger A**: Begin task = **At startup** (arranca com Windows)
+   - **Trigger B**: Begin task = **At logon** (arranca ao fazer login)
+3. **Actions** → New:
+   - Program: `C:\...\ricardo_tips\automacao\scanner_live_v2_auto.bat`
+   - Start in: `C:\...\ricardo_tips`
+4. **Conditions**: desactiva "Start only if on AC power"
+5. **Settings** — **IMPORTANTE para 24/24:**
+   - "Allow task to be run on demand" ✓
+   - "If the task fails, restart every" → **5 minutes**, up to **999 times**
+   - "Stop the task if it runs longer than" → **DESMARCA** (queremos infinito)
+   - "If the running task does not end when requested, force it to stop" ✓
+   - "If the task is already running, then the following rule applies" → **Do not start a new instance**
+
+Scanner corre `--ciclos 0` (loop infinito). Dorme 180s entre ciclos. Se nenhum jogo nas ligas focais, continua a verificar silenciosamente.
+
+Log: `dados\scanner_live.log` (vai crescer — não apagar durante o dia)
+
+---
+
+## 3. ⭐ EV Fim-de-Semana — Sexta 12h00
+
+Lista limpa estilo "Marítimo x Porto · Over 2.5 · EV +6.4% · stake 5 CHF".
+
+### Passos
+- Name: `Ricardo EV Fim-de-Semana`
+- Trigger: Weekly, **Friday** @ **12:00:00**
+- Action → Program: `C:\...\ricardo_tips\automacao\ev_fim_de_semana_auto.bat`
 - Action → Start in: `C:\...\ricardo_tips`
 
-Isto corre o `pre_live_diario.py --dias 3` que apanha sex+sáb+dom (até 40 jogos). Vais receber TODOS os sinais do fim-de-semana numa só vez no Telegram.
+Faz 2 passos:
+1. `atualizar_dados.py` → puxa Pinnacle + softs via Odds API
+2. `prever_fim_de_semana.py --modo soft-books --telegram` → Telegram agrupado por dia
 
-Log em `dados\fim_de_semana.log`.
+Log: `dados\ev_fim_de_semana.log`
 
 ---
 
-## 3. Scanner live — 3 janelas por dia
+## 4. Relatório CLV Semanal — Domingo 22h00
 
-O scanner corre em modo contínuo (ciclo a cada 3 min). Agendamos 3 janelas típicas de jogos europeus:
+Mostra CLV médio dos 7 dias por mercado + veredicto edge/sem edge.
 
-### Trigger 1: tarde (jogos 14h-18h, Big-5 fim-de-semana)
-- Name: `Ricardo Scanner Live Tarde`
-- Trigger: Daily @ **13:30**
-- Action: `scanner_live_v2_auto.bat`
+### Passos
+- Name: `Ricardo CLV Semanal`
+- Trigger: Weekly, **Sunday** @ **22:00:00**
+- Action → Program: `C:\...\ricardo_tips\automacao\relatorio_clv_semanal.bat`
 
-### Trigger 2: início da noite (jogos 18:30-20:30, UEL/Portugal/Championship)
-- Name: `Ricardo Scanner Live Noite 1`
-- Trigger: Daily @ **18:00**
-- Action: `scanner_live_v2_auto.bat`
+---
 
-### Trigger 3: noite tardia (jogos 21:00, UCL/UEL/LaLiga/Serie A)
-- Name: `Ricardo Scanner Live Noite 2`
-- Trigger: Daily @ **20:30**
-- Action: `scanner_live_v2_auto.bat`
+## Teste manual antes de agendar
 
-Cada janela corre até 90 ciclos (~4.5h max) e o scanner sai sozinho quando não houver mais jogos. Se já estiver a correr quando a janela seguinte começa, Task Scheduler salta (`Settings` → "Do not start a new instance").
+Correr cada um para confirmar que funciona:
 
-Log em `dados\scanner_live.log`.
+```powershell
+.\automacao\pre_live_diario.bat                          # pre-live (versao com pause)
+venv\Scripts\python.exe scripts\scanner_live_v2.py --ciclos 1 --telegram  # 1 ciclo scanner
+.\automacao\ev_fim_de_semana_auto.bat                    # EV FDS
+venv\Scripts\python.exe scripts\mostrar_clv.py --dias 7 --telegram  # CLV
+```
+
+Se os 4 correm bem, agenda os `_auto.bat` no Task Scheduler.
 
 ---
 
@@ -102,76 +123,24 @@ Log em `dados\scanner_live.log`.
 venv\Scripts\python.exe scripts\banca_status.py
 ```
 
-Mostra: saldo, perda do dia, apostas abertas, se stop-loss foi atingido.
-
-Também é usado como gate pelo `pre_live_diario.py` — se perdeste 5% hoje ou 10% na semana, o Telegram pre-live é bloqueado automaticamente (output continua a aparecer para contexto).
-
----
-
-## 4. EV Fim-de-Semana (Odds API Pinnacle vs softs) — **Sexta 12h00**
-
-Lista limpa estilo "SEX 17/10 · 21:00 · Marítimo x Porto · Over 2.5 @ 1.85
-· EV +6.4% · stake 5 CHF". Usa Odds API (Pinnacle como fair price) para
-encontrar sinais onde Betano/bet365 pagam mais que a probabilidade real.
-
-### Passos
-- Name: `Ricardo EV Fim-de-Semana`
-- Trigger: Weekly, **Friday** @ 12:00:00
-- Action → Program: `C:\...\ricardo_tips\automacao\ev_fim_de_semana_auto.bat`
-- Action → Start in: `C:\...\ricardo_tips`
-
-Faz 2 passos:
-1. `atualizar_dados.py` — puxa fixtures + odds Pinnacle+softs via Odds API
-2. `prever_fim_de_semana.py --modo soft-books --mercado todos --telegram`
-
-Log em `dados\ev_fim_de_semana.log`.
-
-> **Nota:** Odds API consome créditos (free tier: 500/mês). Se não quiseres gastar, podes usar só o fluxo 2 (`fim_de_semana_auto.bat`) que usa Sofascore gratuito.
-
----
-
-## 5. Relatório CLV semanal (M14) — Domingo 22h00
-
-Mostra closing line value médio dos últimos 7 dias por mercado + total.
-CLV > 0 confirma que o scanner tem edge real.
-
-### Passos
-- Name: `Ricardo CLV Semanal`
-- Trigger: Weekly, **Sunday** @ 22:00:00
-- Action → Program: `C:\...\ricardo_tips\automacao\relatorio_clv_semanal.bat`
-
-Envia resumo para Telegram: `n=X CLV +N.NN% positivo NN%`.
-
----
-
-## Resumo horário
-
-| Dia / hora | Fluxo |
-|---|---|
-| **Diário 12:00** | Pre-live diário Sofascore → Telegram |
-| **Diário 13:30** | Scanner live tarde |
-| **Diário 18:00** | Scanner live noite 1 |
-| **Diário 20:30** | Scanner live noite 2 |
-| **Sexta 09:00** | Fim-de-semana Sofascore (40 jogos sex+sáb+dom) |
-| **Sexta 12:00** | ⭐ **EV Fim-de-semana** (lista estilo "Marítimo x Porto · Over 2.5 · EV +6%") |
-| **Domingo 22:00** | Relatório CLV semanal |
+Mostra saldo CHF 50, perda hoje, apostas abertas, stop-loss state.
+Se stop-loss diário (-5%) ou semanal (-10%) foi atingido, **Telegram é bloqueado automaticamente** nos 4 fluxos.
 
 ---
 
 ## Troubleshooting
 
-**Task "corre" mas nada acontece:**
-- Abre o log em `dados\pre_live_diario.log` ou `dados\scanner_live.log`
-- Confirma que o venv path é esse exacto (olha `where python` no PowerShell)
+**Scanner não envia Telegram:**
+- Hard floor é 3 estrelas (default). Para ver mais: `--analista-tele-estrelas 2`
+- Para ver só os melhores: `--analista-tele-estrelas 5`
 
 **Flaresolverr HTTP 403/404:**
-- Docker container pode estar parado: `docker start flaresolverr`
-- Confirma com `docker ps`
-
-**Telegram não recebe:**
-- Verifica banca_status: se stop-loss atingiu, Telegram é bloqueado
-- Testa `venv\Scripts\python.exe scripts\debug_telegram.py`
+- Docker Desktop fechado? `docker start flaresolverr`
 
 **Portátil em sleep:**
-- Nas definições de energia, "Wake timers": `Enabled`
-- No Task Scheduler da tarefa: Settings → "Wake the computer to run this task" ✓
+- Nas definições de energia Windows, "Allow wake timers": `Enable`
+- Em cada task: Settings → "Wake the computer to run this task" ✓
+
+**Scanner caiu e não reiniciou:**
+- Verifica no Task Scheduler se a retry policy está `5 min / 999 vezes`
+- Olha o `dados\scanner_live.log` para ver o erro

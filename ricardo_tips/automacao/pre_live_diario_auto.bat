@@ -5,7 +5,7 @@ REM
 REM Agendar no Task Scheduler:
 REM   Program/script: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\automacao\pre_live_diario_auto.bat
 REM   Start in: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips
-REM   Trigger: Daily @ 12:00
+REM   Trigger: Daily @ 13:30 (margem apos primeiros jogos da tarde comecarem)
 
 cd /d "%~dp0.."
 
