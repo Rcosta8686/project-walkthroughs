@@ -286,11 +286,12 @@ def listar_jogos_do_dia(
         except Exception as exc:  # noqa: BLE001
             log.warning("Scheduled %s falhou: %s", url, exc)
 
-    # ─── Tentativa 2: fallback por torneio (unique-tournament/.../next/0) ──
+    # ─── Tentativa 2: fallback por torneio ──
+    # Usa /unique-tournament/{id}/featured-events (padrao conhecido do site)
+    # que devolve "proximos + ultimos" jogos do torneio em uma unica call.
     if not eventos:
         log.info("Scheduled vazios — fallback: iterando %d ligas conhecidas",
                  len(LIGAS_SOFASCORE_IDS))
-        # Janela: do inicio do dia (UTC) ate inicio do dia seguinte.
         try:
             dia = datetime.fromisoformat(data_iso).replace(tzinfo=timezone.utc)
         except ValueError:
@@ -302,42 +303,84 @@ def listar_jogos_do_dia(
             list(ids_ligas) if ids_ligas else list(LIGAS_SOFASCORE_IDS.values())
         )
         ja_vistos: set[int] = set()
+        # Mapa tid -> nome (para logs legiveis)
+        _nome_por_id = {v: k for k, v in LIGAS_SOFASCORE_IDS.items()}
+        contadores = {"200": 0, "non200": 0, "no_events": 0, "with_events": 0}
+
         for tid in tournament_ids:
-            # /unique-tournament/{id}/events/next/0 — mesmo padrao que
-            # /team/{id}/events/last/0 que ja sabemos funcionar.
+            nome = _nome_por_id.get(tid, f"id={tid}")
+            # Varios paths tentativos — nunca sabemos qual Sofascore responde.
+            # `featured-events` e o que o site chama ao abrir a pagina de liga.
             paths = [
+                f"/unique-tournament/{tid}/featured-events",
                 f"/unique-tournament/{tid}/events/next/0",
-                f"/unique-tournament/{tid}/events/last/0",  # inclui jogos de hoje
+                f"/unique-tournament/{tid}/events/last/0",
             ]
+            encontrou_path_ok = False
             achou_torneio = 0
+            total_bruto = 0
             for path in paths:
                 try:
                     resp = _flaresolverr.get(
                         f"{_BASE}{path}", headers=_HEADERS_API, warmup_url=_WARMUP,
                     )
-                    if resp.status != 200:
-                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("[%s] %s: excepcao %s", nome, path, exc)
+                    continue
+                if resp.status != 200:
+                    contadores["non200"] += 1
+                    log.debug("[%s] %s: HTTP %d", nome, path, resp.status)
+                    continue
+                encontrou_path_ok = True
+                contadores["200"] += 1
+                try:
                     data = resp.json()
                 except Exception as exc:  # noqa: BLE001
-                    log.debug("Torneio %d %s falhou: %s", tid, path, exc)
+                    log.debug("[%s] %s: resp nao-JSON %s", nome, path, exc)
                     continue
-                for ev in (data.get("events") or []):
-                    ev_id = ev.get("id")
-                    if ev_id in ja_vistos:
-                        continue
-                    ts = ev.get("startTimestamp")
-                    if not isinstance(ts, int):
-                        continue
-                    if ts < ts_inicio or ts >= ts_fim:
-                        continue
-                    eventos.append(ev)
-                    ja_vistos.add(ev_id)
-                    achou_torneio += 1
-            if achou_torneio:
-                log.debug("Torneio %d: %d jogos no dia %s",
-                          tid, achou_torneio, data_iso)
-        log.info("Fallback: %d jogos agregados de %d ligas",
-                 len(eventos), len(tournament_ids))
+                # featured-events pode vir como {events:[...]} OU
+                # {featuredEvents:[...]} OU {upcomingEvents:[...], previousEvents:[...]}
+                buckets = []
+                if isinstance(data.get("events"), list):
+                    buckets.append(data["events"])
+                if isinstance(data.get("featuredEvents"), list):
+                    buckets.append(data["featuredEvents"])
+                if isinstance(data.get("upcomingEvents"), list):
+                    buckets.append(data["upcomingEvents"])
+                if isinstance(data.get("previousEvents"), list):
+                    buckets.append(data["previousEvents"])
+                for bucket in buckets:
+                    total_bruto += len(bucket)
+                    for ev in bucket:
+                        ev_id = ev.get("id")
+                        if ev_id in ja_vistos:
+                            continue
+                        ts = ev.get("startTimestamp")
+                        if not isinstance(ts, int):
+                            continue
+                        if ts < ts_inicio or ts >= ts_fim:
+                            continue
+                        eventos.append(ev)
+                        ja_vistos.add(ev_id)
+                        achou_torneio += 1
+
+            if not encontrou_path_ok:
+                log.info("[%s] todos os paths falharam (torneio ignorado)", nome)
+            elif achou_torneio:
+                contadores["with_events"] += 1
+                log.info("[%s] %d jogos no dia (de %d brutos)",
+                         nome, achou_torneio, total_bruto)
+            elif total_bruto > 0:
+                contadores["no_events"] += 1
+                log.info("[%s] 0 jogos no dia %s (de %d brutos no payload)",
+                         nome, data_iso, total_bruto)
+            else:
+                log.info("[%s] payload vazio", nome)
+
+        log.info("Fallback: %d jogos agregados · "
+                 "paths-200=%d, paths-non200=%d, ligas-com-jogos=%d",
+                 len(eventos), contadores["200"], contadores["non200"],
+                 contadores["with_events"])
 
     # ─── Filtro por status (notstarted por default, ou + inprogress) ──
     def _passa_status(e):
