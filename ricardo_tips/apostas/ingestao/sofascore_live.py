@@ -251,18 +251,37 @@ def listar_jogos_do_dia(
     incluir_live: True inclui tambem jogos ja em curso (nao so notstarted).
     """
     eventos = []
-    # Tentativa principal: scheduled-events
-    try:
-        resp = _flaresolverr.get(
-            f"{_BASE}/sport/football/scheduled-events/{data_iso}",
-            headers=_HEADERS_API, warmup_url=_WARMUP,
-        )
-        if resp.status == 200:
+    # Tenta varios endpoints Sofascore ate um devolver eventos.
+    urls = [
+        f"{_BASE}/sport/football/scheduled-events/{data_iso}",
+        f"{_BASE}/sport/football/scheduled-events/{data_iso}/inverse",
+        # api.sofascore.com (alternativa ao www)
+        f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{data_iso}",
+    ]
+    for url in urls:
+        try:
+            resp = _flaresolverr.get(url, headers=_HEADERS_API, warmup_url=_WARMUP)
+            if resp.status != 200:
+                log.info("Scheduled %s: HTTP %d (tentando proximo)", url, resp.status)
+                continue
             data = resp.json()
-            eventos = data.get("events", []) or []
-            log.info("Scheduled-events %s: %d eventos recebidos", data_iso, len(eventos))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Scheduled-events %s falhou: %s", data_iso, exc)
+            # Estrutura possivel 1: {"events": [...]}
+            evs = data.get("events") or []
+            # Estrutura possivel 2: {"sportItem": {"tournaments": [{events:[...]}]}}
+            if not evs:
+                sportItem = data.get("sportItem") or {}
+                for t in (sportItem.get("tournaments") or []):
+                    evs.extend(t.get("events") or [])
+            if evs:
+                log.info("Scheduled %s: %d eventos de %s",
+                         data_iso, len(evs), url.rsplit('/', 1)[-1])
+                eventos = evs
+                break
+            else:
+                keys = list(data.keys())[:10] if isinstance(data, dict) else "nao-dict"
+                log.info("Scheduled %s: 0 eventos. keys=%s", url, keys)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Scheduled %s falhou: %s", url, exc)
 
     # Filtra por status (notstarted por default, ou + inprogress se pedido)
     def _passa_status(e):
