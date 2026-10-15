@@ -238,6 +238,43 @@ LIGAS_SOFASCORE_IDS = {
 }
 
 
+def listar_jogos_do_dia(
+    data_iso: str,
+    ids_ligas: tuple[int, ...] | None = None,
+) -> list[dict]:
+    """Lista jogos agendados para a data (YYYY-MM-DD).
+
+    Usa /sport/football/scheduled-events/{date} do Sofascore.
+    """
+    resp = _flaresolverr.get(
+        f"{_BASE}/sport/football/scheduled-events/{data_iso}",
+        headers=_HEADERS_API, warmup_url=_WARMUP,
+    )
+    if resp.status != 200:
+        log.warning("Sofascore scheduled %s: HTTP %d", data_iso, resp.status)
+        return []
+    try:
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Resposta nao-JSON em scheduled-events/%s: %s", data_iso, exc)
+        return []
+    eventos = data.get("events", []) or []
+    if ids_ligas:
+        ids_set = set(ids_ligas)
+        eventos = [
+            e for e in eventos
+            if (e.get("tournament") or {}).get("uniqueTournament", {}).get("id") in ids_set
+            or (e.get("tournament") or {}).get("id") in ids_set
+        ]
+    # So "not started" (status.type == "notstarted")
+    eventos = [
+        e for e in eventos
+        if ((e.get("status") or {}).get("type") == "notstarted"
+            or (e.get("status") or {}).get("code") == 0)
+    ]
+    return eventos
+
+
 def listar_jogos_live(
     ligas_filter: tuple[str, ...] | None = None,
     ids_ligas: tuple[int, ...] | None = None,
