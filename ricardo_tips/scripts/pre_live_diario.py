@@ -346,6 +346,9 @@ def main() -> None:
     parser.add_argument("--so-com-ev", action="store_true",
                         help="So inclui jogos com sinal EV>=3%% (Sofascore odds). "
                              "Util para a lista EV fim-de-semana sem Odds API.")
+    parser.add_argument("--min-estrelas", type=int, default=3,
+                        help="Hard floor estrelas para enviar Telegram (default 3). "
+                             "Pon 2 para ver mais fluxo, 5 para so os melhores.")
     args = parser.parse_args()
 
     data_iso = args.data or date.today().isoformat()
@@ -533,25 +536,38 @@ def main() -> None:
             print()
             print(_formatar_jogo(j))
 
-    # ─── Telegram: so sinais que passaram M6 e so se stop-loss nao bateu ───
+    # ─── Telegram: HARD FLOOR N estrelas + so se stop-loss nao bateu ───
     if args.telegram and jogos_com_sinais_m6 and not telegram_bloqueado_stop:
-        print(f"\n{'─' * 90}")
-        print("  Enviando para Telegram...")
-        n_sinais = sum(len(j["sinais_filtrados"]) for j in jogos_com_sinais_m6)
-        stake_total = n_sinais * STAKE_FLAT_CHF
-        cab = (f"📅 *PRE-LIVE {data_iso}*  ·  {len(jogos_com_sinais_m6)} jogo(s), "
-                f"{n_sinais} sinal(ais)\n💰 Stake total: CHF {stake_total:.0f}")
-        try:
-            cliente().enviar(cab)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Falha a enviar cabecalho: %s", exc)
+        # HARD FLOOR: so envia sinais com estrelas >= args.min_estrelas (default 3)
+        jogos_tele = []
         for j in jogos_com_sinais_m6:
+            sinais_fortes = [
+                s for s in j["sinais_filtrados"]
+                if s.get("estrelas", 0) >= args.min_estrelas
+            ]
+            if sinais_fortes:
+                jogos_tele.append(dict(j, sinais=sinais_fortes))
+        if not jogos_tele:
+            print(f"\n⚠ 0 jogos com sinal >= {args.min_estrelas}⭐ — nada enviado para Telegram.")
+            print(f"  (hard floor estrelas={args.min_estrelas}. Para ver mais: --min-estrelas 2)")
+        else:
+            print(f"\n{'─' * 90}")
+            print(f"  Enviando para Telegram (hard floor {args.min_estrelas}⭐)...")
+            n_sinais = sum(len(j["sinais"]) for j in jogos_tele)
+            stake_total = n_sinais * STAKE_FLAT_CHF
+            cab = (f"📅 *PRE-LIVE {data_iso}*  ·  {len(jogos_tele)} jogo(s), "
+                    f"{n_sinais} sinal(ais) ≥{args.min_estrelas}⭐\n"
+                    f"💰 Stake total: CHF {stake_total:.0f}")
             try:
-                j_tg = dict(j, sinais=j["sinais_filtrados"])
-                cliente().enviar(_formatar_jogo(j_tg))
+                cliente().enviar(cab)
             except Exception as exc:  # noqa: BLE001
-                log.warning("Falha a enviar jogo %s: %s", j.get("event_id"), exc)
-        print(f"  {len(jogos_com_sinais_m6)} jogo(s) enviado(s).")
+                log.warning("Falha a enviar cabecalho: %s", exc)
+            for j in jogos_tele:
+                try:
+                    cliente().enviar(_formatar_jogo(j))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Falha a enviar jogo %s: %s", j.get("event_id"), exc)
+            print(f"  {len(jogos_tele)} jogo(s) enviado(s) para Telegram.")
     elif args.telegram and telegram_bloqueado_stop:
         print("\n⛔ Telegram NAO enviado: stop-loss diario atingido.")
 
