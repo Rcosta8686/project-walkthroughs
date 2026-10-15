@@ -251,12 +251,12 @@ def listar_jogos_do_dia(
     incluir_live: True inclui tambem jogos ja em curso (nao so notstarted).
     """
     eventos = []
-    # Tenta varios endpoints Sofascore ate um devolver eventos.
+    # api.sofascore.com responde directamente (sem Cloudflare / sem proxy).
+    # Fica como primeira tentativa. www.sofascore.com fica como fallback.
     urls = [
+        f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{data_iso}",
         f"{_BASE}/sport/football/scheduled-events/{data_iso}",
         f"{_BASE}/sport/football/scheduled-events/{data_iso}/inverse",
-        # api.sofascore.com (alternativa ao www)
-        f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{data_iso}",
     ]
     for url in urls:
         try:
@@ -265,18 +265,21 @@ def listar_jogos_do_dia(
                 log.info("Scheduled %s: HTTP %d (tentando proximo)", url, resp.status)
                 continue
             data = resp.json()
-            # Estrutura possivel 1: {"events": [...]}
+            # Estrutura 1: {"events": [...]}
             evs = data.get("events") or []
-            # Estrutura possivel 2: {"sportItem": {"tournaments": [{events:[...]}]}}
+            # Estrutura 2: {"sportItem": {"tournaments": [{events:[...]}]}}
             if not evs:
                 sportItem = data.get("sportItem") or {}
                 for t in (sportItem.get("tournaments") or []):
                     evs.extend(t.get("events") or [])
             if evs:
-                log.info("Scheduled %s: %d eventos de %s",
-                         data_iso, len(evs), url.rsplit('/', 1)[-1])
+                log.info("Scheduled %s: %d eventos", data_iso, len(evs))
                 eventos = evs
                 break
+            # Loga a mensagem de erro real (ajuda a debuggar) se existir
+            err = data.get("error")
+            if err:
+                log.info("Scheduled %s: 0 eventos. error=%s", url, err)
             else:
                 keys = list(data.keys())[:10] if isinstance(data, dict) else "nao-dict"
                 log.info("Scheduled %s: 0 eventos. keys=%s", url, keys)
