@@ -157,6 +157,7 @@ def _sport_da_liga(liga_nome: str) -> str | None:
         return None
     n = liga_nome.lower()
     pares = [
+        # Big-5 principais
         ("premier league", "soccer_epl"),
         ("laliga", "soccer_spain_la_liga"),      # cobre "LaLiga EA Sports"
         ("la liga", "soccer_spain_la_liga"),
@@ -165,6 +166,20 @@ def _sport_da_liga(liga_nome: str) -> str | None:
         ("ligue 1", "soccer_france_ligue_one"),
         ("liga portugal", "soccer_portugal_primeira_liga"),  # cobre "Liga Portugal Betclic"
         ("primeira liga", "soccer_portugal_primeira_liga"),
+        # Competicoes europeias (UCL/UEL/UECL)
+        ("champions league", "soccer_uefa_champs_league"),
+        ("europa league", "soccer_uefa_europa_league"),
+        ("conference league", "soccer_uefa_europa_conference_league"),
+        # Segundas divisoes e outras
+        ("championship", "soccer_efl_champ"),
+        ("hypermotion", "soccer_spain_segunda_division"),
+        ("serie b", "soccer_italy_serie_b"),
+        ("ligue 2", "soccer_france_ligue_two"),
+        ("bundesliga 2", "soccer_germany_bundesliga2"),
+        ("liga portugal 2", "soccer_portugal_segunda_liga"),
+        ("mls", "soccer_usa_mls"),
+        ("brasileirão", "soccer_brazil_campeonato"),
+        ("brasileirao", "soccer_brazil_campeonato"),
     ]
     for sub, sport in pares:
         if sub in n:
@@ -708,9 +723,17 @@ def _correr_ciclo(args) -> None:
                 # a ir para Telegram, mas com flag ⚠ VERIFICAR para o user
                 # julgar (onze? lesao? dados corrompidos?). Nao esconder.
                 if s.get("casa") == "ANALISTA":
-                    # Sinal do analista: tem de passar o filtro Paulo
-                    # Rebelo (edge, racional, minuto maduro, tom).
-                    if not s.get("_alta_conviccao"):
+                    # Sinal do analista: tem de passar OU o filtro Paulo
+                    # Rebelo (edge, racional, minuto maduro, tom), OU ter
+                    # pelo menos N estrelas (default 3) — isto permite
+                    # Telegram em ligas sem mapeamento Odds API (UEL/UECL/...)
+                    # onde nao se calcula EV real.
+                    try:
+                        n_estrelas = int(s.get("estrelas", 0))
+                    except (ValueError, TypeError):
+                        n_estrelas = 0
+                    if (not s.get("_alta_conviccao")
+                            and n_estrelas < args.analista_tele_estrelas):
                         continue
                     notificar.append(s)
                 else:
@@ -794,6 +817,11 @@ def main() -> None:
     parser.add_argument("--max-notif-por-ciclo", type=int, default=3,
                         help="Max notificacoes Telegram por ciclo (default 3). "
                              "Ranking: top edge × √racionais × forca.")
+    parser.add_argument("--analista-tele-estrelas", type=int, default=3,
+                        help="Sinais do ANALISTA com >= N estrelas vao sempre para "
+                             "Telegram, mesmo sem passar filtro Paulo Rebelo "
+                             "(default 3). Util para ligas sem Odds API mapeado. "
+                             "Pon 5 para so os de 5 estrelas; 2 para quase tudo.")
     args = parser.parse_args()
 
     print("Scanner LIVE v2 iniciado.")
