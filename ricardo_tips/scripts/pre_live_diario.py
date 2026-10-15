@@ -281,6 +281,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", default=None,
                         help="Data YYYY-MM-DD (default: hoje)")
+    parser.add_argument("--dias", type=int, default=1,
+                        help="Numero de dias a cobrir a partir de --data (default 1). "
+                             "Use --dias 3 na sexta para apanhar sex+sab+dom.")
     parser.add_argument("--telegram", action="store_true",
                         help="Envia resumo para Telegram")
     parser.add_argument("--max-jogos", type=int, default=15,
@@ -308,13 +311,28 @@ def main() -> None:
         log.warning("Banca indisponivel: %s", exc)
         telegram_bloqueado_stop = False
 
-    # Fetch TODOS os jogos (sem filtro API-side por ids_ligas que pode falhar
-    # devido a divergencia entre uniqueTournament.id e tournament.id).
-    # Filtramos depois em Python por nome, mais robusto.
-    # incluir_live=True: jogos ja a decorrer sao uteis (ex. ver UEL 18:45 HT
-    # enquanto o 21:00 nao comecou).
-    eventos = sofascore_live.listar_jogos_do_dia(data_iso, incluir_live=True)
-    print(f"\n{len(eventos)} jogos agendados+live totais (todas as competicoes).")
+    # Fetch jogos de 1+ dias (--dias)
+    from datetime import timedelta  # noqa: PLC0415
+    eventos: list[dict] = []
+    try:
+        d0 = datetime.fromisoformat(data_iso).date()
+    except ValueError:
+        d0 = date.today()
+    for offset in range(args.dias):
+        d_iso = (d0 + timedelta(days=offset)).isoformat()
+        print(f"\n→ puxando jogos de {d_iso}...")
+        evs = sofascore_live.listar_jogos_do_dia(d_iso, incluir_live=(offset == 0))
+        eventos.extend(evs)
+    # Dedup por id
+    vistos = set()
+    eventos_dedup = []
+    for ev in eventos:
+        eid = ev.get("id")
+        if eid not in vistos:
+            vistos.add(eid)
+            eventos_dedup.append(ev)
+    eventos = eventos_dedup
+    print(f"\n{len(eventos)} jogos totais nos {args.dias} dia(s) a partir de {data_iso}.")
 
     # Filtra: nao-blacklist E (zona vencedora OR liga Big-5/UCL para contexto)
     _ligas_focus_substr = ("premier league", "laliga", "serie a", "serie b",
