@@ -1,21 +1,21 @@
 @echo off
-REM EV Fim-de-semana AUTO — Pinnacle vs softs via Odds API.
-REM Agendar sexta-feira 12:00 no Windows Task Scheduler.
+REM EV Fim-de-semana AUTO — Sofascore odds pre-match (gratis).
 REM
-REM Fluxo:
-REM   1. atualizar_dados.py  (puxa fixtures + odds correntes via Odds API)
-REM   2. prever_fim_de_semana.py --modo soft-books --mercado todos --telegram
+REM Decisao 2026-10-15: Odds API esgotou os creditos free tier (500/mes).
+REM Reset so em Nov. Usamos Sofascore via flaresolverr que e gratis e
+REM da-nos odds pre-match similares (varias casas incluindo Pinnacle).
 REM
-REM Diferente do fim_de_semana_auto.bat:
-REM   - Este usa Odds API (Pinnacle como fair price) para encontrar
-REM     onde softs (Betano/bet365) tem EV positivo
-REM   - fim_de_semana_auto.bat usa Sofascore (modelo + perfil + H2H)
-REM Os dois sao complementares — podes ter ambos agendados.
-REM
-REM Agendamento:
+REM Agendar sexta-feira 12:00 no Windows Task Scheduler:
 REM   Program/script: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\automacao\ev_fim_de_semana_auto.bat
 REM   Start in: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips
 REM   Trigger: Weekly > Friday @ 12:00
+REM
+REM Fluxo:
+REM   pre_live_diario.py --dias 3 --max-jogos 60 --so-com-ev --telegram
+REM     - Puxa jogos sex+sab+dom via Sofascore
+REM     - Para cada: le odds pre-match Sofascore -> p_mercado -> blend -> EV
+REM     - Filtra jogos onde pelo menos 1 sinal tem EV>=3%
+REM     - Agrupa por dia e envia Telegram estilo lista limpa
 
 cd /d "%~dp0.."
 
@@ -26,11 +26,16 @@ echo === INICIO %date% %time% === >> %LOG%
 echo [git pull] >> %LOG%
 git pull >> %LOG% 2>&1
 
-echo [1/2 atualizar_dados.py — puxar odds Pinnacle+softs via Odds API] >> %LOG%
-venv\Scripts\python.exe scripts\atualizar_dados.py >> %LOG% 2>&1
+echo [flaresolverr check] >> %LOG%
+docker ps --filter "name=flaresolverr" --format "{{.Names}}" | findstr flaresolverr >nul
+if errorlevel 1 (
+    echo    arrancar flaresolverr... >> %LOG%
+    docker start flaresolverr >> %LOG% 2>&1
+    timeout /t 3 /nobreak >nul
+)
 
-echo [2/2 prever_fim_de_semana --modo soft-books --mercado todos --telegram] >> %LOG%
-venv\Scripts\python.exe scripts\prever_fim_de_semana.py --modo soft-books --mercado todos --telegram >> %LOG% 2>&1
+echo [pre_live_diario --dias 3 --max-jogos 60 --so-com-ev --telegram] >> %LOG%
+venv\Scripts\python.exe scripts\pre_live_diario.py --dias 3 --max-jogos 60 --so-com-ev --telegram >> %LOG% 2>&1
 
 echo === FIM %date% %time% === >> %LOG%
 echo. >> %LOG%

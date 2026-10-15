@@ -343,6 +343,9 @@ def main() -> None:
                         help="Envia resumo para Telegram")
     parser.add_argument("--max-jogos", type=int, default=15,
                         help="Max jogos a analisar")
+    parser.add_argument("--so-com-ev", action="store_true",
+                        help="So inclui jogos com sinal EV>=3%% (Sofascore odds). "
+                             "Util para a lista EV fim-de-semana sem Odds API.")
     args = parser.parse_args()
 
     data_iso = args.data or date.today().isoformat()
@@ -478,6 +481,18 @@ def main() -> None:
     jogos_com_sinais_m6 = [
         j for j in jogos_analisados if j.get("sinais_filtrados")
     ]
+
+    # --so-com-ev: so inclui jogos com sinal EV>=3% (odd Sofascore disponivel)
+    # Util para a lista EV fim-de-semana sem Odds API.
+    if args.so_com_ev:
+        def _tem_ev_positivo(j):
+            return any(s.get("ev") is not None and s["ev"] >= 0.03
+                       for s in j.get("sinais_filtrados") or [])
+        n_antes = len(jogos_com_sinais_m6)
+        jogos_com_sinais_m6 = [j for j in jogos_com_sinais_m6 if _tem_ev_positivo(j)]
+        print(f"\n  --so-com-ev: {len(jogos_com_sinais_m6)}/{n_antes} jogos "
+              f"com EV>=3% (odd Sofascore disponivel)")
+
     jogos_sinais_rejeitados = [
         j for j in jogos_analisados
         if j["sinais"] and not j.get("sinais_filtrados")
