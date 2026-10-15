@@ -44,16 +44,45 @@ def test_p1_ev_5pct_passa_para_odd_baixa():
     assert r.passou
 
 
-def test_p2_liga_fraca_bloqueia():
+def test_p2_pre_match_pl_passa():
+    """Pre-match PL ja NAO bloqueia (dados eram do live scanner)."""
     r = passa_filtros_m6(_ctx_ok(liga="Premier League"))
+    assert r.passou  # pre-match: PL agora passa
+
+
+def test_p2_live_pl_tambem_passa():
+    """PL foi removido da lista de ligas fracas live (ja nao esta la)."""
+    r = passa_filtros_m6(_ctx_ok(liga="Premier League", is_live=True,
+                                   latencia_segundos=5))
+    assert r.passou
+
+
+def test_p2_live_brasileirao_bloqueia():
+    """Brasileirao continua a ser considerado liga fraca em live."""
+    r = passa_filtros_m6(_ctx_ok(liga="Brasileirão Série A", is_live=True,
+                                   latencia_segundos=5))
     assert not r.passou
     assert any("P2" in p for p in r.pontos_falhados)
 
 
-def test_p2_mercado_fraco_1x2_bloqueia():
+def test_p2_pre_match_brasileirao_bloqueia():
+    """Brasileirao bloqueia tambem em pre-match (consenso geral)."""
+    r = passa_filtros_m6(_ctx_ok(liga="Brasileirão Série A"))
+    assert not r.passou
+    assert any("P2" in p for p in r.pontos_falhados)
+
+
+def test_p2_live_1x2_bloqueia():
+    """1x2 live continua bloqueado (ROI historico -27%)."""
+    r = passa_filtros_m6(_ctx_ok(mercado="1x2", is_live=True, latencia_segundos=5))
+    assert not r.passou
+    assert any("P2" in p for p in r.pontos_falhados)
+
+
+def test_p2_pre_match_1x2_passa():
+    """1x2 pre-match passa (ainda nao temos dados pre-match)."""
     r = passa_filtros_m6(_ctx_ok(mercado="1x2"))
-    assert not r.passou
-    assert any("P2" in p for p in r.pontos_falhados)
+    assert r.passou
 
 
 def test_p3_dados_antigos_bloqueia():
@@ -114,7 +143,7 @@ def test_p8_casa_limitada_mas_ev_grande_passa():
 
 
 def test_razao_devolve_motivos():
-    r = passa_filtros_m6(_ctx_ok(ev=0.01, liga="Premier League"))
+    r = passa_filtros_m6(_ctx_ok(ev=0.01, liga="Brasileirão Série A"))
     razao = r.razao()
     assert "P1" in razao
     assert "P2" in razao

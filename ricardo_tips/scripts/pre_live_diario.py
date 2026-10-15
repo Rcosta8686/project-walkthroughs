@@ -187,12 +187,12 @@ def _analisar_jogo(evento: dict) -> dict | None:
         ev_real = _ev_calc(p_final, odd)
         return odd, p_mercado, p_final, ev_real
 
-    # Over 2.5 golos
+    # Over 2.5 golos — threshold mais permissivo em pre-match
     p_over_25_modelo = _p_over(2.5, lam_golos)
-    if p_over_25_modelo >= 0.55:
+    if p_over_25_modelo >= 0.50:
         odd, p_mkt, p_fin, ev_real = _odd_e_ev("golos_2.5", "over", p_over_25_modelo)
-        # Emite se modelo diz >= 0.60 OU se tem odd + EV positivo
-        if p_over_25_modelo >= 0.60 or (ev_real is not None and ev_real >= 0.03):
+        # Emite se modelo >= 0.55 OU se tem odd + EV positivo
+        if p_over_25_modelo >= 0.55 or (ev_real is not None and ev_real >= 0.03):
             sinais.append({
                 "mercado": "golos", "linha": 2.5, "lado": "over",
                 "prob": p_fin, "prob_modelo": p_over_25_modelo,
@@ -200,11 +200,11 @@ def _analisar_jogo(evento: dict) -> dict | None:
                 "emoji": _emoji_mercado("golos"),
             })
 
-    # Over 1.5 golos
+    # Over 1.5 golos — mais permissivo
     if not sinais:
         p_over_15_modelo = _p_over(1.5, lam_golos)
         odd, p_mkt, p_fin, ev_real = _odd_e_ev("golos_1.5", "over", p_over_15_modelo)
-        if p_over_15_modelo >= 0.78 or (ev_real is not None and ev_real >= 0.03):
+        if p_over_15_modelo >= 0.72 or (ev_real is not None and ev_real >= 0.03):
             sinais.append({
                 "mercado": "golos", "linha": 1.5, "lado": "over",
                 "prob": p_fin, "prob_modelo": p_over_15_modelo,
@@ -485,16 +485,21 @@ def main() -> None:
         j for j in jogos_analisados if j.get("sinais_filtrados")
     ]
 
-    # --so-com-ev: so inclui jogos com sinal EV>=3% (odd Sofascore disponivel)
-    # Util para a lista EV fim-de-semana sem Odds API.
+    # --so-com-ev: prefere jogos com sinal EV>=3% (odd Sofascore disponivel)
+    # mas se nao houver NENHUM com EV (Sofascore sem odds), mantem os sinais
+    # de modelo-so para nao devolver vazio.
     if args.so_com_ev:
         def _tem_ev_positivo(j):
             return any(s.get("ev") is not None and s["ev"] >= 0.03
                        for s in j.get("sinais_filtrados") or [])
-        n_antes = len(jogos_com_sinais_m6)
-        jogos_com_sinais_m6 = [j for j in jogos_com_sinais_m6 if _tem_ev_positivo(j)]
-        print(f"\n  --so-com-ev: {len(jogos_com_sinais_m6)}/{n_antes} jogos "
-              f"com EV>=3% (odd Sofascore disponivel)")
+        com_ev = [j for j in jogos_com_sinais_m6 if _tem_ev_positivo(j)]
+        if com_ev:
+            print(f"\n  --so-com-ev: {len(com_ev)}/{len(jogos_com_sinais_m6)} jogos "
+                  f"com EV>=3% (odd Sofascore)")
+            jogos_com_sinais_m6 = com_ev
+        else:
+            print(f"\n  --so-com-ev: 0 jogos com EV calculado (Sofascore sem odds),"
+                  f" fallback para {len(jogos_com_sinais_m6)} sinais modelo-so")
 
     jogos_sinais_rejeitados = [
         j for j in jogos_analisados

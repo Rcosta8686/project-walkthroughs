@@ -60,12 +60,17 @@ class ResultadoFiltro:
 
 # ─────────────────────────── Zonas fracas ──────────────────────────────────
 # Lista actualizada por aprender_jogos.py / calibracao historica.
-# Comecamos com o que ja sabemos: PL/Ligue 1/Brasileirao -> ROI negativo.
-LIGAS_FRACAS = frozenset({
-    "premier league", "ligue 1", "brasileirao série a",
-    "brasileirão série a", "liga portugal betclic",
+# NOTA 2026-10-15: dados PL/Ligue 1 eram de LIVE scanner (ROI -X% com
+# n>=100). Para PRE-MATCH ainda nao temos amostra suficiente — portanto
+# NAO bloqueamos nenhuma liga pre-match. Zonas fracas so afectam live.
+LIGAS_FRACAS_LIVE = frozenset({
+    "brasileirao série a", "brasileirão série a",
+    "liga portugal betclic",
 })
-MERCADOS_FRACOS = frozenset({"1x2"})  # ROI negativo historico
+LIGAS_FRACAS = LIGAS_FRACAS_LIVE  # mantido para compatibilidade com scanner
+# 1X2 live tem ROI -27% (n=188), mas 1X2 pre-match ainda nao temos dados
+MERCADOS_FRACOS_LIVE = frozenset({"1x2"})
+MERCADOS_FRACOS = frozenset()  # pre-match: tudo passa
 
 
 def _ev_min_para_odd(odd: float) -> float:
@@ -88,12 +93,18 @@ def passa_filtros_m6(ctx: ContextoFiltro) -> ResultadoFiltro:
     if ctx.ev < ev_min:
         falhados.append(f"P1: EV {ctx.ev*100:.1f}% < min {ev_min*100:.1f}% (odd {ctx.odd:.2f})")
 
-    # Ponto 2: zona fraca
+    # Ponto 2: zona fraca — SO em live, nao bloqueia pre-match
     liga_low = (ctx.liga or "").lower()
-    if any(liga_fraca in liga_low for liga_fraca in LIGAS_FRACAS):
-        falhados.append(f"P2: liga fraca ({ctx.liga})")
-    if ctx.mercado in MERCADOS_FRACOS:
-        falhados.append(f"P2: mercado fraco ({ctx.mercado})")
+    if ctx.is_live:
+        if any(liga_fraca in liga_low for liga_fraca in LIGAS_FRACAS_LIVE):
+            falhados.append(f"P2: liga fraca live ({ctx.liga})")
+        if ctx.mercado in MERCADOS_FRACOS_LIVE:
+            falhados.append(f"P2: mercado fraco live ({ctx.mercado})")
+    else:
+        # Pre-match: zonas fracas live NAO aplicam (dados nao transferem)
+        # Mantemos so o bloqueio de "brasileirao" que e consenso geral
+        if "brasileirao" in liga_low or "brasileirão" in liga_low:
+            falhados.append(f"P2: liga fraca ({ctx.liga})")
 
     # Ponto 3: dados validados
     if not ctx.dados_recentes:
