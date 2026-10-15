@@ -245,60 +245,117 @@ def listar_jogos_do_dia(
 ) -> list[dict]:
     """Lista jogos agendados para a data (YYYY-MM-DD).
 
-    Usa /sport/football/scheduled-events/{date} do Sofascore. Se devolve
-    vazio, tenta tambem /sport/football/events/{date}/live (fallback).
+    Estrategia dupla:
+      1. Tenta /sport/football/scheduled-events/{date} (optimista; o Sofascore
+         deu-nos 403/404 em 2026-10 em ambos api.* e www.*).
+      2. Se zero eventos: itera as ligas em LIGAS_SOFASCORE_IDS e fetch
+         /unique-tournament/{id}/events/next/0 (padrao conhecido, mesmo que
+         /team/{id}/events/last/0 que ja funciona em sofascore_contexto).
+         Filtra depois os eventos cujo startTimestamp cai no dia alvo.
 
     incluir_live: True inclui tambem jogos ja em curso (nao so notstarted).
     """
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
     eventos = []
-    # api.sofascore.com responde directamente (sem Cloudflare / sem proxy).
-    # Fica como primeira tentativa. www.sofascore.com fica como fallback.
+
+    # ─── Tentativa 1: scheduled-events por data (quando Sofascore voltar) ──
     urls = [
         f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{data_iso}",
         f"{_BASE}/sport/football/scheduled-events/{data_iso}",
-        f"{_BASE}/sport/football/scheduled-events/{data_iso}/inverse",
     ]
     for url in urls:
         try:
             resp = _flaresolverr.get(url, headers=_HEADERS_API, warmup_url=_WARMUP)
             if resp.status != 200:
-                log.info("Scheduled %s: HTTP %d (tentando proximo)", url, resp.status)
                 continue
             data = resp.json()
-            # Estrutura 1: {"events": [...]}
             evs = data.get("events") or []
-            # Estrutura 2: {"sportItem": {"tournaments": [{events:[...]}]}}
             if not evs:
                 sportItem = data.get("sportItem") or {}
                 for t in (sportItem.get("tournaments") or []):
                     evs.extend(t.get("events") or [])
             if evs:
-                log.info("Scheduled %s: %d eventos", data_iso, len(evs))
+                log.info("Scheduled %s: %d eventos via %s",
+                         data_iso, len(evs), url.rsplit('/', 1)[-1])
                 eventos = evs
                 break
-            # Loga a mensagem de erro real (ajuda a debuggar) se existir
             err = data.get("error")
             if err:
-                log.info("Scheduled %s: 0 eventos. error=%s", url, err)
-            else:
-                keys = list(data.keys())[:10] if isinstance(data, dict) else "nao-dict"
-                log.info("Scheduled %s: 0 eventos. keys=%s", url, keys)
+                log.info("Scheduled %s: error=%s", url, err)
         except Exception as exc:  # noqa: BLE001
             log.warning("Scheduled %s falhou: %s", url, exc)
 
-    # Filtra por status (notstarted por default, ou + inprogress se pedido)
+    # ─── Tentativa 2: fallback por torneio (unique-tournament/.../next/0) ──
+    if not eventos:
+        log.info("Scheduled vazios — fallback: iterando %d ligas conhecidas",
+                 len(LIGAS_SOFASCORE_IDS))
+        # Janela: do inicio do dia (UTC) ate inicio do dia seguinte.
+        try:
+            dia = datetime.fromisoformat(data_iso).replace(tzinfo=timezone.utc)
+        except ValueError:
+            dia = datetime.strptime(data_iso, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        ts_inicio = int(dia.timestamp())
+        ts_fim = int((dia + timedelta(days=1)).timestamp())
+
+        tournament_ids = (
+            list(ids_ligas) if ids_ligas else list(LIGAS_SOFASCORE_IDS.values())
+        )
+        ja_vistos: set[int] = set()
+        for tid in tournament_ids:
+            # /unique-tournament/{id}/events/next/0 — mesmo padrao que
+            # /team/{id}/events/last/0 que ja sabemos funcionar.
+            paths = [
+                f"/unique-tournament/{tid}/events/next/0",
+                f"/unique-tournament/{tid}/events/last/0",  # inclui jogos de hoje
+            ]
+            achou_torneio = 0
+            for path in paths:
+                try:
+                    resp = _flaresolverr.get(
+                        f"{_BASE}{path}", headers=_HEADERS_API, warmup_url=_WARMUP,
+                    )
+                    if resp.status != 200:
+                        continue
+                    data = resp.json()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Torneio %d %s falhou: %s", tid, path, exc)
+                    continue
+                for ev in (data.get("events") or []):
+                    ev_id = ev.get("id")
+                    if ev_id in ja_vistos:
+                        continue
+                    ts = ev.get("startTimestamp")
+                    if not isinstance(ts, int):
+                        continue
+                    if ts < ts_inicio or ts >= ts_fim:
+                        continue
+                    eventos.append(ev)
+                    ja_vistos.add(ev_id)
+                    achou_torneio += 1
+            if achou_torneio:
+                log.debug("Torneio %d: %d jogos no dia %s",
+                          tid, achou_torneio, data_iso)
+        log.info("Fallback: %d jogos agregados de %d ligas",
+                 len(eventos), len(tournament_ids))
+
+    # ─── Filtro por status (notstarted por default, ou + inprogress) ──
     def _passa_status(e):
         status = e.get("status") or {}
         code = status.get("code")
         tipo = (status.get("type") or "").lower()
+        # notstarted = jogo ainda nao comecou
         if tipo == "notstarted" or code == 0:
             return True
         if incluir_live and (tipo == "inprogress" or code in (6, 7)):
             return True
+        # No fallback /last/0 muitos vem como finished — queremos excluir
+        # (ja aconteceram, nao sao pre-match). Nao os incluimos.
         return False
 
     eventos_filtrados_status = [e for e in eventos if _passa_status(e)]
-    log.info("Pos filtro status: %d eventos", len(eventos_filtrados_status))
+    log.info("Pos filtro status: %d eventos (de %d brutos)",
+             len(eventos_filtrados_status), len(eventos))
 
     if ids_ligas:
         ids_set = set(ids_ligas)
