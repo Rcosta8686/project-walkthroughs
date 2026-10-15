@@ -108,14 +108,15 @@ Também é usado como gate pelo `pre_live_diario.py` — se perdeste 5% hoje ou 
 
 ---
 
-## 4. EV Fim-de-Semana (Odds API Pinnacle vs softs) — Sexta 10h00
+## 4. EV Fim-de-Semana (Odds API Pinnacle vs softs) — **Sexta 12h00**
 
-Complementar ao fluxo 2 — este usa a Odds API (Pinnacle como fair price)
-para encontrar sinais onde Betano/bet365 pagam mais que a probabilidade real.
+Lista limpa estilo "SEX 17/10 · 21:00 · Marítimo x Porto · Over 2.5 @ 1.85
+· EV +6.4% · stake 5 CHF". Usa Odds API (Pinnacle como fair price) para
+encontrar sinais onde Betano/bet365 pagam mais que a probabilidade real.
 
 ### Passos
 - Name: `Ricardo EV Fim-de-Semana`
-- Trigger: Weekly, **Friday** @ 10:00:00
+- Trigger: Weekly, **Friday** @ 12:00:00
 - Action → Program: `C:\...\ricardo_tips\automacao\ev_fim_de_semana_auto.bat`
 - Action → Start in: `C:\...\ricardo_tips`
 
@@ -152,7 +153,7 @@ Envia resumo para Telegram: `n=X CLV +N.NN% positivo NN%`.
 | **Diário 18:00** | Scanner live noite 1 |
 | **Diário 20:30** | Scanner live noite 2 |
 | **Sexta 09:00** | Fim-de-semana Sofascore (40 jogos sex+sáb+dom) |
-| **Sexta 10:00** | EV Fim-de-semana Odds API (Pinnacle vs softs) |
+| **Sexta 12:00** | ⭐ **EV Fim-de-semana** (lista estilo "Marítimo x Porto · Over 2.5 · EV +6%") |
 | **Domingo 22:00** | Relatório CLV semanal |
 
 ---

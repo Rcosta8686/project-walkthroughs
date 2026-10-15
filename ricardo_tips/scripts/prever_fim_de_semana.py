@@ -146,6 +146,10 @@ def main() -> None:
     print(f"{'='*78}\n")
 
     # ─── Telegram (--telegram) ───
+    # Formato: lista limpa estilo
+    #   📅 SEX 17/10 · 21:00
+    #   Maritimo x Porto
+    #   Over 2.5 @ 1.85 · EV +6.4% · stake 5 CHF
     if args.telegram and sugestoes:
         try:
             from apostas.alertas.telegram_cliente import cliente  # noqa: PLC0415
@@ -162,36 +166,62 @@ def main() -> None:
 
             stake = STAKE_FLAT_CHF_DEFAULT
             total_chf = len(sugestoes) * stake
-            cab = (f"🎯 *EV FIM-DE-SEMANA*  ·  {cabecalho}\n"
-                   f"{len(sugestoes)} sugestoes · stake {stake:.0f} CHF cada = "
-                   f"CHF {total_chf:.0f} total")
+
+            # Agrupa por dia (sex/sab/dom) para a lista ficar organizada
+            dias_pt = {0: "SEG", 1: "TER", 2: "QUA", 3: "QUI",
+                       4: "SEX", 5: "SAB", 6: "DOM"}
+            por_dia: dict[str, list] = {}
+            for s in sugestoes:
+                data = s.jogo.data_utc
+                chave = f"{dias_pt.get(data.weekday(), '?')} {data.strftime('%d/%m')}"
+                por_dia.setdefault(chave, []).append(s)
+
+            # Cabecalho
+            cab = (
+                f"🎯 *EV FIM-DE-SEMANA*\n"
+                f"{len(sugestoes)} apostas · stake {stake:.0f} CHF cada\n"
+                f"💰 Total: CHF {total_chf:.0f}"
+            )
             cliente().enviar(cab)
 
-            # Agrupa por liga, max 5 jogos por msg Telegram
-            for liga_nome, items in sorted(por_liga.items()):
-                linhas = [f"🏆 *{liga_nome}*"]
-                items_ord = sorted(items, key=lambda x: (x.jogo.data_utc, -x.sugestao.ev))[:10]
-                for s in items_ord:
-                    data = s.jogo.data_utc.strftime("%a %d/%m %H:%M")
-                    prob = s.sugestao.prob_modelo * 100
+            # Para cada dia, lista limpa de jogos
+            for dia_chave in sorted(por_dia.keys(),
+                                     key=lambda k: por_dia[k][0].jogo.data_utc):
+                items = sorted(por_dia[dia_chave],
+                               key=lambda x: (x.jogo.data_utc, -x.sugestao.ev))
+                linhas = [f"📅 *{dia_chave}*"]
+                for s in items:
+                    hora = s.jogo.data_utc.strftime("%H:%M")
                     odd = s.sugestao.odd_referencia
                     ev = s.sugestao.ev * 100
                     mercado_raw = s.sugestao.mercado.split("@")[0]
                     if mercado_raw == "golos":
-                        aposta = f"{s.sugestao.lado.upper()} {s.sugestao.linha}"
+                        aposta = f"{s.sugestao.lado.capitalize()} {s.sugestao.linha} golos"
                     else:
-                        etiqueta = {"casa": "1", "empate": "X", "fora": "2"}[s.sugestao.lado]
+                        etiqueta = {"casa": "1 (casa)", "empate": "X (empate)",
+                                     "fora": "2 (fora)"}[s.sugestao.lado]
                         aposta = f"1X2 {etiqueta}"
                     onde = f" @{s.casa_soft}" if hasattr(s, "casa_soft") else ""
                     linhas.append(
-                        f"⚽ {data} {s.casa.nome[:14]} vs {s.fora.nome[:14]}\n"
-                        f"   {aposta}{onde} · odd {odd:.2f} · EV +{ev:.1f}%"
+                        f"\n⚽ {hora}  *{s.casa.nome}* x *{s.fora.nome}*\n"
+                        f"   → {aposta}{onde}\n"
+                        f"   odd {odd:.2f} · EV +{ev:.1f}% · stake {stake:.0f} CHF"
                     )
+                # Partilha em chunks de 10 jogos por msg para evitar >4096 chars
+                buffer = linhas[0]
+                for linha in linhas[1:]:
+                    if len(buffer) + len(linha) > 3500:
+                        try:
+                            cliente().enviar(buffer)
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"⚠ Falha envio: {exc}")
+                        buffer = f"📅 *{dia_chave}* (cont.)"
+                    buffer += linha
                 try:
-                    cliente().enviar("\n".join(linhas))
+                    cliente().enviar(buffer)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"⚠ Falha a enviar liga {liga_nome}: {exc}")
-            print(f"\n✓ {len(sugestoes)} sugestoes enviadas para Telegram.")
+                    print(f"⚠ Falha envio: {exc}")
+            print(f"\n✓ {len(sugestoes)} apostas enviadas para Telegram.")
         except Exception as exc:  # noqa: BLE001
             print(f"⚠ Falha envio Telegram: {exc}")
 

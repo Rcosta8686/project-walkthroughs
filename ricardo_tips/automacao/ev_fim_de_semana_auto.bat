@@ -1,6 +1,6 @@
 @echo off
 REM EV Fim-de-semana AUTO — Pinnacle vs softs via Odds API.
-REM Agendar sexta-feira ~10:00 no Windows Task Scheduler.
+REM Agendar sexta-feira 12:00 no Windows Task Scheduler.
 REM
 REM Fluxo:
 REM   1. atualizar_dados.py  (puxa fixtures + odds correntes via Odds API)
@@ -15,7 +15,7 @@ REM
 REM Agendamento:
 REM   Program/script: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips\automacao\ev_fim_de_semana_auto.bat
 REM   Start in: C:\Users\erica\Documents\GitHub\project-walkthroughs\ricardo_tips
-REM   Trigger: Weekly > Friday @ 10:00
+REM   Trigger: Weekly > Friday @ 12:00
 
 cd /d "%~dp0.."
 

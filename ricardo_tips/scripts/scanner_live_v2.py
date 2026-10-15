@@ -723,24 +723,25 @@ def _correr_ciclo(args) -> None:
                 # a ir para Telegram, mas com flag ⚠ VERIFICAR para o user
                 # julgar (onze? lesao? dados corrompidos?). Nao esconder.
                 if s.get("casa") == "ANALISTA":
-                    # Sinal do analista: tem de passar OU o filtro Paulo
-                    # Rebelo (edge, racional, minuto maduro, tom), OU ter
-                    # pelo menos N estrelas (default 3) — isto permite
-                    # Telegram em ligas sem mapeamento Odds API (UEL/UECL/...)
-                    # onde nao se calcula EV real.
+                    # HARD FLOOR: user quer so sinais 3-5 estrelas no Telegram.
+                    # Mesmo com _alta_conviccao, se estrelas < 3 NAO envia.
                     try:
                         n_estrelas = int(s.get("estrelas", 0))
                     except (ValueError, TypeError):
                         n_estrelas = 0
-                    if (not s.get("_alta_conviccao")
-                            and n_estrelas < args.analista_tele_estrelas):
+                    if n_estrelas < args.analista_tele_estrelas:
                         continue
                     notificar.append(s)
                 else:
-                    # Sugestao com EV real
+                    # Sugestao com EV real (Odds API)
                     try:
                         ev_val = float(s.get("ev", 0))
+                        n_estrelas = int(s.get("estrelas", 0))
                     except (ValueError, TypeError):
+                        continue
+                    # HARD FLOOR 3 estrelas tambem aqui — mesmo com EV alto,
+                    # 1-2 estrelas significa historicamente ROI fraco
+                    if n_estrelas < args.analista_tele_estrelas:
                         continue
                     if ev_val >= ev_min_telegram:
                         notificar.append(s)
