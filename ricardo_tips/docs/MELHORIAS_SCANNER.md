@@ -142,22 +142,50 @@ Quando o pre_live diario encontrar Juventus vs equipa fraca:
 
 **Testes:** +7 testes clv_tracker (totais 37/37).
 
-### Commit 3 — pre_live_diario integra odds pre-match + grava sugestoes
+### Commit 3 — perfil equipa + filtro M6 (FEITO 2026-10-15)
 
-Pendente. Fluxo:
-- `obter_odds_prematch_sofascore(event_id)` em sofascore_live.py
-- Pre-live diario: para cada jogo, lê odds pre-match, aplica blend()
-  do blend_mercado.py, gera sinal com `odd_referencia`.
-- Grava `Sugestao` na BD (com event_id Sofascore no texto notas).
-- Chama `gravar_snapshot(..., momento="pre_live_12h")`.
+**Modulo `apostas/modelos/perfil_equipa.py`:**
+- `calcular_perfil(team_id, nome, liga, n_jogos=10)` → `EquipaPerfil`:
+  - Chama `/team/{id}/events/last/0` (sabemos funciona)
+  - Para cada jogo chama `/event/{id}/statistics`
+  - Agrega: baseline (remates/sot/cantos/cards/fouls/golos por 90)
+  - Agrega: comportamento atras (remates_atras_90, cantos_atras_90,
+    golos_em_atraso_media, virar_jogos_pct)
+  - Agrega: carga_jogos_7d/14d
+- `obter_perfil(team_id)` lê da BD
+- `atualizar_perfil(team_id, nome, liga, ttl_horas=24)` upsert com cache
 
-### Commit 3 — perfil de equipa
+**Script `scripts/atualizar_perfis_equipa.py`:**
+- Lista jogos agendados hoje → extrai team_ids → chama atualizar_perfil()
+- Cache 24h: perfis frescos saltados
+- Logs progresso + resumo final
 
-Ver secçao "Perfil de equipa" acima.
+**Modulo `apostas/alertas/filtros.py`:**
+- `ContextoFiltro(ev, odd, mercado, liga, dados_recentes, momento, ...)`
+- `passa_filtros_m6(ctx) → ResultadoFiltro(passou, falhados, avisos)`
+- Avalia os 8 pontos do M6:
+  - P1: EV >= min (3% default, 5% para odd < 1.50)
+  - P2: nao em liga_fraca (PL, Ligue1, Brasileirao) nem mercado fraco (1x2)
+  - P3: dados recentes + onze (aviso se nao-confirmado)
+  - P4: momento certo (bloqueia "tarde")
+  - P5: limite casa >= stake pretendida
+  - P6: nao stop-loss + carteira pior perda <= 4%
+  - P7: live latencia <= 10s + sem suspensao
+  - P8: casa limitada so com EV >= 8%
 
-### Commit 4 — M6 filtro final 8 pontos
+**Testes:** +12 perfil_equipa + +17 filtros_m6 = 66 totais a passar.
 
-`apostas/alertas/filtros.py` com `passa_filtros_m6(sinal, contexto)`.
+### Commit 4 (futuro) — integrar tudo no pre_live_diario
+
+- Pre_live_diario: para cada jogo com sinal:
+  1. Obter perfil das 2 equipas → ajustar lam (ex. caudal ofensivo)
+  2. Puxar odds pre-match (futuro)
+  3. Aplicar blend(p_modelo, p_mercado) do blend_mercado
+  4. Correr passa_filtros_m6() como gate final
+  5. Chamar gravar_snapshot() com momento="abertura"
+  6. Chamar banca.estado_banca_actual() antes de emitir → stop-loss
+  7. Stake = stake_flat(5.0)
+  8. Grava Sugestao com odd_referencia
 
 ### Commit 5 — integrar tudo no pre_live_diario e scanner_live_v2
 
