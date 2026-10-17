@@ -10,6 +10,10 @@ REM CLV < 0 = scanner esta a apostar a precos piores que o fecho (mau)
 
 cd /d "%~dp0.."
 
+REM Forca UTF-8 no Python stdout/stderr (Windows cp1252 nao aceita emojis).
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+
 set LOG=dados\clv_semanal.log
 
 echo === INICIO %date% %time% === >> %LOG%

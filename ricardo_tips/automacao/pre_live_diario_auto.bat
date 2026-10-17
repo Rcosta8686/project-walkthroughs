@@ -9,6 +9,10 @@ REM   Trigger: Daily @ 13:30 (margem apos primeiros jogos da tarde comecarem)
 
 cd /d "%~dp0.."
 
+REM Forca UTF-8 no Python stdout/stderr (Windows cp1252 nao aceita emojis).
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+
 set LOG=dados\pre_live_diario.log
 
 echo === INICIO %date% %time% === >> %LOG%
