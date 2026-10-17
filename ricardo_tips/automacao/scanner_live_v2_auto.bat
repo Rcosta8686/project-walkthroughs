@@ -20,6 +20,7 @@ REM jogos nas ligas focais, dorme e volta a verificar. Ciclos 0 = infinito.
 cd /d "%~dp0.."
 
 REM Forca UTF-8 no Python stdout/stderr (Windows cp1252 nao aceita emojis).
+chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 

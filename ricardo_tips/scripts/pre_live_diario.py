@@ -20,6 +20,15 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+# Forca UTF-8 no stdout/stderr (Windows cp1252 nao aceita emojis como seta
+# ou simbolos de euro/pontos). Resolve UnicodeEncodeError quando o output
+# e redirecionado para ficheiro .log via .bat.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass  # Python < 3.7 ou stream nao-reconfigurable
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apostas.alertas import analista  # noqa: E402

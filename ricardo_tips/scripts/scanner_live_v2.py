@@ -34,6 +34,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Forca UTF-8 (Windows cp1252 nao aceita emojis quando stdout e redirecionado)
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import requests  # noqa: E402

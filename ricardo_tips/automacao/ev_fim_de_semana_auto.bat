@@ -20,6 +20,7 @@ REM     - Agrupa por dia e envia Telegram estilo lista limpa
 cd /d "%~dp0.."
 
 REM Forca UTF-8 no Python stdout/stderr (Windows cp1252 nao aceita emojis).
+chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
