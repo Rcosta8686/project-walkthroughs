@@ -47,7 +47,7 @@ import requests  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
-from apostas.alertas import analista, telegram_live  # noqa: E402
+from apostas.alertas import analista, filtros_mercado, telegram_live  # noqa: E402
 from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
 from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
@@ -662,7 +662,101 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
                     p_over = prev.p_over_remates_a_baliza_total(linha)
                     p = p_over if nome == "over" else (1 - p_over)
                     _emit("remates_a_baliza", nome, linha, casa, odd, p)
+    # ─── Pos-processamento M18+M19: consolidar + filtrar + melhor casa ───
+    sugestoes = _consolidar_e_filtrar(sugestoes, odds_json)
     return sugestoes
+
+
+# Mapa (mercado → (market_key_odds_api, outcome_opposto))
+# Serve para o filtros_mercado procurar os bookmakers correctos.
+_MAPA_MERCADO_FILTROS = {
+    "golos":            ("totals",         {"over": "under", "under": "over"}),
+    "btts":             ("btts",           {"sim": "no", "nao": "yes"}),
+    "cantos":           ("totals_corners", {"over": "under", "under": "over"}),
+    "cartoes":          ("totals_cards",   {"over": "under", "under": "over"}),
+    "remates":          ("totals_shots",   {"over": "under", "under": "over"}),
+    "remates_a_baliza": ("totals_shots_on_target", {"over": "under", "under": "over"}),
+}
+
+# Para outcome names, scanner usa "sim/nao" para BTTS mas Odds API usa "yes/no"
+_OUTCOME_SCANNER_TO_API = {"sim": "yes", "nao": "no"}
+
+
+def _consolidar_e_filtrar(sugestoes: list[dict], odds_json: dict) -> list[dict]:
+    """Pos-processa sugestoes (M18+M19).
+
+    Agrupa por (mercado, lado, linha). Para cada grupo:
+      1. Chama filtros_mercado.avaliar() → bloqueia se margem/stale/<2 casas
+      2. Mantem a sugestao com a MELHOR odd (M19)
+      3. Adiciona campos melhor_casa, melhor_odd, outras_casas, flag_verificar
+    """
+    if not sugestoes:
+        return []
+    bms = odds_json.get("bookmakers", []) if odds_json else []
+    if not bms:
+        return sugestoes  # sem bookmakers → nada a filtrar
+
+    agrupadas: dict[tuple, list[dict]] = {}
+    for s in sugestoes:
+        chave = (s.get("mercado"), s.get("lado"), s.get("linha") or "")
+        agrupadas.setdefault(chave, []).append(s)
+
+    out: list[dict] = []
+    for (mercado, lado, linha), grupo in agrupadas.items():
+        mapa = _MAPA_MERCADO_FILTROS.get(mercado)
+        if mapa is None:
+            # Mercado nao filtrado (ex: 1x2) — passa como esta
+            out.extend(grupo)
+            continue
+        market_key_api, mapa_lados = mapa
+        lado_oposto = mapa_lados.get(lado, "")
+        if not lado_oposto:
+            out.extend(grupo)
+            continue
+
+        # Converte linha para float se possivel
+        point = None
+        if linha:
+            try:
+                point = float(linha)
+            except (ValueError, TypeError):
+                point = None
+
+        # Para BTTS, scanner usa "sim/nao"; API usa "yes/no"
+        outcome_api = _OUTCOME_SCANNER_TO_API.get(lado, lado)
+        oposto_api = _OUTCOME_SCANNER_TO_API.get(lado_oposto, lado_oposto)
+
+        ev_grupo = max((s.get("ev", 0) for s in grupo), default=0)
+        try:
+            res = filtros_mercado.avaliar(
+                bms, market_key_api, outcome_api, oposto_api, point,
+                ev_bruto=float(ev_grupo),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Filtros mercado (%s, %s, %s) falhou: %s",
+                        mercado, lado, linha, exc)
+            out.extend(grupo)
+            continue
+
+        if not res.passa:
+            log.debug("Sugestao bloqueada (%s %s %s): %s",
+                      mercado, lado, linha, res.razao_bloqueio)
+            continue
+
+        # Escolhe a sugestao com a melhor odd (M19)
+        melhor = max(grupo, key=lambda s: s.get("odd", 0))
+        melhor_copy = dict(melhor)
+        melhor_copy["melhor_casa"] = res.melhor_casa
+        melhor_copy["melhor_odd"] = res.melhor_odd
+        melhor_copy["outras_casas"] = filtros_mercado.formatar_melhor_casa(res)
+        melhor_copy["margem_mercado"] = (
+            round(res.margem_mercado * 100, 1) if res.margem_mercado else None
+        )
+        if res.flag_verificar:
+            melhor_copy["verificar"] = True
+        out.append(melhor_copy)
+
+    return out
 
 
 def _imprimir_estado(estado, prev) -> None:
