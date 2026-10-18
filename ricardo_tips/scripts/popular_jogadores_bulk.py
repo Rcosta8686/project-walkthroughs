@@ -41,7 +41,7 @@ from apostas.ingestao._flaresolverr import FlaresolverrIndisponivel  # noqa: E40
 from apostas.modelos import historico_jogadores  # noqa: E402
 from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
-from apostas.utils.schema import EstatisticaEquipaJogo  # noqa: E402
+from apostas.utils.schema import EstatisticaEquipaJogo, EstatisticaJogadorJogo  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -71,6 +71,15 @@ def _event_ids_recentes(dias: int, liga: str | None) -> list[tuple[int, str, dat
     return out
 
 
+def _event_ids_ja_processados() -> set[int]:
+    """Devolve set de event_ids que ja tem pelo menos 1 jogador gravado."""
+    with abrir_sessao() as s:
+        rows = s.scalars(
+            select(EstatisticaJogadorJogo.sofascore_event_id).distinct()
+        ).all()
+    return set(rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dias", type=int, default=90,
@@ -80,9 +89,19 @@ def main() -> None:
                         help="Filtrar por liga (match parcial no nome).")
     parser.add_argument("--max-jogos", type=int, default=None,
                         help="Limite de jogos a processar (debug).")
+    parser.add_argument("--retomar", action="store_true",
+                        help="Salta eventos que ja tem jogadores em "
+                             "EstatisticaJogadorJogo. Util para re-correr "
+                             "depois de uma falha a meio.")
     args = parser.parse_args()
 
     eventos = _event_ids_recentes(args.dias, args.liga)
+    if args.retomar:
+        ja_feitos = _event_ids_ja_processados()
+        antes = len(eventos)
+        eventos = [(eid, lig, data) for (eid, lig, data) in eventos
+                   if eid not in ja_feitos]
+        print(f"  [retomar] {antes - len(eventos)} eventos ja feitos → saltados")
     if args.max_jogos:
         eventos = eventos[: args.max_jogos]
 
