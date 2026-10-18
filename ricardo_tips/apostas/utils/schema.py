@@ -461,6 +461,80 @@ class EstatisticaEquipaJogo(Base):
     )
 
 
+class EstatisticaJogadorJogo(Base):
+    """Historico PERMANENTE de stats por JOGADOR por jogo (Fase 6, user ask).
+
+    Append-only, nunca re-escrita. Serve para:
+      - calcular perfil jogador (agressividade, forma, papel tactico)
+      - confronto tactico (atacante driblador vs defesa agressivo
+        → amarelo provavel para o defesa)
+      - alerta jogador ja amarelado → risco 2o cartao
+
+    Chave composta (sofascore_player_id, sofascore_event_id) impede duplicados.
+    """
+
+    __tablename__ = "estatistica_jogador_jogo"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Identificacao
+    sofascore_player_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    sofascore_event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    sofascore_team_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    nome_jogador: Mapped[str] = mapped_column(String(100), nullable=False)
+    posicao: Mapped[str | None] = mapped_column(String(10))  # GK, LB, CB, RB, CDM, CM, CAM, LW, RW, ST
+    liga: Mapped[str | None] = mapped_column(String(80))
+    data_jogo: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    era_casa: Mapped[bool] = mapped_column(Integer, nullable=False)
+
+    # Participacao
+    foi_titular: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
+    minutos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rating: Mapped[float | None] = mapped_column(Float)  # Sofascore rating 0-10
+
+    # Producao
+    golos: Mapped[int | None] = mapped_column(Integer)
+    assistencias: Mapped[int | None] = mapped_column(Integer)
+    remates: Mapped[int | None] = mapped_column(Integer)
+    sot: Mapped[int | None] = mapped_column(Integer)
+    grandes_oportunidades: Mapped[int | None] = mapped_column(Integer)
+    grandes_oportunidades_falhadas: Mapped[int | None] = mapped_column(Integer)
+
+    # Passes
+    passes: Mapped[int | None] = mapped_column(Integer)
+    passes_pct: Mapped[float | None] = mapped_column(Float)
+    passes_chave: Mapped[int | None] = mapped_column(Integer)
+
+    # Defesa / duels
+    tackles: Mapped[int | None] = mapped_column(Integer)
+    interceptacoes: Mapped[int | None] = mapped_column(Integer)
+    desarmes: Mapped[int | None] = mapped_column(Integer)
+    duels_won: Mapped[int | None] = mapped_column(Integer)
+    duels_lost: Mapped[int | None] = mapped_column(Integer)
+    dribles_tentados: Mapped[int | None] = mapped_column(Integer)
+    dribles_sucesso: Mapped[int | None] = mapped_column(Integer)
+
+    # Disciplina
+    fouls_committed: Mapped[int | None] = mapped_column(Integer)
+    fouls_drawn: Mapped[int | None] = mapped_column(Integer)
+    cards_amarelos: Mapped[int | None] = mapped_column(Integer)
+    cards_vermelhos: Mapped[int | None] = mapped_column(Integer)
+    minuto_amarelo: Mapped[int | None] = mapped_column(Integer)  # quando foi apontado
+    minuto_vermelho: Mapped[int | None] = mapped_column(Integer)
+
+    data_ingestao: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "sofascore_player_id", "sofascore_event_id",
+            name="uq_estatistica_jogador_jogo",
+        ),
+        Index("ix_jogador_data", "sofascore_player_id", "data_jogo"),
+    )
+
+
 class ProjecaoLive(Base):
     """Projecao enviada ao Telegram num minuto X de um jogo.
 
