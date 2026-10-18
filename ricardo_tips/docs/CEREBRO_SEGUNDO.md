@@ -146,6 +146,84 @@ Objectivo: cada equipa das ligas prioritárias tem ≥15 jogos em
   ("Roma marcou 3 cantos nos últimos 15 min dos últimos 5 jogos") e
   escreve nas `notas` da `EquipaPerfil`
 
+### Fase 6 — Micro-cérebros por JOGADOR (ideia 2026-10-18)
+
+Objectivo: cada jogador relevante tem o seu próprio micro-cérebro.
+Permite confrontos tácticos: "defesa agressivo A vs driblador B →
+amarelo provável para A".
+
+**Novas tabelas:**
+- `EstatisticaJogadorJogo` — append-only, 1 linha por (jogador, jogo):
+  - IDs: `sofascore_player_id`, `sofascore_event_id`, `sofascore_team_id`
+  - Jogou: `minutos`, `foi_titular`, `posicao` (ex: `LB`, `RW`, `AM`)
+  - Produção: `remates`, `sot`, `golos`, `assistencias`, `grandes_oportunidades`
+  - Passes: `passes`, `passes_pct`, `passes_chave`
+  - Defesa: `tackles`, `interceptacoes`, `desarmes`, `duels_won`, `duels_lost`
+  - Disciplina: `fouls_committed`, `fouls_drawn`, `cards_amarelos`,
+    `cards_vermelhos`, `minuto_amarelo` (quando foi apontado)
+  - Rating Sofascore: `rating` (float 0-10)
+- `FormacaoEquipaJogo` — 1 linha por (equipa, jogo):
+  - `formacao` (`"4-3-3"`), `11_inicial_json`, `substituicoes_json`,
+    `estadio`, `arbitro`
+
+**Analise derivada (perfil jogador):**
+- `agressividade` = fouls_committed/90 nos últimos 10 jogos
+- `tendencia_amarelo` = cards_am/90
+- `papel_tactico` = posição moda + rating médio
+- `forma_actual` = média de ratings últimos 5 jogos
+- `remates_90`, `golos_90`, `tackles_90`
+
+**Confronto táctico (match-up):**
+Para cada par (atacante A, defesa B) que se vão enfrentar:
+- Se A tem alto `drible_sucesso%` e B tem alta `agressividade`:
+  - probabilidade de B tirar amarelo sobe (sinal: "amarelo B ≥ linha")
+- Se jogador C já tem amarelo neste jogo (minuto X) e é agressivo:
+  - probabilidade de 2º amarelo sobe no fim
+
+**Alertas automáticos:**
+- "⚠ Casemiro já amarelado minuto 23, probabilidade vermelho 2T +180%"
+- "📍 Vinicius Jr vs Trippier: Trippier tem 2.3 faltas/90, cartão 0.4/90"
+
+### Fase 7 — Casa vs Fora split (ideia 2026-10-18)
+
+- [ ] 7.1 Perfil equipa separa stats quando `era_casa=True` vs `False`.
+  Já temos a flag na tabela, só falta separar no agregado.
+- [ ] 7.2 Novo campo `_casa` e `_fora` para cada métrica
+  (ex: `remates_casa_90`, `remates_fora_90`)
+
+### Fase 8 — Estádios (ideia 2026-10-18)
+
+Alguns estádios são "fortaleza" (visitantes jogam pior). Precisamos de:
+- [ ] 8.1 Tabela `Estadio` (nome, cidade, lotação, altitude?)
+- [ ] 8.2 Ligar `EstatisticaEquipaJogo.estadio_id`
+- [ ] 8.3 Para cada estádio: performance média dos visitantes vs
+  baseline mundial. Flag "fortaleza" se visitantes marcam ≤ média - 0.5
+
+### Fase 9 — Carga semanal rica (ideia 2026-10-18)
+
+Já temos `dias_desde_jogo_anterior`. Precisamos de:
+- [ ] 9.1 `jogos_ultimos_7d` (quantos)
+- [ ] 9.2 `jogos_ultimos_14d`
+- [ ] 9.3 `viagens_ultimos_14d` (deslocações para fora)
+- [ ] 9.4 `jogo_europeu_entre_meio` (bool)
+
+**Factor fadiga composto:**
+```
+fator = 1.0
+  - 0.08 se 2+ jogos nos últimos 7d
+  - 0.05 se viagem longa (voo >2h) na última semana
+  - 0.03 adicional por cada dia de descanso <4
+```
+Aplicado em projecções 2ª parte.
+
+### Fase 10 — Jogadores lesionados / suspensos
+
+Já temos `Lesao` no schema (não usamos). Expandir:
+- [ ] 10.1 Ingerir lista oficial de lesões/suspensos da Sofascore
+- [ ] 10.2 Confronto considera: "Roma sem Dybala + Pellegrini → ataque −30%"
+- [ ] 10.3 Alerta "ONZE SURPRESA" quando onze inicial muda substancialmente
+  vs 5 jogos anteriores
+
 ## Estado em 2026-10-18
 
 **Já pronto:**
