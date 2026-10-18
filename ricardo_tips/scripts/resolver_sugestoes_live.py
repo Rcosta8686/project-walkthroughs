@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apostas.ingestao import sofascore_live  # noqa: E402
 from apostas.ingestao._flaresolverr import FlaresolverrIndisponivel  # noqa: E402
-from apostas.modelos import historico_equipas  # noqa: E402
+from apostas.modelos import historico_equipas, historico_jogadores  # noqa: E402
 from apostas.utils.config import project_root  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 
@@ -213,6 +213,16 @@ def main() -> None:
                 print(f"        → historico equipas: +{n_add} linhas")
         except Exception as exc:  # noqa: BLE001
             log.warning("Historico event %s falhou: %s", eid, exc)
+
+        # Grava historico persistente por jogador (append-only). Puxa
+        # /lineups + /incidents e grava 1 linha por titular/suplente usado.
+        # Idempotente.
+        try:
+            n_jog = historico_jogadores.gravar_jogadores_terminado(int(eid))
+            if n_jog:
+                print(f"        → historico jogadores: +{n_jog} linhas")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Historico jogadores event %s falhou: %s", eid, exc)
 
         agora = datetime.utcnow().isoformat(timespec="seconds")
         for row in linhas_grupo:
