@@ -465,6 +465,14 @@ def listar_jogos_live(
     return eventos
 
 
+def _unescape_nome(s: str | None) -> str:
+    """Decode entidades HTML em nomes de equipas/ligas (ex: '&amp;' -> '&')."""
+    if not s:
+        return "?"
+    import html as _html  # noqa: PLC0415
+    return _html.unescape(s)
+
+
 def obter_estado_live(event_id: int) -> EstadoLive | None:
     """Puxa + agrega todas as estatisticas live de um jogo.
 
@@ -478,9 +486,9 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     arbitro = ((ev.get("referee") or {}).get("name") if isinstance(ev.get("referee"), dict) else None)
     estado = EstadoLive(
         event_id=event_id,
-        home=ev.get("homeTeam", {}).get("name", "?"),
-        away=ev.get("awayTeam", {}).get("name", "?"),
-        liga=ev.get("tournament", {}).get("name", "?"),
+        home=_unescape_nome(ev.get("homeTeam", {}).get("name")),
+        away=_unescape_nome(ev.get("awayTeam", {}).get("name")),
+        liga=_unescape_nome(ev.get("tournament", {}).get("name")),
         minuto=_minuto_actual(ev),
         estado=ev.get("status", {}).get("code") or ev.get("status", {}).get("description", "?"),
         marcador_casa=int((ev.get("homeScore") or {}).get("current", 0) or 0),
