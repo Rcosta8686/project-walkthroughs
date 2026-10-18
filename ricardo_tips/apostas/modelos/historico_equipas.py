@@ -54,19 +54,35 @@ def _parse_valor(v) -> float | None:
 def _item(period_json: dict, grupo_match: str, item_match: str, lado: str) -> float | None:
     """Procura 1 item nas statisticsItems do periodo dado.
 
-    grupo_match: substring (case-insensitive) do groupName
-    item_match: substring do item.name
+    grupo_match: substring (case-insensitive) do groupName. Se vazio ""
+      ou None, procura em TODOS os grupos (Sofascore muda nomes com o tempo).
+    item_match: substring do item.name (sempre obrigatorio)
     lado: 'home' ou 'away'
     """
     for grupo in period_json.get("groups", []):
         gn = (grupo.get("groupName") or "").lower()
-        if grupo_match.lower() not in gn:
+        if grupo_match and grupo_match.lower() not in gn:
             continue
         for item in grupo.get("statisticsItems", []):
             inm = (item.get("name") or "").lower()
             if item_match.lower() not in inm:
                 continue
             return _parse_valor(item.get(lado))
+    return None
+
+
+def _item_any_group(period_json: dict, *item_matches: str, lado: str) -> float | None:
+    """Procura item.name que corresponda a QUALQUER um dos item_matches
+    em QUALQUER grupo. Case-insensitive substring match.
+    """
+    for grupo in period_json.get("groups", []):
+        for item in grupo.get("statisticsItems", []):
+            inm = (item.get("name") or "").lower()
+            for match in item_matches:
+                if match.lower() in inm:
+                    v = _parse_valor(item.get(lado))
+                    if v is not None:
+                        return v
     return None
 
 
@@ -103,39 +119,41 @@ class _StatsEquipa:
 
 
 def _extrair_stats_equipa(stats_json: dict, lado: str) -> _StatsEquipa:
-    """lado = 'home' ou 'away'. Devolve _StatsEquipa (campos opcionais)."""
+    """lado = 'home' ou 'away'. Devolve _StatsEquipa (campos opcionais).
+
+    Procura cada metrica em QUALQUER grupo — Sofascore muda nomes de
+    grupos ao longo do tempo (ex: Attack -> Match overview -> Set pieces).
+    """
     stats = _StatsEquipa()
+    for periodo_name, atrib_sufixo in (
+        ("ALL", ""), ("1ST", "_1t"), ("2ND", "_2t")
+    ):
+        p = _periodo(stats_json, periodo_name)
+        if not p:
+            continue
+        # Remates
+        v = _item_any_group(p, "Total shots", "Shots", lado=lado)
+        setattr(stats, f"remates{atrib_sufixo}", v)
+        # SOT
+        v = _item_any_group(p, "Shots on target", "On target", lado=lado)
+        setattr(stats, f"sot{atrib_sufixo}", v)
+        # Cantos
+        v = _item_any_group(p, "Corner kicks", "Corners", lado=lado)
+        setattr(stats, f"cantos{atrib_sufixo}", v)
+        # Amarelos
+        v = _item_any_group(p, "Yellow cards", "Yellow", lado=lado)
+        setattr(stats, f"cards_am{atrib_sufixo}", v)
+        # Faltas
+        v = _item_any_group(p, "Fouls", lado=lado)
+        setattr(stats, f"fouls{atrib_sufixo}", v)
+
+    # Campos apenas no total (ALL)
     p_all = _periodo(stats_json, "ALL")
     if p_all:
-        stats.remates = _item(p_all, "shots", "Total shots", lado) or \
-            _item(p_all, "shots", "shots", lado)
-        stats.sot = _item(p_all, "shots", "Shots on target", lado)
-        stats.cantos = _item(p_all, "attack", "Corner kicks", lado) or \
-            _item(p_all, "set pieces", "Corner", lado)
-        stats.cards_am = _item(p_all, "cards", "Yellow", lado)
-        stats.cards_vm = _item(p_all, "cards", "Red", lado)
-        stats.fouls = _item(p_all, "foul", "Fouls", lado)
-        stats.posse = _item(p_all, "possession", "Ball possession", lado)
-        stats.passes = _item(p_all, "passes", "Passes", lado)
-        stats.passes_pct = _item(p_all, "passes", "Accurate passes", lado)
-    p_1t = _periodo(stats_json, "1ST")
-    if p_1t:
-        stats.remates_1t = _item(p_1t, "shots", "Total shots", lado) or \
-            _item(p_1t, "shots", "shots", lado)
-        stats.sot_1t = _item(p_1t, "shots", "Shots on target", lado)
-        stats.cantos_1t = _item(p_1t, "attack", "Corner kicks", lado) or \
-            _item(p_1t, "set pieces", "Corner", lado)
-        stats.cards_am_1t = _item(p_1t, "cards", "Yellow", lado)
-        stats.fouls_1t = _item(p_1t, "foul", "Fouls", lado)
-    p_2t = _periodo(stats_json, "2ND")
-    if p_2t:
-        stats.remates_2t = _item(p_2t, "shots", "Total shots", lado) or \
-            _item(p_2t, "shots", "shots", lado)
-        stats.sot_2t = _item(p_2t, "shots", "Shots on target", lado)
-        stats.cantos_2t = _item(p_2t, "attack", "Corner kicks", lado) or \
-            _item(p_2t, "set pieces", "Corner", lado)
-        stats.cards_am_2t = _item(p_2t, "cards", "Yellow", lado)
-        stats.fouls_2t = _item(p_2t, "foul", "Fouls", lado)
+        stats.cards_vm = _item_any_group(p_all, "Red cards", "Red", lado=lado)
+        stats.posse = _item_any_group(p_all, "Ball possession", "Possession", lado=lado)
+        stats.passes = _item_any_group(p_all, "Passes", lado=lado)
+        stats.passes_pct = _item_any_group(p_all, "Accurate passes", lado=lado)
     return stats
 
 
