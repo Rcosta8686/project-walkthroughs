@@ -452,6 +452,10 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     enviadas = 0
     for mercado, lam_c, lam_f, val_c, val_f in mercados_para_projetar:
         try:
+            # aplicar_contexto=False: o live_predictor ja aplica fator_m +
+            # fator_chasing + +15% losing. NAO duplicar os ajustes aqui.
+            # Fadiga NAO depende do predictor, por isso continua a ser
+            # aplicada (quando houver dias_descanso).
             proj = projecao_live.projetar(
                 mercado=mercado,
                 minuto=minuto,
@@ -463,6 +467,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                 lam_rest_fora=float(lam_f),
                 nome_casa=estado.home,
                 nome_fora=estado.away,
+                aplicar_contexto=False,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("Projecao %s falhou %s: %s", mercado, event_id, exc)
@@ -472,6 +477,9 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
         if proj.projecao_final_total < 1.0:
             continue
         if proj.valor_atual_total == 0 and proj.projecao_final_total < 3.0:
+            continue
+        # Filtro 5: skip projeccoes "sem valor" (todas as linhas em quase-certo)
+        if not projecao_live.tem_valor_actionavel(proj):
             continue
 
         try:

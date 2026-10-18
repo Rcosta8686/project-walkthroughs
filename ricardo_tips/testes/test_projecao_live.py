@@ -30,7 +30,8 @@ def test_projecao_total_simples():
 
 
 def test_ajuste_a_ganhar_reduz():
-    """Casa a ganhar 1-0: lam_rest_casa reduzido 15%, lam_rest_fora aumentado 25%."""
+    """Casa a ganhar 1-0: lam_rest_casa reduzido 15%, lam_rest_fora aumentado 25%.
+    So com aplicar_contexto=True (default e False — delega ao live_predictor)."""
     proj = pl.projetar(
         mercado="sot",
         minuto=55,
@@ -42,6 +43,7 @@ def test_ajuste_a_ganhar_reduz():
         lam_rest_fora=2.0,
         nome_casa="A",
         nome_fora="B",
+        aplicar_contexto=True,
     )
     # Casa (a ganhar): 3 + 2*0.85 = 4.7
     assert proj.projecao_final_casa == pytest.approx(4.7, abs=0.1)
@@ -52,7 +54,7 @@ def test_ajuste_a_ganhar_reduz():
 
 
 def test_perder_por_2_mais_remates():
-    """Equipa a perder 0-2: boost +45% em SOT."""
+    """Equipa a perder 0-2: boost +45% em SOT. So com aplicar_contexto=True."""
     proj = pl.projetar(
         mercado="sot",
         minuto=65,
@@ -64,6 +66,7 @@ def test_perder_por_2_mais_remates():
         lam_rest_fora=1.5,
         nome_casa="A",
         nome_fora="B",
+        aplicar_contexto=True,
     )
     # Casa (a perder 2+): 4 + 1.5*1.45 = 6.175
     assert proj.projecao_final_casa == pytest.approx(6.2, abs=0.1)
@@ -150,8 +153,8 @@ def test_formatar_telegram_contem_essencial():
     assert "Genoa" in msg
     assert "1-0" in msg
     assert "Remates a baliza" in msg
-    assert "over justo" in msg
-    assert "under justo" in msg
+    assert "over @" in msg
+    assert "under @" in msg
 
 
 def test_deve_projetar_dispara_so_uma_vez():
@@ -169,6 +172,52 @@ def test_deve_projetar_dispara_so_uma_vez():
     ja.add(55)
     # Minuto 72: dispara 70
     assert pl.deve_projetar(72, ja) == 70
+
+
+def test_tem_valor_actionavel_todas_quase_certas_devolve_false():
+    """Se projeccao e muito alta e linhas sao baixas, todas as probs ~1
+    -> nao ha linha interessante, nao devolve valor accionavel."""
+    proj = pl.projetar(
+        mercado="cantos",
+        minuto=55,
+        score_casa=0,
+        score_fora=0,
+        valor_atual_casa=10,
+        valor_atual_fora=10,
+        lam_rest_casa=0.1,
+        lam_rest_fora=0.1,
+        nome_casa="A",
+        nome_fora="B",
+    )
+    # valor_actual = 20, lam_rest ~0 -> projecao ~20.2, linhas 19.5/20.5/21.5
+    # 19.5 ja passou (prob=1), 21.5 improvavel (prob<0.15)
+    # Todas as linhas estao em "quase certo" -> False
+    assert not pl.tem_valor_actionavel(proj)
+
+
+def test_tem_valor_actionavel_linha_media_devolve_true():
+    """Projeccao razoavel com linha centrada -> prob ~50% -> True."""
+    proj = pl.projetar(
+        mercado="cantos",
+        minuto=50,
+        score_casa=0,
+        score_fora=0,
+        valor_atual_casa=3,
+        valor_atual_fora=3,
+        lam_rest_casa=2.0,
+        lam_rest_fora=2.0,
+        nome_casa="A",
+        nome_fora="B",
+    )
+    assert pl.tem_valor_actionavel(proj)
+
+
+def test_contexto_estado_mensagens():
+    assert pl._contexto_estado(0, 0, "A", "B") is None
+    assert pl._contexto_estado(1, 0, "A", "B") == "🏠 A a ganhar 1-0 (reduz, nao abre)"
+    assert pl._contexto_estado(0, 1, "A", "B") == "✈ B a ganhar 1-0 (reduz, nao abre)"
+    assert "A a ganhar por 2" in pl._contexto_estado(2, 0, "A", "B")
+    assert "Empate 1-1" in pl._contexto_estado(1, 1, "A", "B")
 
 
 def test_valor_actual_ja_passou_linha():

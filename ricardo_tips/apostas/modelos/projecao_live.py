@@ -164,16 +164,19 @@ def projetar(
     dias_descanso_fora: int | None = None,
     nome_casa: str = "Casa",
     nome_fora: str = "Fora",
+    aplicar_contexto: bool = False,
 ) -> ProjecaoResumo:
     """Projecta valor final + odds justas por linha.
 
     mercado: "sot" | "remates" | "cantos"
     valor_atual_X: X observado ate agora (X = casa, fora)
     lam_rest_X: taxa Poisson do que falta (sai do live_predictor)
+    aplicar_contexto: False (default) assume que lam_rest ja tem ajustes
+      de score/chasing (vem do live_predictor que ja os aplica).
+      Pass True SO quando lam_rest e "neutro" (ex: taxa historica directa).
 
-    Aplica em cima do lam_rest:
-      - multiplicador contexto (a ganhar / perder / empatar) por equipa
-      - fadiga se jogou ha <= 3 dias (so na 2a parte, >= min 46)
+    Fadiga (minuto >= 46 + dias_descanso <= 3) sempre aplicada quando dada,
+    porque o live_predictor nao a conhece.
     """
     mercado = mercado.lower()
     if mercado not in {"sot", "remates", "cantos"}:
@@ -183,10 +186,15 @@ def projetar(
     diff_casa = score_casa - score_fora
     diff_fora = -diff_casa
 
-    mult_casa = _multiplicador_contexto(diff_casa, mercado)
-    mult_fora = _multiplicador_contexto(diff_fora, mercado)
+    if aplicar_contexto:
+        mult_casa = _multiplicador_contexto(diff_casa, mercado)
+        mult_fora = _multiplicador_contexto(diff_fora, mercado)
+    else:
+        mult_casa = 1.0
+        mult_fora = 1.0
 
-    # Fadiga: so afecta 2a parte (minuto >= 46)
+    # Fadiga: so afecta 2a parte (minuto >= 46), SEMPRE aplicada (predictor
+    # nao sabe de dias de descanso).
     aviso_fadiga = None
     if minuto >= 46:
         if dias_descanso_casa is not None and dias_descanso_casa <= _LIMIAR_FADIGA_DIAS:
@@ -269,6 +277,23 @@ _NOMES_MERCADO = {
 }
 
 
+def _contexto_estado(score_casa: int, score_fora: int,
+                      nome_casa: str, nome_fora: str) -> str | None:
+    """Nota de 1 linha sobre o estado do jogo. None se empate inicial."""
+    diff = score_casa - score_fora
+    if diff == 0:
+        if score_casa == 0:
+            return None  # 0-0, nada a dizer
+        return f"⚽ Empate {score_casa}-{score_fora}"
+    if diff >= 2:
+        return f"🏠 {nome_casa} a ganhar por {diff} ({score_casa}-{score_fora})"
+    if diff == 1:
+        return f"🏠 {nome_casa} a ganhar 1-0 (reduz, nao abre)"
+    if diff == -1:
+        return f"✈ {nome_fora} a ganhar 1-0 (reduz, nao abre)"
+    return f"✈ {nome_fora} a ganhar por {-diff} ({score_casa}-{score_fora})"
+
+
 def formatar_telegram(
     proj: ProjecaoResumo,
     nome_casa: str,
@@ -276,49 +301,56 @@ def formatar_telegram(
     score_casa: int,
     score_fora: int,
 ) -> str:
-    """Mensagem Telegram compacta estilo:
-
-    📊 PROJECAO 56' | AS Roma 1-0 Genoa
-    Remates a baliza — TOTAL DO JOGO
-      agora 4 → projecao final 6.7
-       5.5: over justo @2.00 | under justo @2.00
-       6.5: over justo @2.08 | under justo @1.92
-       7.5: over justo @3.33 | under justo @1.43
-      Por equipa: AS Roma 4->6.1 (linha 5.5: over @1.87 / under @2.15)
-                  Genoa 0->0.7 (linha 0.5: over @2.00 / under @2.00)
-    So ha valor se a casa pagar MAIS do que a odd justa na mesma linha.
-    """
+    """Mensagem Telegram compacta."""
     nome_merc = _NOMES_MERCADO.get(proj.mercado, proj.mercado)
     linhas = [
         f"📊 *PROJECAO {proj.minuto}'* | {nome_casa} {score_casa}-{score_fora} {nome_fora}",
-        f"*{nome_merc}* — TOTAL DO JOGO (as duas equipas)",
-        f"  agora {proj.valor_atual_total:.0f} → projeccao final {proj.projecao_final_total}",
     ]
+    ctx = _contexto_estado(score_casa, score_fora, nome_casa, nome_fora)
+    if ctx:
+        linhas.append(ctx)
+    linhas.extend([
+        f"*{nome_merc}* — TOTAL DO JOGO",
+        f"  agora {proj.valor_atual_total:.0f} → projeccao final {proj.projecao_final_total}",
+    ])
     for lo in proj.linhas_total:
         linhas.append(
-            f"   {lo.linha}: over justo @{lo.over_justa:.2f} | "
-            f"under justo @{lo.under_justa:.2f}"
+            f"   {lo.linha}: over @{lo.over_justa:.2f} | "
+            f"under @{lo.under_justa:.2f}"
         )
-    # Por equipa
-    if proj.linha_casa and proj.linha_fora:
+    # Por equipa (so mostra se as projecoes das 2 equipas sao >= 0.5)
+    if (proj.linha_casa and proj.linha_fora
+            and (proj.projecao_final_casa >= 0.5
+                 or proj.projecao_final_fora >= 0.5)):
         linhas.append(
-            f"  Por equipa: {nome_casa} {proj.valor_atual_casa:.0f}→"
-            f"{proj.projecao_final_casa:.1f} "
-            f"(linha {proj.linha_casa.linha}: over @{proj.linha_casa.over_justa:.2f} / "
-            f"under @{proj.linha_casa.under_justa:.2f})"
-        )
-        linhas.append(
-            f"              {nome_fora} {proj.valor_atual_fora:.0f}→"
-            f"{proj.projecao_final_fora:.1f} "
-            f"(linha {proj.linha_fora.linha}: over @{proj.linha_fora.over_justa:.2f} / "
-            f"under @{proj.linha_fora.under_justa:.2f})"
+            f"  {nome_casa}: {proj.valor_atual_casa:.0f}→"
+            f"{proj.projecao_final_casa:.1f}  ·  "
+            f"{nome_fora}: {proj.valor_atual_fora:.0f}→"
+            f"{proj.projecao_final_fora:.1f}"
         )
     if proj.aviso_fadiga:
         linhas.append(f"  ⚠ {proj.aviso_fadiga}")
     linhas.append(
-        "_So ha valor se a casa pagar MAIS do que a odd justa na mesma linha._"
+        "_So aposta se a casa paga MAIS do que a odd justa._"
     )
     return "\n".join(linhas)
+
+
+# ─────────── Filtro: projeccao e informativa? ─────────────────────────────
+
+def tem_valor_actionavel(proj: ProjecaoResumo) -> bool:
+    """True se pelo menos 1 linha tem prob_over entre 20% e 80%.
+
+    Se as 3 linhas estao todas em "quase certo" (prob >= 0.85 ou <= 0.15),
+    nao ha linha interessante para apostar — a casa vai ter odds a condizer
+    e nao ha edge possivel. Nao enviar.
+    """
+    if not proj.linhas_total:
+        return False
+    for lo in proj.linhas_total:
+        if 0.20 <= lo.prob_over <= 0.80:
+            return True
+    return False
 
 
 # ─────────── Minutos de projeccao ──────────────────────────────────────────
