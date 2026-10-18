@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import inspect  # noqa: E402
 
-from apostas.utils.db import criar_engine  # noqa: E402
+from apostas.utils.db import get_engine  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import (  # noqa: E402
     Base,
@@ -28,7 +28,7 @@ log = get_logger(__name__)
 
 
 def main() -> None:
-    engine = criar_engine()
+    engine = get_engine()
     insp = inspect(engine)
 
     novas = [
