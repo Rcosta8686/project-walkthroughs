@@ -47,7 +47,7 @@ import requests  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
-from apostas.alertas import analista, filtros_mercado, telegram_live  # noqa: E402
+from apostas.alertas import analista, dual_sinal, filtros_mercado, telegram_live  # noqa: E402
 from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
 from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
@@ -1014,6 +1014,16 @@ def _correr_ciclo(args) -> None:
             ev_min_telegram = max(args.ev_minimo, args.ev_minimo_telegram)
             prob_min_telegram = args.prob_minima
             notificar = []
+
+            # M17: carrega perfis historicos (M16) uma vez por ciclo para
+            # avaliar dual signal. Reaproveita o CSV live resolvido.
+            perfis_hist: dict | None = None
+            try:
+                from apostas.alertas.historico_alertas import carregar_perfis
+                perfis_hist = carregar_perfis(_ficheiro_csv())
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Carga perfis para dual-sinal falhou: %s", exc)
+                perfis_hist = None
             for s in todas_sugestoes:
                 # Blacklist por liga (dados reais: Brasileirao -42% ROI,
                 # LaLiga 2 -35% ROI com n>=50). Deixa aparecer no terminal
@@ -1067,8 +1077,23 @@ def _correr_ciclo(args) -> None:
                         continue
                     if ev_val >= ev_min_telegram:
                         notificar.append(s)
+            # M17: carimba `dual_sinal=True` quando historico forte confirma
+            # o edge. Nao filtra — so marca para o telegram_live mostrar o
+            # badge e para o ranking rebocar primeiro.
+            for s in notificar:
+                try:
+                    res_dual = dual_sinal.avaliar_dual_sinal(
+                        s, perfis_historicos=perfis_hist,
+                    )
+                    s["dual_sinal"] = res_dual.e_dual
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Dual-sinal falhou em %s: %s", s.get("mercado"), exc)
+                    s["dual_sinal"] = False
+
             # Score para ranking: edge × fator_mercado (Caan Berry:
-            # ligas pouco monitoradas, nicho em Big-5, fade mediaticas)
+            # ligas pouco monitoradas, nicho em Big-5, fade mediaticas).
+            # Sinais DUAL (M17) ganham ×1.5 — duas confirmacoes puxam o
+            # ranking para o topo.
             def _score(s):
                 try:
                     prob = float(s.get("prob_modelo", 0))
@@ -1078,7 +1103,10 @@ def _correr_ciclo(args) -> None:
                         s.get("liga", ""), s.get("home", ""), s.get("away", ""),
                         s.get("mercado", ""), s.get("lado", ""),
                     )
-                    return edge * fator
+                    base = edge * fator
+                    if s.get("dual_sinal"):
+                        base *= 1.5
+                    return base
                 except (ValueError, TypeError):
                     return 0
             notificar.sort(key=_score, reverse=True)

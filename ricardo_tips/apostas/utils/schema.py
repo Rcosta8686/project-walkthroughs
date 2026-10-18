@@ -580,6 +580,62 @@ class ProjecaoLive(Base):
     )
 
 
+class FalhaAlerta(Base):
+    """Post-mortem de 1 alerta que resultou em L (M20 — espeleologia).
+
+    Guarda informacao suficiente para agregar padroes ("os overs falham
+    quando o jogo e 2-2 ao min 55 porque o modelo esquece-se do break")
+    sem precisar de re-visitar o Sofascore. Uma linha por alerta L.
+    """
+
+    __tablename__ = "falhas_alerta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True, unique=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    liga: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    mercado: Mapped[str] = mapped_column(String(30), nullable=False)
+    lado: Mapped[str] = mapped_column(String(20), nullable=False)
+    linha: Mapped[str | None] = mapped_column(String(10))
+    minuto: Mapped[int | None] = mapped_column(Integer)
+    prob_modelo: Mapped[float | None] = mapped_column(Float)
+    ev: Mapped[float | None] = mapped_column(Float)
+    marcador_no_alerta: Mapped[str | None] = mapped_column(String(10))
+    marcador_final: Mapped[str | None] = mapped_column(String(10))
+    # Categoria do padrao da falha. Vazio = por classificar.
+    # Ex: 'linha_pouco_fiavel' | 'golo_tardio_perdido' | 'cards_sem_arbitro_estrito'
+    # | 'xg_contra' | 'onze_errado' | 'other'
+    categoria: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    nota: Mapped[str | None] = mapped_column(Text)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class Hipotese(Base):
+    """Registo cientifico de hipoteses (M21 — hypothesis ledger).
+
+    Antes de alterar o modelo, grava-se a hipotese ("over 2.5 na 2a parte
+    quando CASA perde por 1 → mais golos") e observa-se N alertas. No
+    fim, confirma/refuta/inconclusivo e explica porque.
+    """
+
+    __tablename__ = "hipoteses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    titulo: Mapped[str] = mapped_column(String(200), nullable=False)
+    descricao: Mapped[str] = mapped_column(Text, nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    # ativa | confirmada | refutada | inconclusiva
+    estado: Mapped[str] = mapped_column(String(20), nullable=False, default="ativa")
+    evidencia_a_favor: Mapped[str | None] = mapped_column(Text)
+    evidencia_contra: Mapped[str | None] = mapped_column(Text)
+    decisao_final: Mapped[str | None] = mapped_column(Text)
+    resolvido_em: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class ApostaRealLive(Base):
     """Aposta real registada por /apostei a partir de um alerta live.
 
