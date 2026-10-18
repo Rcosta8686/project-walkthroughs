@@ -26,6 +26,7 @@ Tempo estimado: ~2-3 min por liga (18-20 equipas × 15 jogos × 1s delay).
 from __future__ import annotations
 
 import argparse
+import html as _html
 import sys
 import time
 from pathlib import Path
@@ -76,7 +77,7 @@ def _equipas_da_liga(tournament_id: int, season_id: int) -> list[tuple[int, str]
                 team = item.get("team") or {}
                 tid = team.get("id")
                 if tid and tid not in equipas:
-                    equipas[tid] = team.get("name") or f"team_{tid}"
+                    equipas[tid] = _html.unescape(team.get("name") or f"team_{tid}")
     if equipas:
         return list(equipas.items())
 
@@ -90,7 +91,7 @@ def _equipas_da_liga(tournament_id: int, season_id: int) -> list[tuple[int, str]
                 team = ev.get(lado) or {}
                 tid = team.get("id")
                 if tid and tid not in equipas:
-                    equipas[tid] = team.get("name") or f"team_{tid}"
+                    equipas[tid] = _html.unescape(team.get("name") or f"team_{tid}")
     return list(equipas.items())
 
 

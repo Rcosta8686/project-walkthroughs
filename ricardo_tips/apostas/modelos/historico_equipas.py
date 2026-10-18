@@ -12,6 +12,7 @@ impede duplicados — chamar varias vezes para o mesmo jogo e seguro (no-op).
 """
 from __future__ import annotations
 
+import html as _html
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -23,6 +24,13 @@ from apostas.ingestao.sofascore_live import _get_json
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import EstatisticaEquipaJogo
+
+
+def _unescape(s: str | None) -> str:
+    """Decode entidades HTML em nomes vindos da Sofascore ('&amp;' -> '&')."""
+    if not s:
+        return "?"
+    return _html.unescape(s)
 
 log = get_logger(__name__)
 
@@ -204,8 +212,9 @@ def gravar_jogo_terminado(event_id: int) -> int:
         return 0
     data_jogo = datetime.utcfromtimestamp(ts)
 
-    liga = ((ev.get("tournament") or {}).get("name")
-            or (ev.get("tournament") or {}).get("uniqueTournament", {}).get("name"))
+    liga_raw = ((ev.get("tournament") or {}).get("name")
+                or (ev.get("tournament") or {}).get("uniqueTournament", {}).get("name"))
+    liga = _unescape(liga_raw) if liga_raw else None
 
     stats_h = _extrair_stats_equipa(stats_json, "home")
     stats_a = _extrair_stats_equipa(stats_json, "away")
@@ -255,8 +264,8 @@ def gravar_jogo_terminado(event_id: int) -> int:
     adic = 0
     with abrir_sessao() as s:
         for team_id, team_name, era_casa, gm, gs, gm_1t, gs_1t, stats, dias in [
-            (home_id, home.get("name") or "?", True, hs, aws, hs_1t, aws_1t, stats_h, dias_h),
-            (away_id, away.get("name") or "?", False, aws, hs, aws_1t, hs_1t, stats_a, dias_a),
+            (home_id, _unescape(home.get("name")), True, hs, aws, hs_1t, aws_1t, stats_h, dias_h),
+            (away_id, _unescape(away.get("name")), False, aws, hs, aws_1t, hs_1t, stats_a, dias_a),
         ]:
             existe = s.scalar(select(EstatisticaEquipaJogo).where(
                 EstatisticaEquipaJogo.sofascore_team_id == team_id,
