@@ -14,10 +14,39 @@ Setup rapido:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from apostas.alertas.telegram_cliente import cliente
 from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+
+# ─── Cache em memoria dos perfis historicos (M16) ──────────────────────
+# Evita recarregar o CSV a cada alerta. Invalidado a cada reinicio do
+# scanner — o resolver cresce ao longo do dia mas e aceitavel.
+_cache_perfis: dict | None = None
+_cache_csv_path: Path | None = None
+
+
+def _perfis_historicos():
+    """Carrega (ou devolve cache) do historico de alertas via CSV."""
+    global _cache_perfis, _cache_csv_path
+    try:
+        from apostas.alertas.historico_alertas import carregar_perfis
+        from apostas.utils.config import project_root
+    except Exception:  # noqa: BLE001
+        return {}
+    csv_path = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
+    if _cache_perfis is not None and _cache_csv_path == csv_path:
+        return _cache_perfis
+    try:
+        _cache_perfis = carregar_perfis(csv_path)
+        _cache_csv_path = csv_path
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Carga perfis falhou: %s", exc)
+        _cache_perfis = {}
+    return _cache_perfis
 
 
 def _fase_do_jogo(minuto: int) -> str:
@@ -109,6 +138,26 @@ def enviar_sugestao_live(s: dict) -> None:
         verificar = bool(s.get("verificar"))
         verificar_str = "⚠ VERIFICAR — " if verificar else ""
 
+        # M16: historico por tipo de alerta — linha extra na mensagem
+        historico_line = ""
+        try:
+            from apostas.alertas.historico_alertas import (
+                formatar_linha_telegram, perfil_para,
+            )
+            perfis = _perfis_historicos()
+            if perfis:
+                p = perfil_para(perfis, liga, mercado, lado)
+                if p is not None and p.n_alertas >= 3:
+                    historico_line = f"\n{formatar_linha_telegram(p)}"
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Historico perfil falhou: %s", exc)
+
+        # M19: melhor casa suica (vem de filtros_mercado via scanner)
+        melhor_casa_line = ""
+        outras_casas_str = s.get("outras_casas") or ""
+        if outras_casas_str:
+            melhor_casa_line = f"\n💰 {outras_casas_str}"
+
         if casa == "ANALISTA":
             # Sinal puro — mensagem narrativa com racional
             odd_desejada = float(s.get("odd", 0))
@@ -123,6 +172,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
+                f"{historico_line}"
                 f"{racional_section}"
                 f"\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
@@ -141,10 +191,13 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
-                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}\n"
+                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
+                f"{historico_line}"
+                f"\n"
                 f"\n"
                 f"*Aposta:* {aposta_fmt}\n"
-                f"*Odd:* {odd}  ({casa})\n"
+                f"*Odd:* {odd}  ({casa})"
+                f"{melhor_casa_line}\n"
                 f"*Prob modelo:* {prob*100:.1f}%\n"
                 f"\n"
                 f"{link_line}"
