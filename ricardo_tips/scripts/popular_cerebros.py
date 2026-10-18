@@ -51,14 +51,27 @@ log = get_logger(__name__)
 
 
 def _season_actual(tournament_id: int) -> int | None:
-    """Devolve o id da epoca mais recente (primeira na lista Sofascore)."""
-    data = _get_json(f"/unique-tournament/{tournament_id}/seasons")
-    if data is None:
-        return None
-    seasons = data.get("seasons") or []
-    if not seasons:
-        return None
-    return seasons[0].get("id")
+    """Devolve o id da epoca mais recente (primeira na lista Sofascore).
+
+    Tenta /unique-tournament/{id}/seasons primeiro. Fallback para
+    /tournament/{id}/seasons (algumas ligas usam o endpoint sem 'unique-').
+    """
+    paths = [
+        f"/unique-tournament/{tournament_id}/seasons",
+        f"/tournament/{tournament_id}/seasons",
+    ]
+    for path in paths:
+        try:
+            data = _get_json(path)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Seasons via %s falhou: %s", path, exc)
+            continue
+        if data is None:
+            continue
+        seasons = data.get("seasons") or []
+        if seasons:
+            return seasons[0].get("id")
+    return None
 
 
 def _equipas_da_liga(tournament_id: int, season_id: int) -> list[tuple[int, str]]:
