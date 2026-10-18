@@ -118,6 +118,30 @@ def calcular_clv_sinal(
     )
 
 
+def clv_live(odd_executada: float, odd_recomendada: float) -> float | None:
+    """CLV simples para apostas LIVE.
+
+    Como nao existe snapshot "fecho" para a janela de 1-2 minutos entre
+    sinal e aposta, usamos a odd que o scanner viu quando emitiu o sinal
+    como proxy da linha "justa" no momento. Formula:
+
+        clv = odd_executada / odd_recomendada - 1
+
+    Interpretacao:
+      - clv > 0 → user conseguiu odd melhor do que a recomendada (bateu
+        o alvo). Significa que esperou o mercado mover a nosso favor.
+      - clv ≈ 0 → entrou perto do sinal, sem edge extra.
+      - clv < 0 → entrou tarde (o mercado ja tinha corrigido). Nao
+        bloqueia a aposta — o modelo pode continuar certo — mas e sinal
+        de atraso execucao.
+    """
+    if odd_recomendada is None or odd_recomendada <= 1.0:
+        return None
+    if odd_executada is None or odd_executada <= 1.0:
+        return None
+    return odd_executada / odd_recomendada - 1.0
+
+
 def gravar_snapshot(
     sofascore_event_id: int,
     mercado: str,

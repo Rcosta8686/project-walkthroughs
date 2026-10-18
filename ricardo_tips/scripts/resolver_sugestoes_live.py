@@ -32,11 +32,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from sqlalchemy import select  # noqa: E402
+
 from apostas.ingestao import sofascore_live  # noqa: E402
 from apostas.ingestao._flaresolverr import FlaresolverrIndisponivel  # noqa: E402
-from apostas.modelos import historico_equipas, historico_jogadores  # noqa: E402
+from apostas.modelos import clv_tracker, historico_equipas, historico_jogadores  # noqa: E402
 from apostas.utils.config import project_root  # noqa: E402
+from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
+from apostas.utils.schema import ApostaRealLive  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -158,6 +162,40 @@ def _lucro(resultado: str, odd: float, stake: float = 1.0) -> float:
     return 0.0  # push
 
 
+def _resolver_apostas_reais_live(alert_ids: list[int], wl_por_alerta: dict,
+                                   odd_por_alerta: dict) -> int:
+    """Fecha as linhas de ``ApostaRealLive`` para os alert_ids resolvidos.
+
+    Para cada alert_id resolvido:
+      - resultado: 'W' / 'L' / 'push' (do CSV)
+      - lucro: usa a stake e odd_executada do user (nao a odd recomendada)
+      - clv: `clv_tracker.clv_live(odd_executada, odd_recomendada)`
+
+    Idempotente: so toca linhas com resultado='pendente'.
+    """
+    if not alert_ids:
+        return 0
+
+    atualizadas = 0
+    with abrir_sessao() as s:
+        rows = s.scalars(
+            select(ApostaRealLive)
+            .where(ApostaRealLive.alert_id.in_(alert_ids))
+            .where(ApostaRealLive.resultado == "pendente")
+        ).all()
+        for row in rows:
+            wl = wl_por_alerta.get(row.alert_id)
+            if wl is None:
+                continue
+            row.resultado = wl
+            row.lucro = _lucro(wl, row.odd_executada, row.stake)
+            # CLV: compara odd_executada vs odd_recomendada
+            if row.odd_recomendada is not None:
+                row.clv = clv_tracker.clv_live(row.odd_executada, row.odd_recomendada)
+            atualizadas += 1
+    return atualizadas
+
+
 def main() -> None:
     if not CSV_PATH.exists():
         print(f"Sem CSV live em {CSV_PATH}")
@@ -189,6 +227,7 @@ def main() -> None:
     print(f"{len(por_evento)} jogos distintos para resolver.\n")
     resolvidos_jogos = 0
     resolvidos_mercados = 0
+    wl_por_alerta: dict[int, str] = {}
     for eid, linhas_grupo in por_evento.items():
         try:
             res = _puxar_resultado_final(int(eid))
@@ -237,6 +276,13 @@ def main() -> None:
             row["lucro"] = str(_lucro(wl, odd))
             row["resolvido_em"] = agora
             resolvidos_mercados += 1
+            # Memoriza wl por alert_id (para fechar ApostaRealLive abaixo)
+            try:
+                aid = int(row.get("alert_id") or 0)
+                if aid:
+                    wl_por_alerta[aid] = wl
+            except (TypeError, ValueError):
+                pass
         resolvidos_jogos += 1
 
     # Grava atomicamente
@@ -246,6 +292,18 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(linhas)
     tmp.replace(CSV_PATH)
+
+    # Fecha as apostas reais live correspondentes (idempotente — so toca
+    # linhas em estado 'pendente'). Calcula CLV = odd_executada / odd_rec - 1.
+    if wl_por_alerta:
+        try:
+            n = _resolver_apostas_reais_live(
+                list(wl_por_alerta.keys()), wl_por_alerta, {},
+            )
+            if n:
+                print(f"  → {n} apostas reais live fechadas (resultado + CLV)")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Fecho ApostaRealLive falhou: %s", exc)
 
     print(f"\n{resolvidos_jogos} jogos resolvidos → {resolvidos_mercados} linhas W/L marcadas.")
 

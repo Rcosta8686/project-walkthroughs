@@ -158,6 +158,15 @@ def enviar_sugestao_live(s: dict) -> None:
         if outras_casas_str:
             melhor_casa_line = f"\n💰 {outras_casas_str}"
 
+        # Linha final: /apostei <id> <odd> <stake> para o user registar
+        # a aposta real. Alert_id vem do scanner (coluna CSV alert_id).
+        alert_id = s.get("alert_id")
+        apostei_line = ""
+        if alert_id:
+            apostei_line = (
+                f"\n\n`/apostei {alert_id} <odd> <stake>`"
+            )
+
         if casa == "ANALISTA":
             # Sinal puro — mensagem narrativa com racional
             odd_desejada = float(s.get("odd", 0))
@@ -177,6 +186,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
                 f"_Procura esta odd. Se bater o alvo, mete._"
+                f"{apostei_line}"
             )
         else:
             try:
@@ -201,6 +211,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"*Prob modelo:* {prob*100:.1f}%\n"
                 f"\n"
                 f"{link_line}"
+                f"{apostei_line}"
             )
         cliente().enviar(texto)
     except Exception as exc:  # noqa: BLE001

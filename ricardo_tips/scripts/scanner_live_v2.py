@@ -107,6 +107,7 @@ _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasattr(sofascore_live, "LIGAS_SOFASCORE_IDS") else ()
 
 CSV_COLUNAS = [
+    "alert_id",
     "ts_scan", "event_id", "liga", "home", "away", "minuto", "marcador",
     "mercado", "lado", "linha", "casa", "odd",
     "prob_modelo", "p_mercado", "p_final", "verificar",
@@ -122,24 +123,51 @@ def _ficheiro_csv() -> Path:
     return project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
 
 
-def _carregar_vistas(f: Path) -> set[tuple]:
-    """Idempotencia: 1 sugestao por (event_id, mercado, lado, linha, casa, minuto)."""
+def _carregar_vistas(f: Path) -> dict[tuple, str]:
+    """Idempotencia: 1 sugestao por (event_id, mercado, lado, linha, casa, minuto).
+
+    Devolve dict {chave: alert_id} para permitir re-anexar alert_id aos
+    dicts em memoria quando o sinal ja foi gravado em ciclos anteriores.
+    """
     if not f.exists():
-        return set()
-    vistas = set()
+        return {}
+    vistas: dict[tuple, str] = {}
     with f.open(encoding="utf-8") as fp:
         for linha in csv.DictReader(fp):
-            vistas.add((
+            vistas[(
                 linha["home"] + "|" + linha["away"],
                 linha["mercado"], linha["lado"], linha["linha"],
                 linha["casa"], linha["minuto"],
-            ))
+            )] = linha.get("alert_id", "")
     return vistas
 
 
+def _proximo_alert_id(f: Path) -> int:
+    """Varre o CSV uma vez e devolve max(alert_id)+1 (ou 1 em CSV vazio)."""
+    if not f.exists():
+        return 1
+    maior = 0
+    with f.open(encoding="utf-8") as fp:
+        for linha in csv.DictReader(fp):
+            try:
+                v = int(linha.get("alert_id") or 0)
+                if v > maior:
+                    maior = v
+            except (TypeError, ValueError):
+                continue
+    return maior + 1
+
+
 def _gravar_novas(sugestoes_dicts, f: Path) -> int:
+    """Grava sugestoes novas no CSV e carimba alert_id em memoria.
+
+    Novo sinal: alert_id sequencial atribuido em memoria + gravado em CSV.
+    Sinal ja visto: alert_id vem do CSV, anexado ao dict em memoria para
+    o Telegram incluir no texto (`/apostei`) mesmo em re-notificacoes.
+    """
     f.parent.mkdir(parents=True, exist_ok=True)
     vistas = _carregar_vistas(f)
+    proximo_id = _proximo_alert_id(f)
     novo = not f.exists()
     adicionadas = 0
     with f.open("a", encoding="utf-8", newline="") as fp:
@@ -154,7 +182,13 @@ def _gravar_novas(sugestoes_dicts, f: Path) -> int:
                 str(s["linha"]), s["casa"], str(s["minuto"]),
             )
             if key in vistas:
+                # Ja gravado — mas enriquece o dict em memoria para o Telegram
+                aid_existente = vistas[key]
+                if aid_existente and not s.get("alert_id"):
+                    s["alert_id"] = aid_existente
                 continue
+            s["alert_id"] = proximo_id
+            proximo_id += 1
             writer.writerow(s)
             adicionadas += 1
     return adicionadas

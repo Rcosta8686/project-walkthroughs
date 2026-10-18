@@ -580,6 +580,42 @@ class ProjecaoLive(Base):
     )
 
 
+class ApostaRealLive(Base):
+    """Aposta real registada por /apostei a partir de um alerta live.
+
+    Diferente de ``ApostaReal`` (que exige sugestao pre-match da BD): esta
+    liga-se a uma linha do CSV ``sugestoes_live_v2.csv`` via ``alert_id``.
+    Guarda a odd/stake efetivamente executada pelo user + resultado quando
+    o resolver live resolve o jogo.
+    """
+
+    __tablename__ = "apostas_reais_live"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True, unique=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    liga: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    home: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    away: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    minuto: Mapped[int | None] = mapped_column(Integer)
+    mercado: Mapped[str] = mapped_column(String(30), nullable=False)
+    lado: Mapped[str] = mapped_column(String(20), nullable=False)
+    linha: Mapped[str | None] = mapped_column(String(10))
+    casa_recomendada: Mapped[str | None] = mapped_column(String(40))
+    odd_recomendada: Mapped[float | None] = mapped_column(Float)
+    odd_executada: Mapped[float] = mapped_column(Float, nullable=False)
+    stake: Mapped[float] = mapped_column(Float, nullable=False)
+    prob_modelo: Mapped[float | None] = mapped_column(Float)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    # pendente | W | L | push
+    resultado: Mapped[str | None] = mapped_column(String(10))
+    lucro: Mapped[float | None] = mapped_column(Float)
+    # CLV calculado quando o resolver fecha a aposta (opcional)
+    clv: Mapped[float | None] = mapped_column(Float)
+
+
 class BancaRegisto(Base):
     """Registo diario de banca para tracking + stop-loss (M13).
 

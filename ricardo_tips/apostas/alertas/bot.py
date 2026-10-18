@@ -4,7 +4,8 @@ Comandos:
     /hoje      — sugestões de jogos de hoje com EV positivo
     /amanha    — sugestões de jogos de amanhã
     /stats     — ROI do mês corrente
-    /registar  — regista uma aposta efetivamente feita: /registar ID STAKE ODD
+    /registar  — regista aposta pre-match: /registar ID STAKE ODD
+    /apostei   — regista aposta LIVE a partir de um alerta: /apostei ID ODD STAKE
     /jogo ID   — análise detalhada de um jogo (sugestão específica)
     /pausar    — suspende alertas automáticos
     /retomar   — reativa alertas automáticos
@@ -19,13 +20,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+import csv
+
 from sqlalchemy import func, select
 
 from apostas.alertas import analise, estado, mensagens
-from apostas.utils.config import get_env
+from apostas.utils.config import get_env, project_root
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
-from apostas.utils.schema import ApostaReal, Equipa, Jogo, Liga, Sugestao
+from apostas.utils.schema import (
+    ApostaReal, ApostaRealLive, Equipa, Jogo, Liga, Sugestao,
+)
 
 if TYPE_CHECKING:
     from telegram import Update
@@ -112,6 +117,129 @@ def comando_registar(args: list[str]) -> str:
     return mensagens.registo_confirmado(sid, stake, odd, retorno)
 
 
+def _csv_sugestoes_live_path():
+    """Localizacao do CSV de sugestoes live (parametrizavel via env)."""
+    import os
+    override = os.environ.get("RT_LIVE_CSV")
+    if override:
+        from pathlib import Path
+        return Path(override)
+    return project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
+
+
+def _procurar_linha_live(alert_id: int) -> dict | None:
+    """Devolve a linha do CSV live cujo alert_id bate — ou None."""
+    path = _csv_sugestoes_live_path()
+    if not path.exists():
+        return None
+    try:
+        with path.open(encoding="utf-8") as fp:
+            for linha in csv.DictReader(fp):
+                try:
+                    if int(linha.get("alert_id") or 0) == alert_id:
+                        return linha
+                except (TypeError, ValueError):
+                    continue
+    except OSError:
+        return None
+    return None
+
+
+def comando_apostei(args: list[str]) -> str:
+    """`/apostei <alert_id> <odd> <stake>` — regista aposta live.
+
+    O ``alert_id`` vem no texto do alerta Telegram (`#id` no rodape). A
+    linha e cruzada com ``sugestoes_live_v2.csv`` para obter mercado,
+    liga, probabilidade do modelo etc. Grava em ``ApostaRealLive``.
+    """
+    if len(args) < 3:
+        return mensagens.erro(
+            "Uso: /apostei ID ODD STAKE  (ex: /apostei 142 1.95 2.0)"
+        )
+    try:
+        alert_id = int(args[0])
+        odd = float(args[1])
+        stake = float(args[2])
+    except ValueError:
+        return mensagens.erro("Parâmetros inválidos. Usa números para ID, ODD e STAKE.")
+
+    if alert_id <= 0:
+        return mensagens.erro("ID inválido.")
+    if odd <= 1.0:
+        return mensagens.erro("Odd tem de ser > 1.")
+    if stake <= 0:
+        return mensagens.erro("Stake tem de ser > 0.")
+
+    linha = _procurar_linha_live(alert_id)
+    if linha is None:
+        return mensagens.erro(
+            f"Alerta #{alert_id} não encontrado no CSV live. "
+            f"Verifica o ID no texto do alerta."
+        )
+
+    with abrir_sessao() as s:
+        ja = s.scalar(select(ApostaRealLive).where(ApostaRealLive.alert_id == alert_id))
+        if ja is not None:
+            return mensagens.erro(
+                f"Já existe uma aposta registada para o alerta #{alert_id}."
+            )
+
+        try:
+            event_id = int(linha.get("event_id") or 0)
+        except (TypeError, ValueError):
+            event_id = 0
+        try:
+            minuto_val = int(linha.get("minuto") or 0)
+        except (TypeError, ValueError):
+            minuto_val = None
+        try:
+            odd_rec = float(linha.get("odd")) if linha.get("odd") else None
+        except (TypeError, ValueError):
+            odd_rec = None
+        try:
+            prob = float(linha.get("prob_modelo")) if linha.get("prob_modelo") else None
+        except (TypeError, ValueError):
+            prob = None
+
+        aposta = ApostaRealLive(
+            alert_id=alert_id,
+            event_id=event_id,
+            liga=linha.get("liga", "") or "",
+            home=linha.get("home", "") or "",
+            away=linha.get("away", "") or "",
+            minuto=minuto_val,
+            mercado=linha.get("mercado", "") or "",
+            lado=linha.get("lado", "") or "",
+            linha=linha.get("linha", "") or None,
+            casa_recomendada=linha.get("casa") or None,
+            odd_recomendada=odd_rec,
+            odd_executada=odd,
+            stake=stake,
+            prob_modelo=prob,
+            resultado="pendente",
+        )
+        s.add(aposta)
+
+    from apostas.alertas.telegram_live import _formatar_aposta
+    aposta_fmt = _formatar_aposta(
+        linha.get("mercado", "") or "",
+        linha.get("lado", "") or "",
+        linha.get("linha", "") or "",
+    )
+    retorno = stake * (odd - 1)
+    return mensagens.apostei_confirmado(
+        alert_id=alert_id,
+        home=linha.get("home", "?"),
+        away=linha.get("away", "?"),
+        aposta=aposta_fmt,
+        stake=stake,
+        odd_executada=odd,
+        odd_recomendada=odd_rec,
+        retorno_esperado=retorno,
+        clv_pct=None,  # Preenchido pelo resolver depois do fecho
+    )
+
+
 def comando_jogo(args: list[str]) -> str:
     if not args:
         return mensagens.erro("Uso: /jogo ID (o ID é o número da sugestão).")
@@ -184,6 +312,12 @@ async def h_registar(update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None
     await _responder(update, comando_registar(ctx.args))
 
 
+async def h_apostei(update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    if not _check_autorizado(update):
+        return
+    await _responder(update, comando_apostei(ctx.args))
+
+
 async def h_jogo(update: "Update", ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     if not _check_autorizado(update):
         return
@@ -218,6 +352,7 @@ def construir_application():
     app.add_handler(CommandHandler("amanha", h_amanha))
     app.add_handler(CommandHandler("stats", h_stats))
     app.add_handler(CommandHandler("registar", h_registar))
+    app.add_handler(CommandHandler("apostei", h_apostei))
     app.add_handler(CommandHandler("jogo", h_jogo))
     app.add_handler(CommandHandler("pausar", h_pausar))
     app.add_handler(CommandHandler("retomar", h_retomar))

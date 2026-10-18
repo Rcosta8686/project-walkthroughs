@@ -182,5 +182,89 @@ def test_comando_pausar_retomar(bd_populada):
 
 def test_comando_ajuda_lista_comandos():
     texto = bot.comando_ajuda()
-    for c in ("/hoje", "/amanha", "/stats", "/registar", "/pausar", "/retomar"):
+    for c in ("/hoje", "/amanha", "/stats", "/registar", "/apostei",
+              "/pausar", "/retomar"):
         assert c in texto
+
+
+# ─── /apostei (aposta live via alert_id) ────────────────────────────
+
+@pytest.fixture
+def csv_live_minimo(tmp_path, monkeypatch):
+    """CSV de sugestoes live com 2 linhas (alert_id 42 e 43)."""
+    import csv as _csv
+
+    csv_path = tmp_path / "sug_live.csv"
+    campos = [
+        "alert_id", "ts_scan", "event_id", "liga", "home", "away",
+        "minuto", "marcador", "mercado", "lado", "linha", "casa", "odd",
+        "prob_modelo", "p_mercado", "p_final", "verificar",
+        "ev", "estrelas", "xg_casa", "xg_fora",
+        "shots_on_target_c", "shots_on_target_f",
+        "corners_c", "corners_f", "yellows_c", "yellows_f",
+        "resultado", "lucro", "resolvido_em",
+    ]
+    linhas = [
+        {"alert_id": "42", "event_id": "123", "liga": "Serie A",
+         "home": "Roma", "away": "Milan", "minuto": "55", "marcador": "1-0",
+         "mercado": "golos", "lado": "over", "linha": "2.5",
+         "casa": "betano", "odd": "1.95", "prob_modelo": "0.58",
+         "estrelas": "4", "ev": "0.09"},
+        {"alert_id": "43", "event_id": "124", "liga": "LaLiga",
+         "home": "Barcelona", "away": "Real", "minuto": "40", "marcador": "0-0",
+         "mercado": "cantos", "lado": "under", "linha": "11.5",
+         "casa": "ANALISTA", "odd": "1.80", "prob_modelo": "0.65",
+         "estrelas": "3", "ev": ""},
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as fp:
+        writer = _csv.DictWriter(fp, fieldnames=campos, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(linhas)
+    monkeypatch.setenv("RT_LIVE_CSV", str(csv_path))
+    yield csv_path
+
+
+def test_comando_apostei_cria_registo_live(bd_populada, csv_live_minimo):
+    from apostas.utils.schema import ApostaRealLive
+
+    resposta = bot.comando_apostei(["42", "1.95", "2.0"])
+    assert "registada" in resposta.lower()
+    assert "#42" in resposta
+    assert "Roma" in resposta
+
+    with db_mod.abrir_sessao() as s:
+        reg = s.scalar(select(ApostaRealLive).where(ApostaRealLive.alert_id == 42))
+        assert reg is not None
+        assert reg.stake == 2.0
+        assert reg.odd_executada == 1.95
+        assert reg.event_id == 123
+        assert reg.mercado == "golos"
+        assert reg.lado == "over"
+        assert reg.odd_recomendada == 1.95
+        assert reg.prob_modelo == pytest.approx(0.58)
+        assert reg.resultado == "pendente"
+
+
+def test_comando_apostei_rejeita_duplicado(bd_populada, csv_live_minimo):
+    bot.comando_apostei(["42", "1.95", "1.0"])
+    resposta = bot.comando_apostei(["42", "1.90", "1.0"])
+    assert "já existe" in resposta.lower() or "Já existe" in resposta
+
+
+def test_comando_apostei_valida_args(bd_populada, csv_live_minimo):
+    assert "Uso:" in bot.comando_apostei([])
+    assert "Uso:" in bot.comando_apostei(["42"])
+    assert "números" in bot.comando_apostei(["abc", "1.9", "1.0"]).lower()
+    assert "odd" in bot.comando_apostei(["42", "0.9", "1.0"]).lower()
+    assert "stake" in bot.comando_apostei(["42", "1.9", "-1"]).lower()
+
+
+def test_comando_apostei_alerta_desconhecido(bd_populada, csv_live_minimo):
+    resposta = bot.comando_apostei(["9999", "1.9", "1.0"])
+    assert "não encontrado" in resposta.lower() or "nao encontrado" in resposta.lower()
+
+
+def test_comando_apostei_mostra_delta_odd(bd_populada, csv_live_minimo):
+    # Odd executada 2.10 vs recomendada 1.95 → +7.7%
+    resposta = bot.comando_apostei(["42", "2.10", "1.0"])
+    assert "+7.7%" in resposta or "+7.6%" in resposta or "+7.8%" in resposta

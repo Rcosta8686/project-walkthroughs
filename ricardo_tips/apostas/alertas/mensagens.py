@@ -76,6 +76,32 @@ def registo_confirmado(sugestao_id: int, stake: float, odd: float, retorno_esper
     )
 
 
+def apostei_confirmado(
+    alert_id: int, home: str, away: str, aposta: str,
+    stake: float, odd_executada: float, odd_recomendada: float | None,
+    retorno_esperado: float, clv_pct: float | None,
+) -> str:
+    linhas = [
+        f"✅ Aposta live registada (#{alert_id})",
+        f"⚽ {home} vs {away}",
+        f"🎯 {aposta}",
+        f"💰 Stake: {stake:.2f}  ·  Odd: {odd_executada:.2f}",
+    ]
+    if odd_recomendada is not None and odd_recomendada > 0:
+        delta = (odd_executada / odd_recomendada - 1) * 100
+        sinal = "+" if delta >= 0 else ""
+        linhas.append(
+            f"📏 vs recomendada {odd_recomendada:.2f}  →  {sinal}{delta:.1f}%"
+        )
+    if clv_pct is not None:
+        sinal = "+" if clv_pct >= 0 else ""
+        linhas.append(f"📈 CLV estimado: {sinal}{clv_pct:.1f}%")
+    linhas.append(
+        f"💵 Retorno se ganha: *{retorno_esperado:.2f}* unidades"
+    )
+    return "\n".join(linhas)
+
+
 def pausado() -> str:
     return "⏸️ Alertas pausados. Usa /retomar para voltar a receber."
 
@@ -90,7 +116,8 @@ def ajuda() -> str:
         "`/hoje` — jogos de hoje com EV positivo\n"
         "`/amanha` — jogos de amanhã com EV positivo\n"
         "`/stats` — ROI do mês\n"
-        "`/registar ID STAKE ODD` — regista uma aposta efetivamente feita\n"
+        "`/registar ID STAKE ODD` — regista aposta pré-match pela sugestão\n"
+        "`/apostei ID ODD STAKE` — regista aposta LIVE a partir de um alerta\n"
         "`/jogo ID` — análise detalhada de um jogo\n"
         "`/pausar` — não enviar alertas automáticos\n"
         "`/retomar` — reativar alertas"
