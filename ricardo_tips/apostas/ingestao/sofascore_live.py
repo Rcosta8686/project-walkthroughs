@@ -220,6 +220,10 @@ LIGAS_SOFASCORE_IDS = {
     "Ligue 2":                      182,
     "Liga Portugal 2":              239,
 
+    # ─── Holanda ────────────────────────────────────────────────────
+    "Eredivisie":                   37,
+    "Eerste Divisie":              130,
+
     # ─── Competicoes europeias (ter/qua/qui) ──────────────────────
     "UEFA Champions League":        7,
     "UEFA Europa League":           679,
