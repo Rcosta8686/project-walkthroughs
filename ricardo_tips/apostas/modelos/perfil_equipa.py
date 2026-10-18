@@ -247,6 +247,108 @@ def _perfil_vazio(team_id: int, nome: str, liga: str | None) -> EquipaPerfil:
     )
 
 
+# ─────────── Calculo via historico persistente ────────────────────────────
+
+def calcular_perfil_do_historico(
+    team_id: int,
+    nome: str,
+    liga: str | None = None,
+    n_jogos: int = 20,
+) -> EquipaPerfil | None:
+    """Calcula perfil a partir de EstatisticaEquipaJogo (historico persistente).
+
+    Preferido sobre calcular_perfil() quando ja ha dados: nao faz scrape,
+    tem stats por parte (1T/2T), e tem contexto (W/D/L por jogo).
+
+    Devolve None se nao houver dados minimos (<3 jogos) para esta equipa —
+    o chamador deve nesse caso cair para calcular_perfil() (scrape live).
+    """
+    from apostas.modelos import historico_equipas  # noqa: PLC0415
+
+    jogos = historico_equipas.stats_recentes_equipa(team_id, n_jogos)
+    if len(jogos) < 3:
+        return None
+
+    def _mn(vs):
+        vs = [v for v in vs if v is not None]
+        return sum(vs) / len(vs) if vs else None
+
+    # Baseline global
+    gm_media = _mn([j.golos_marcados for j in jogos])
+    gs_media = _mn([j.golos_sofridos for j in jogos])
+    remates_media = _mn([j.remates for j in jogos])
+    sot_media = _mn([j.sot for j in jogos])
+    cantos_media = _mn([j.cantos for j in jogos])
+    cards_media = _mn([j.cards_amarelos for j in jogos])
+    fouls_media = _mn([j.fouls for j in jogos])
+
+    # Quando perde (contexto: resultado == 'L')
+    perdeu = [j for j in jogos if j.resultado == "L"]
+    remates_atras = _mn([j.remates for j in perdeu])
+    sot_atras = _mn([j.sot for j in perdeu])
+    cantos_atras = _mn([j.cantos for j in perdeu])
+    golos_em_atraso = _mn([j.golos_marcados for j in perdeu])
+
+    # Virar jogos: ganhou (resultado W) mas estava a perder/empatar ao
+    # intervalo (resultado_1t em L/D)
+    virou = sum(
+        1 for j in jogos
+        if j.resultado == "W" and j.resultado_1t in ("L", "D")
+    )
+    denom = sum(1 for j in jogos if j.resultado_1t in ("L", "D"))
+    virar_pct = (virou / denom) if denom > 0 else None
+
+    # Por parte: media de remates/cantos 1T vs 2T
+    rem_1t = _mn([j.remates_1t for j in jogos])
+    rem_2t = _mn([j.remates_2t for j in jogos])
+    can_1t = _mn([j.cantos_1t for j in jogos])
+    can_2t = _mn([j.cantos_2t for j in jogos])
+
+    # Carga semanal
+    hoje = datetime.utcnow()
+    carga_7d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 7)
+    carga_14d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 14)
+
+    # Notas: resumo texto (padroes nao-numericos)
+    notas_bits = []
+    if virar_pct is not None and virar_pct >= 0.30:
+        notas_bits.append(f"virar jogos {virar_pct*100:.0f}%")
+    if remates_atras and remates_media and remates_atras > remates_media * 1.15:
+        delta = (remates_atras / remates_media - 1) * 100
+        notas_bits.append(f"a perder: +{delta:.0f}% remates")
+    if rem_2t and rem_1t and rem_2t > rem_1t * 1.1:
+        notas_bits.append("2T > 1T remates")
+    notas_str = "; ".join(notas_bits) if notas_bits else None
+
+    return EquipaPerfil(
+        sofascore_team_id=team_id,
+        nome=nome,
+        liga=liga,
+        remates_atras_90=remates_atras,
+        sot_atras_90=sot_atras,
+        cantos_atras_90=cantos_atras,
+        golos_em_atraso_media=golos_em_atraso,
+        virar_jogos_pct=virar_pct,
+        remates_1a_parte_media=rem_1t,
+        remates_2a_parte_media=rem_2t,
+        cantos_1a_parte_media=can_1t,
+        cantos_2a_parte_media=can_2t,
+        remates_media_90=remates_media,
+        sot_media_90=sot_media,
+        cantos_media_90=cantos_media,
+        cards_media_90=cards_media,
+        fouls_media_90=fouls_media,
+        golos_marcados_90=gm_media,
+        golos_sofridos_90=gs_media,
+        carga_jogos_7d=carga_7d,
+        carga_jogos_14d=carga_14d,
+        viagens_longas_14d=0,
+        n_jogos_analisados=len(jogos),
+        data_atualizacao=datetime.utcnow(),
+        notas=notas_str,
+    )
+
+
 # ─────────────────────────── BD interface ──────────────────────────────────
 
 def obter_perfil(team_id: int) -> EquipaPerfil | None:
@@ -258,14 +360,22 @@ def obter_perfil(team_id: int) -> EquipaPerfil | None:
 
 def atualizar_perfil(team_id: int, nome: str, liga: str | None = None,
                       ttl_horas: int = 24) -> EquipaPerfil:
-    """Upsert do perfil. So recalcula se cache > ttl_horas."""
+    """Upsert do perfil. So recalcula se cache > ttl_horas.
+
+    Prefere calcular_perfil_do_historico() (append-only tabela nova).
+    Fallback a calcular_perfil() (scrape live) se historico insuficiente.
+    """
     perfil_atual = obter_perfil(team_id)
     if perfil_atual:
         idade = datetime.utcnow() - perfil_atual.data_atualizacao
         if idade < timedelta(hours=ttl_horas):
             return perfil_atual
 
-    novo = calcular_perfil(team_id, nome, liga)
+    # 1a tentativa: historico persistente (sem scrape)
+    novo = calcular_perfil_do_historico(team_id, nome, liga)
+    if novo is None:
+        # Fallback: scrape live (menos preciso, sem split 1T/2T)
+        novo = calcular_perfil(team_id, nome, liga)
     with abrir_sessao() as s:
         existente = s.scalars(
             select(EquipaPerfil).where(EquipaPerfil.sofascore_team_id == team_id)
@@ -274,10 +384,13 @@ def atualizar_perfil(team_id: int, nome: str, liga: str | None = None,
             for campo in (
                 "nome", "liga", "remates_atras_90", "sot_atras_90",
                 "cantos_atras_90", "golos_em_atraso_media", "virar_jogos_pct",
+                "remates_1a_parte_media", "remates_2a_parte_media",
+                "cantos_1a_parte_media", "cantos_2a_parte_media",
                 "remates_media_90", "sot_media_90", "cantos_media_90",
                 "cards_media_90", "fouls_media_90", "golos_marcados_90",
                 "golos_sofridos_90", "carga_jogos_7d", "carga_jogos_14d",
                 "viagens_longas_14d", "n_jogos_analisados", "data_atualizacao",
+                "notas",
             ):
                 setattr(existente, campo, getattr(novo, campo))
             s.commit()

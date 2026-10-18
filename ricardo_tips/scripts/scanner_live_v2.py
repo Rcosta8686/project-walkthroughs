@@ -48,15 +48,16 @@ import requests  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from apostas.alertas import analista, telegram_live  # noqa: E402
+from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
 from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
-from apostas.modelos import live_predictor  # noqa: E402
+from apostas.modelos import live_predictor, projecao_live  # noqa: E402
 from apostas.modelos.form_ratings import RatingsForma, expectativa, shrinkage  # noqa: E402
 from apostas.modelos.live_predictor import ev_contra_odd  # noqa: E402
 from apostas.utils.config import get_env, project_root  # noqa: E402
 from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
-from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga  # noqa: E402
+from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -65,6 +66,14 @@ log = get_logger(__name__)
 # Impede re-notificar o mesmo sinal dentro de COOLDOWN_MIN minutos.
 _cooldown: dict[tuple, datetime] = {}
 COOLDOWN_MIN = 15
+
+# Projeccoes ja enviadas: event_id -> set(minutos_target: {40, 55, 70})
+# Impede enviar duas vezes a projeccao do mesmo target no mesmo jogo.
+_projecoes_enviadas: dict[int, set[int]] = {}
+
+# Mercados nao-ganhadores (unders falhavam): sinais pontuais destes mercados
+# NAO vao mais para Telegram. Continuam a ser gravados no CSV para tracking.
+_MERCADOS_SO_PROJECAO = {"remates", "remates_a_baliza", "cantos", "sot"}
 
 
 def _purgar_cooldown() -> None:
@@ -330,6 +339,135 @@ def _puxar_expectativa(estado) -> "object | None":
     rc = shrinkage(r.rating(casa_id, "casa"))
     rf = shrinkage(r.rating(fora_id, "fora"))
     return expectativa(rc, rf)
+
+
+def _gravar_projecao_db(
+    event_id: int,
+    minuto: int,
+    estado,
+    proj: "projecao_live.ProjecaoResumo",
+) -> None:
+    """Grava uma projeccao enviada em projecao_live para medir calibracao."""
+    import json as _json
+    odds_json = _json.dumps([
+        {"linha": lo.linha, "over": lo.over_justa, "under": lo.under_justa,
+         "p_over": lo.prob_over}
+        for lo in proj.linhas_total
+    ])
+    with abrir_sessao() as s:
+        existe = s.scalar(select(ProjecaoLive).where(
+            ProjecaoLive.sofascore_event_id == event_id,
+            ProjecaoLive.minuto == minuto,
+            ProjecaoLive.mercado == proj.mercado,
+        ))
+        if existe:
+            return
+        s.add(ProjecaoLive(
+            sofascore_event_id=event_id,
+            minuto=minuto,
+            score_casa=estado.marcador_casa,
+            score_fora=estado.marcador_fora,
+            nome_casa=estado.home,
+            nome_fora=estado.away,
+            liga=estado.liga,
+            mercado=proj.mercado,
+            valor_atual_total=proj.valor_atual_total,
+            projecao_final_total=proj.projecao_final_total,
+            valor_atual_casa=proj.valor_atual_casa,
+            valor_atual_fora=proj.valor_atual_fora,
+            projecao_final_casa=proj.projecao_final_casa,
+            projecao_final_fora=proj.projecao_final_fora,
+            odds_justas_json=odds_json,
+        ))
+
+
+def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
+    """Se minuto >= target (40/55/70) e ainda nao enviado para este jogo,
+    envia projeccao de SOT + cantos ao Telegram e grava na DB.
+
+    Devolve numero de mensagens enviadas.
+    """
+    event_id = estado.event_id
+    minuto = int(estado.minuto or 0)
+    if minuto < projecao_live.MINUTOS_PROJECAO[0]:
+        return 0
+
+    ja = _projecoes_enviadas.setdefault(event_id, set())
+    target = projecao_live.deve_projetar(minuto, ja)
+    if target is None:
+        return 0
+
+    enviadas = 0
+    # Mercados a projectar: sot e cantos (os unders falham, os overs acertam;
+    # projeccao mostra odd justa para o user comparar com a casa).
+    mercados_para_projetar = [
+        ("sot",
+         prev.lam_shots_on_target_restantes / 2.0,
+         prev.lam_shots_on_target_restantes / 2.0,
+         getattr(estado, "sot_casa", 0),
+         getattr(estado, "sot_fora", 0)),
+        ("cantos",
+         prev.lam_cantos_restantes / 2.0,
+         prev.lam_cantos_restantes / 2.0,
+         getattr(estado, "cantos_casa", 0),
+         getattr(estado, "cantos_fora", 0)),
+    ]
+    # Nota: a divisao /2 e uma aproximacao: live_predictor expoe apenas
+    # lam total restante quando so temos esse campo. Para sot/cantos ha
+    # projeccao_X_casa/fora directa — usa-la quando existir.
+    if hasattr(prev, "projeccao_sot_casa"):
+        # Reconstroi lam por equipa a partir da projeccao final - valor actual
+        sot_c = getattr(estado, "sot_casa", 0) or 0
+        sot_f = getattr(estado, "sot_fora", 0) or 0
+        can_c = getattr(estado, "cantos_casa", 0) or 0
+        can_f = getattr(estado, "cantos_fora", 0) or 0
+        mercados_para_projetar = [
+            ("sot",
+             max(0.0, prev.projeccao_sot_casa - sot_c),
+             max(0.0, prev.projeccao_sot_fora - sot_f),
+             sot_c, sot_f),
+            ("cantos",
+             max(0.0, prev.projeccao_cantos_casa - can_c),
+             max(0.0, prev.projeccao_cantos_fora - can_f),
+             can_c, can_f),
+        ]
+
+    for mercado, lam_c, lam_f, val_c, val_f in mercados_para_projetar:
+        try:
+            proj = projecao_live.projetar(
+                mercado=mercado,
+                minuto=minuto,
+                score_casa=estado.marcador_casa,
+                score_fora=estado.marcador_fora,
+                valor_atual_casa=float(val_c),
+                valor_atual_fora=float(val_f),
+                lam_rest_casa=float(lam_c),
+                lam_rest_fora=float(lam_f),
+                nome_casa=estado.home,
+                nome_fora=estado.away,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Projecao %s falhou %s: %s", mercado, event_id, exc)
+            continue
+
+        try:
+            _gravar_projecao_db(event_id, target, estado, proj)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Gravar projecao %s falhou: %s", mercado, exc)
+
+        if enviar_telegram:
+            msg = projecao_live.formatar_telegram(
+                proj, estado.home, estado.away,
+                estado.marcador_casa, estado.marcador_fora,
+            )
+            try:
+                telegram_cliente().enviar(msg)
+                enviadas += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Telegram projecao erro: %s", exc)
+
+    ja.add(target)
+    return enviadas
 
 
 def _linha_live(mercado: str, lado: str, linha: float | None, estado) -> bool:
@@ -655,6 +793,16 @@ def _correr_ciclo(args) -> None:
         prev = live_predictor.prever(estado)
         _imprimir_estado(estado, prev)
 
+        # PROJECCOES aos 40'/55'/70': substituem sinais "faceis" de
+        # remates/SOT/cantos. Mostram projeccao final + odd justa por linha,
+        # para o user comparar com o que a casa paga.
+        try:
+            n_proj = _enviar_projecoes_jogo(estado, prev, args.telegram)
+            if n_proj:
+                print(f"    📊 {n_proj} projeccao(oes) enviadas ao Telegram.")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Falha enviar projeccao %s: %s", estado.event_id, exc)
+
         # Odds API: so para computar EV (classico) — opcional.
         sport = _sport_da_liga(estado.liga)
         if sport is None:
@@ -718,6 +866,13 @@ def _correr_ciclo(args) -> None:
                 # vira o jogo). Deixa aparecer no terminal para acumular
                 # mais dados mas nao notifica Telegram.
                 if s.get("mercado") == "1x2":
+                    continue
+                # Remates / SOT / cantos: SO vao por projeccao agora
+                # (mensagens 40'/55'/70' com odd justa). Palpite pontual
+                # destes mercados fica no CSV mas nao envia Telegram, pois
+                # os unders falhavam e os overs sao melhor-servidos pela
+                # projeccao com odd justa que o user compara com a casa.
+                if s.get("mercado") in _MERCADOS_SO_PROJECAO:
                     continue
                 # MODO VENCEDOR: so notifica se mercado vencedor OR liga
                 # vencedora (dados reais n=1927). Resto fica no terminal.

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apostas.ingestao import sofascore_live  # noqa: E402
 from apostas.ingestao._flaresolverr import FlaresolverrIndisponivel  # noqa: E402
+from apostas.modelos import historico_equipas  # noqa: E402
 from apostas.utils.config import project_root  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 
@@ -202,6 +203,17 @@ def main() -> None:
         a = linhas_grupo[0].get("away", "?")
         print(f"  [OK]  event {eid}: {h} {res['golos_casa']}-{res['golos_fora']} {a}  "
               f"(cantos={res['cantos_total']} cards={res['cards_amarelos_total']} shots={res['shots_total']})")
+
+        # Grava historico persistente por equipa (append-only). Puxa stats
+        # por parte (1T/2T) do Sofascore e grava 2 linhas (casa + fora).
+        # Idempotente — ja existe no-op.
+        try:
+            n_add = historico_equipas.gravar_jogo_terminado(int(eid))
+            if n_add:
+                print(f"        → historico equipas: +{n_add} linhas")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Historico event %s falhou: %s", eid, exc)
+
         agora = datetime.utcnow().isoformat(timespec="seconds")
         for row in linhas_grupo:
             wl = _wl_por_mercado(row["mercado"], row["lado"], row.get("linha") or "", res)
