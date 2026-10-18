@@ -55,6 +55,26 @@ def _parse_float(x) -> float | None:
         return None
 
 
+def _normalizar_ev(ev: float | None) -> float | None:
+    """Normaliza o campo `ev` do CSV live.
+
+    O scanner teve 2 formatos ao longo do tempo:
+      - novo: EV genuino em fraccao, ex 0.07 = +7% (prob × odd − 1).
+      - antigo: valor `prob × odd` sem o −1, ex 1.07, ou mesmo acima
+        quando o modelo e muito mais alto que o mercado.
+
+    EV genuino raramente ultrapassa 0.5 (50%). Qualquer valor > 1 em
+    fraccao equivale a `prob × odd > 2` sem o −1, portanto subtraimos.
+    Valores entre 0.5 e 1 ficam intactos (EVs grandes raros, bandeira
+    "verificar" apanha-os separadamente).
+    """
+    if ev is None:
+        return None
+    if ev > 1.0:
+        return ev - 1.0
+    return ev
+
+
 def _parse_dt_csv(x: str) -> datetime | None:
     """Aceita formatos comuns do CSV (ts_scan sai como ISO)."""
     if not x:
@@ -97,7 +117,7 @@ def agregar_edge_volume(
             "n": 0, "evs": [], "lucros": [], "resolvidos": 0, "clvs": [],
         })
         b["n"] += 1
-        ev = _parse_float(row.get("ev"))
+        ev = _normalizar_ev(_parse_float(row.get("ev")))
         if ev is not None:
             b["evs"].append(ev)
         resultado = (row.get("resultado") or "").strip()
@@ -123,7 +143,15 @@ def agregar_edge_volume(
             n_resolvidos=b["resolvidos"], roi=roi, clv_medio=clv_medio,
         ))
 
-    linhas.sort(key=lambda l: l.edge_x_volume, reverse=True)
+    # Ranking: ROI × volume quando ha dados resolvidos (performance real
+    # supera edge aparente). Para linhas sem resolvidos, cai de volta
+    # para edge × volume. Linhas com ROI negativo rankeiam no fundo —
+    # 'linhas_bottom' apanha-as como candidatas a desligar.
+    def _score(l: LinhaEdgeVolume) -> float:
+        if l.roi is not None and l.n_resolvidos >= 5:
+            return (l.roi / 100.0) * l.n_resolvidos
+        return l.edge_x_volume
+    linhas.sort(key=_score, reverse=True)
     rel = RelatorioSemanal(
         data_inicio=data_inicio, data_fim=data_fim,
         linhas_top=linhas[:top_n],

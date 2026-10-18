@@ -7,6 +7,7 @@ import pytest
 
 from apostas.relatorios.periodicos import (
     ApostaResumo,
+    _normalizar_ev,
     agregar_edge_volume,
     formatar_relatorio_mensal_telegram,
     formatar_relatorio_semanal_telegram,
@@ -82,6 +83,51 @@ def test_formatar_semanal_funciona_sem_dados():
     texto = formatar_relatorio_semanal_telegram(rel)
     assert "Relatório Semanal" in texto
     assert "Sem alertas" in texto
+
+
+def test_normalizar_ev_subtrai_quando_em_formato_antigo():
+    """CSV antigo guardou `prob × odd` (sem o -1). Valor > 1 → subtrair."""
+    assert _normalizar_ev(0.07) == pytest.approx(0.07)   # EV novo ok
+    assert _normalizar_ev(1.07) == pytest.approx(0.07)   # EV antigo normalizado
+    assert _normalizar_ev(2.47) == pytest.approx(1.47)   # Edge raro mas plausivel apos -1
+    assert _normalizar_ev(None) is None
+    assert _normalizar_ev(0.0) == pytest.approx(0.0)
+
+
+def test_agregar_edge_volume_normaliza_ev_antigo():
+    """Se o CSV tem `ev=1.07` (prob × odd sem -1), agregador converte."""
+    agora = datetime(2026, 10, 18, 12, 0)
+    inicio = agora - timedelta(days=7)
+    rows = [
+        _row(agora - timedelta(days=1), "L", "golos", 1.08),  # formato antigo
+        _row(agora - timedelta(days=2), "L", "golos", 1.10),
+    ]
+    rel = agregar_edge_volume(rows, data_inicio=inicio, data_fim=agora)
+    linha = rel.linhas_top[0]
+    # Media deveria ser (0.08 + 0.10)/2 = 0.09, nao (1.08 + 1.10)/2 = 1.09
+    assert linha.edge_medio == pytest.approx(0.09, abs=0.01)
+
+
+def test_agregar_ranking_coloca_roi_negativo_no_fundo():
+    """Linha com ROI claramente negativo e volume alto rankeia abaixo
+    de uma com ROI positivo e volume semelhante."""
+    agora = datetime(2026, 10, 18, 12, 0)
+    inicio = agora - timedelta(days=7)
+    rows = []
+    # Liga A: 10 resolvidos, metade W metade L → ROI = +0 OK
+    for i in range(10):
+        rows.append(_row(agora - timedelta(hours=i), "A", "golos", 0.08,
+                         resultado="W" if i % 2 == 0 else "L",
+                         lucro=1.0 if i % 2 == 0 else -1.0))
+    # Liga B: 10 resolvidos, todos L → ROI = -100%, pior
+    for i in range(10):
+        rows.append(_row(agora - timedelta(hours=10 + i), "B", "cantos", 0.08,
+                         resultado="L", lucro=-1.0))
+    rel = agregar_edge_volume(rows, data_inicio=inicio, data_fim=agora)
+    # Pelo menos: A nao pode estar atras de B porque B tem ROI muito pior
+    pos_a = next(i for i, l in enumerate(rel.linhas_top) if l.liga == "A")
+    pos_b = next(i for i, l in enumerate(rel.linhas_top) if l.liga == "B")
+    assert pos_a < pos_b
 
 
 def test_formatar_semanal_tem_top_e_bottom():
