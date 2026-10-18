@@ -47,6 +47,8 @@ class SeccaoPorParte:
     cantos_2t: float | None
     cards_am_1t: float | None
     cards_am_2t: float | None
+    fouls_1t: float | None
+    fouls_2t: float | None
     diferenca_remates: str | None  # ex: "+40% 2T"
     diferenca_cantos: str | None
 
@@ -123,29 +125,78 @@ def _gerar_notas(ficha_base: dict, jogos: list[EstatisticaEquipaJogo]) -> list[s
     if pp.diferenca_cantos and "+" in pp.diferenca_cantos:
         notas.append(f"🚩 Mais cantos 2a parte: {pp.diferenca_cantos}")
 
-    # 3. Virar jogos
+    # 3. CARTOES por parte (padrao oculto importante — ex: Roma 1T=0.4, 2T=1.4)
+    if pp.cards_am_1t is not None and pp.cards_am_2t is not None and pp.cards_am_1t > 0:
+        delta_cards = (pp.cards_am_2t / pp.cards_am_1t - 1) * 100
+        if delta_cards >= 50:
+            notas.append(
+                f"🟨 Amarelos explodem 2a parte: "
+                f"{pp.cards_am_1t:.1f} 1T → {pp.cards_am_2t:.1f} 2T "
+                f"(+{delta_cards:.0f}%) — bom para 'proximo cartao >45min'"
+            )
+        elif delta_cards <= -30:
+            notas.append(
+                f"🟨 Mais amarelos 1a parte ({pp.cards_am_1t:.1f} vs {pp.cards_am_2t:.1f}) "
+                f"— incomum, verificar arbitro"
+            )
+
+    # 4. FALTAS por parte
+    if pp.fouls_1t is not None and pp.fouls_2t is not None and pp.fouls_1t > 0:
+        delta_fouls = (pp.fouls_2t / pp.fouls_1t - 1) * 100
+        if abs(delta_fouls) >= 20:
+            sinal = "+" if delta_fouls > 0 else ""
+            notas.append(
+                f"⚠ Faltas {sinal}{delta_fouls:.0f}% 2a parte "
+                f"({pp.fouls_1t:.1f} → {pp.fouls_2t:.1f})"
+            )
+
+    # 5. Virar jogos
     if pr.virar_jogos_pct is not None and pr.virar_jogos_pct >= 0.35:
         notas.append(f"🔄 Vira jogos frequentemente: {pr.virar_jogos_pct*100:.0f}%")
 
-    # 4. A perder = +remates (desespero)
+    # 6. A perder = +remates (desespero)
     if (pr.remates_L and base.remates
             and pr.remates_L > base.remates * 1.15):
         delta = (pr.remates_L / base.remates - 1) * 100
         notas.append(f"🔥 A perder, dispara: +{delta:.0f}% remates")
 
-    # 5. A ganhar = -remates (acalma)
+    # 7. A perder = -remates (equipa dominante — ex: Roma, City)
+    #    Quando perde e porque o adversario domina. Nao vale apostar overs
+    #    quando ela esta a perder.
+    if (pr.remates_L and base.remates and pr.n_L >= 2
+            and pr.remates_L < base.remates * 0.90):
+        delta = (1 - pr.remates_L / base.remates) * 100
+        notas.append(
+            f"👑 A perder, remata MENOS: -{delta:.0f}% remates "
+            f"— equipa dominante, perde quando NAO joga ela"
+        )
+
+    # 8. A ganhar = -remates (acalma)
     if (pr.remates_W and base.remates
             and pr.remates_W < base.remates * 0.90):
         delta = (1 - pr.remates_W / base.remates) * 100
         notas.append(f"🛡 A ganhar, acalma: -{delta:.0f}% remates")
 
-    # 6. Disciplina
+    # 9. A ganhar = MAIS remates (equipa que amassa quando domina)
+    if (pr.remates_W and base.remates
+            and pr.remates_W > base.remates * 1.10):
+        delta = (pr.remates_W / base.remates - 1) * 100
+        notas.append(f"⚔ A ganhar, amassa: +{delta:.0f}% remates")
+
+    # 10. Disciplina baseline
     if base.cards_amarelos is not None and base.cards_amarelos >= 3.0:
         notas.append(f"🟡 Equipa amarelada: {base.cards_amarelos:.1f} cartoes/jogo")
     elif base.cards_amarelos is not None and base.cards_amarelos <= 1.5:
         notas.append(f"🟢 Equipa disciplinada: {base.cards_amarelos:.1f} cartoes/jogo")
 
-    # 7. Fadiga aviso
+    # 11. Posse muito alta ou muito baixa (perfil)
+    if base.posse_pct is not None:
+        if base.posse_pct >= 60:
+            notas.append(f"🎯 Dominadora: {base.posse_pct:.0f}% posse media")
+        elif base.posse_pct <= 42:
+            notas.append(f"🏃 Equipa de contra-ataque: {base.posse_pct:.0f}% posse media")
+
+    # 12. Fadiga aviso
     f = ficha_base["fadiga"]
     if f.jogos_ultimos_7d >= 2:
         notas.append(f"⏱ Carga alta: {f.jogos_ultimos_7d} jogos nos ultimos 7 dias")
@@ -190,6 +241,8 @@ def gerar_ficha(team_id: int, n_jogos: int = 20) -> FichaEquipa | None:
         cantos_1t=c1, cantos_2t=c2,
         cards_am_1t=_mn([j.cards_amarelos_1t for j in jogos]),
         cards_am_2t=_mn([j.cards_amarelos_2t for j in jogos]),
+        fouls_1t=_mn([j.fouls_1t for j in jogos]),
+        fouls_2t=_mn([j.fouls_2t for j in jogos]),
         diferenca_remates=_pct_diff(r1, r2),
         diferenca_cantos=_pct_diff(c1, c2),
     )
@@ -329,7 +382,12 @@ def ficha_markdown(ficha: FichaEquipa) -> str:
     lines.append(f"- Jogos ultimos 7 dias: **{f.jogos_ultimos_7d}**")
     lines.append(f"- Jogos ultimos 14 dias: **{f.jogos_ultimos_14d}**")
     if f.dias_desde_ultimo_jogo is not None:
-        lines.append(f"- Dias desde ultimo jogo: **{f.dias_desde_ultimo_jogo}**")
+        if f.dias_desde_ultimo_jogo == 0:
+            lines.append(f"- Ultimo jogo: **hoje**")
+        elif f.dias_desde_ultimo_jogo == 1:
+            lines.append(f"- Ultimo jogo: **ontem**")
+        else:
+            lines.append(f"- Dias desde ultimo jogo: **{f.dias_desde_ultimo_jogo}**")
     lines.append("")
 
     lines.append("---")

@@ -67,8 +67,8 @@ def main() -> None:
     parser.add_argument("nome", nargs="?", help="Nome (ou parte) da equipa.")
     parser.add_argument("--id", type=int, default=None,
                         help="sofascore_team_id directo.")
-    parser.add_argument("--n", type=int, default=20,
-                        help="Jogos a usar (default 20).")
+    parser.add_argument("--n", type=int, default=30,
+                        help="Jogos a usar (default 30).")
     parser.add_argument("--guardar", action="store_true",
                         help="Grava docs/equipas/{nome}.md em vez de imprimir.")
     args = parser.parse_args()

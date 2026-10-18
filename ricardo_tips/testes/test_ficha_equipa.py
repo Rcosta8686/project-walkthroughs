@@ -122,6 +122,63 @@ def test_gerar_ficha_poucos_jogos_devolve_none(engine_test):
     assert gerar_ficha(99, n_jogos=20) is None
 
 
+def test_padrao_amarelos_explodem_2T(engine_test):
+    """Caso Roma 2026/27: 0.4 am 1T, 1.4 am 2T → +250% → deve dar nota."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    with Session(engine_test) as s:
+        for i in range(8):
+            s.add(EstatisticaEquipaJogo(
+                sofascore_team_id=777, sofascore_event_id=50000 + i,
+                nome_equipa="RomaMock", liga="Serie A",
+                data_jogo=now - timedelta(days=i * 2),
+                era_casa=1, golos_marcados=2, golos_sofridos=1,
+                resultado="W", resultado_1t="W",
+                remates=15, sot=5, cantos=5,
+                cards_amarelos=2, cards_amarelos_1t=0.4, cards_amarelos_2t=1.4,
+                remates_1t=7, remates_2t=8,
+            ))
+        s.commit()
+
+    f = gerar_ficha(777, n_jogos=20)
+    assert f is not None
+    assert any("Amarelos explodem" in n for n in f.notas), (
+        f"Esperava nota 'Amarelos explodem 2a parte', obtive {f.notas}"
+    )
+
+
+def test_padrao_perder_remata_menos_dominante(engine_test):
+    """Equipa dominante (perde a jogar menos) → nota 'A perder, remata MENOS'."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    with Session(engine_test) as s:
+        # 6 W com 18 remates (muito), 4 L com 10 remates (menos que baseline 15)
+        for i in range(6):
+            s.add(EstatisticaEquipaJogo(
+                sofascore_team_id=888, sofascore_event_id=60000 + i,
+                nome_equipa="Dominante", liga="L",
+                data_jogo=now - timedelta(days=i),
+                era_casa=1, golos_marcados=3, golos_sofridos=0,
+                resultado="W", resultado_1t="W",
+                remates=18,
+            ))
+        for i in range(4):
+            s.add(EstatisticaEquipaJogo(
+                sofascore_team_id=888, sofascore_event_id=60100 + i,
+                nome_equipa="Dominante", liga="L",
+                data_jogo=now - timedelta(days=10 + i),
+                era_casa=0, golos_marcados=0, golos_sofridos=2,
+                resultado="L", resultado_1t="L",
+                remates=10,  # baseline media ~15.2, so 10 = -34%
+            ))
+        s.commit()
+
+    f = gerar_ficha(888, n_jogos=20)
+    assert f is not None
+    assert any("remata MENOS" in n or "equipa dominante" in n.lower()
+               for n in f.notas)
+
+
 def test_markdown_tem_seccoes(engine_test):
     _seed(engine_test, team_id=55, nome="Benfica")
     f = gerar_ficha(55, n_jogos=20)
