@@ -175,8 +175,14 @@ def gravar_jogo_terminado(event_id: int) -> int:
         return 0
     ev = event_json["event"]
     status = ev.get("status") or {}
-    if (status.get("code") or 0) != 100:  # 100 = terminado
-        log.debug("event %s nao terminado (code=%s)", event_id, status.get("code"))
+    code = status.get("code") or 0
+    # Codigos terminais Sofascore: 100=FT, 110=AET, 120=PEN. Tambem
+    # aceita descricao textual "ended"/"finished"/"ft" como fallback.
+    desc = str(status.get("description") or status.get("type") or "").lower()
+    terminais_desc = ("ended", "finished", "ft", "aet", "pen", "full time")
+    acabado = code in (100, 110, 120) or any(t in desc for t in terminais_desc)
+    if not acabado:
+        log.debug("event %s nao terminado (code=%s desc=%s)", event_id, code, desc)
         return 0
 
     stats_json = _get_json(f"/event/{event_id}/statistics") or {}
