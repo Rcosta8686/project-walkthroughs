@@ -385,11 +385,27 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     """Se minuto >= target (40/55/70) e ainda nao enviado para este jogo,
     envia projeccao de SOT + cantos ao Telegram e grava na DB.
 
-    Devolve numero de mensagens enviadas.
+    Filtros aplicados antes de enviar:
+      - minuto >= 85 → skip (jogo quase a acabar, projeccao irrelevante)
+      - liga em blacklist (regionais alemas, Oberliga, Regionalliga) → skip
+      - valor_actual == 0 E projeccao < 3.0 → skip (jogo "morto")
+      - projeccao < 1.0 → skip (odds degenerativas 100.00/1.01)
     """
     event_id = estado.event_id
     minuto = int(estado.minuto or 0)
     if minuto < projecao_live.MINUTOS_PROJECAO[0]:
+        return 0
+    # Filtro 1: muito perto do fim — projeccao perde sentido
+    if minuto >= 85:
+        return 0
+
+    # Filtro 2: blacklist de ligas regionais / sem interesse
+    liga_lower = (estado.liga or "").lower()
+    blacklist_projecao = (
+        "regionalliga", "oberliga", "landesliga", "verbandsliga",
+        "reserve league", " u23", " u19", " u17",
+    )
+    if any(b in liga_lower for b in blacklist_projecao):
         return 0
 
     ja = _projecoes_enviadas.setdefault(event_id, set())
@@ -397,41 +413,43 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     if target is None:
         return 0
 
-    enviadas = 0
-    # Mercados a projectar: sot e cantos (os unders falham, os overs acertam;
-    # projeccao mostra odd justa para o user comparar com a casa).
-    mercados_para_projetar = [
-        ("sot",
-         prev.lam_shots_on_target_restantes / 2.0,
-         prev.lam_shots_on_target_restantes / 2.0,
-         getattr(estado, "sot_casa", 0),
-         getattr(estado, "sot_fora", 0)),
-        ("cantos",
-         prev.lam_cantos_restantes / 2.0,
-         prev.lam_cantos_restantes / 2.0,
-         getattr(estado, "cantos_casa", 0),
-         getattr(estado, "cantos_fora", 0)),
-    ]
-    # Nota: a divisao /2 e uma aproximacao: live_predictor expoe apenas
-    # lam total restante quando so temos esse campo. Para sot/cantos ha
-    # projeccao_X_casa/fora directa — usa-la quando existir.
+    # Atributos correctos do EstadoLive: shots_on_target_casa, corners_casa
+    sot_c = int(getattr(estado, "shots_on_target_casa", 0) or 0)
+    sot_f = int(getattr(estado, "shots_on_target_fora", 0) or 0)
+    can_c = int(getattr(estado, "corners_casa", 0) or 0)
+    can_f = int(getattr(estado, "corners_fora", 0) or 0)
+
+    mercados_para_projetar: list[tuple[str, float, float, int, int]] = []
     if hasattr(prev, "projeccao_sot_casa"):
         # Reconstroi lam por equipa a partir da projeccao final - valor actual
-        sot_c = getattr(estado, "sot_casa", 0) or 0
-        sot_f = getattr(estado, "sot_fora", 0) or 0
-        can_c = getattr(estado, "cantos_casa", 0) or 0
-        can_f = getattr(estado, "cantos_fora", 0) or 0
-        mercados_para_projetar = [
-            ("sot",
-             max(0.0, prev.projeccao_sot_casa - sot_c),
-             max(0.0, prev.projeccao_sot_fora - sot_f),
-             sot_c, sot_f),
-            ("cantos",
-             max(0.0, prev.projeccao_cantos_casa - can_c),
-             max(0.0, prev.projeccao_cantos_fora - can_f),
-             can_c, can_f),
-        ]
+        mercados_para_projetar.append((
+            "sot",
+            max(0.0, prev.projeccao_sot_casa - sot_c),
+            max(0.0, prev.projeccao_sot_fora - sot_f),
+            sot_c, sot_f,
+        ))
+        mercados_para_projetar.append((
+            "cantos",
+            max(0.0, prev.projeccao_cantos_casa - can_c),
+            max(0.0, prev.projeccao_cantos_fora - can_f),
+            can_c, can_f,
+        ))
+    else:
+        # Fallback aproximado se o predictor nao tem projeccao por equipa
+        mercados_para_projetar.append((
+            "sot",
+            prev.lam_shots_on_target_restantes / 2.0,
+            prev.lam_shots_on_target_restantes / 2.0,
+            sot_c, sot_f,
+        ))
+        mercados_para_projetar.append((
+            "cantos",
+            prev.lam_cantos_restantes / 2.0,
+            prev.lam_cantos_restantes / 2.0,
+            can_c, can_f,
+        ))
 
+    enviadas = 0
     for mercado, lam_c, lam_f, val_c, val_f in mercados_para_projetar:
         try:
             proj = projecao_live.projetar(
@@ -448,6 +466,12 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("Projecao %s falhou %s: %s", mercado, event_id, exc)
+            continue
+
+        # Filtro 3+4: skip projeccoes degeneradas
+        if proj.projecao_final_total < 1.0:
+            continue
+        if proj.valor_atual_total == 0 and proj.projecao_final_total < 3.0:
             continue
 
         try:
