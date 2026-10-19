@@ -69,6 +69,12 @@ class EstadoLive:
     marcador_casa: int
     marcador_fora: int
 
+    # Sofascore team IDs (preenchidos em `obter_estado_live` via raw event).
+    # Permitem ao scanner consultar historico persistente das equipas
+    # (confronto, perfil, mini-cerebros) via sofascore_event_id → team_id.
+    home_id: int | None = None
+    away_id: int | None = None
+
     # Expected goals acumulados
     xg_casa: float | None = None
     xg_fora: float | None = None
@@ -556,6 +562,11 @@ def _preencher_contexto_pre(estado: EstadoLive) -> None:
     ev = estado._raw_event or {}
     home_id = (ev.get("homeTeam") or {}).get("id")
     away_id = (ev.get("awayTeam") or {}).get("id")
+    # Guarda os IDs no estado para o cerebro_live os poder usar.
+    if home_id:
+        estado.home_id = int(home_id)
+    if away_id:
+        estado.away_id = int(away_id)
     if home_id:
         try:
             estado.forma_casa = sofascore_contexto.obter_forma_recente(home_id) or {}

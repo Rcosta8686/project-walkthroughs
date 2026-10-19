@@ -48,7 +48,8 @@ import requests  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from apostas.alertas import (  # noqa: E402
-    analista, dual_sinal, filtro_desempenho, filtros_mercado, telegram_live,
+    analista, cerebro_live, dual_sinal, filtro_desempenho, filtros_mercado,
+    telegram_live,
 )
 from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
@@ -585,11 +586,30 @@ def _linha_live(mercado: str, lado: str, linha: float | None, estado) -> bool:
     return True
 
 
+def _ajustes_cerebro_para(estado):
+    """Fase 5: ajustes do cerebro a aplicar no predictor. None se nao ha
+    historico suficiente ou IDs em falta."""
+    if estado.home_id is None or estado.away_id is None:
+        return None
+    try:
+        return cerebro_live.calcular_ajustes(
+            estado.home_id, estado.away_id,
+            minuto=estado.minuto,
+            score_casa=estado.marcador_casa, score_fora=estado.marcador_fora,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.debug("cerebro falhou %s-%s: %s", estado.home_id, estado.away_id, exc)
+        return None
+
+
 def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[str, ...]) -> list[dict]:
     """Devolve lista de sugestoes (dicts) com EV >= ev_min."""
     sugestoes = []
     exp_pre = _puxar_expectativa(estado)
-    prev = live_predictor.prever(estado, expectativa_pre=exp_pre)
+    ajustes = _ajustes_cerebro_para(estado)
+    prev = live_predictor.prever(
+        estado, expectativa_pre=exp_pre, ajustes_cerebro=ajustes,
+    )
 
     def _emit(mercado, lado, linha, casa, odd, prob):
         # NOVO: skip linhas ja decididas (Over 2.5 num 4-2 = inutil)
@@ -955,7 +975,9 @@ def _correr_ciclo(args) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Falha gravar snapshot %s: %s", estado.event_id, exc)
         # Modelo corre SEMPRE, nao depende de ter odds da Odds API.
-        prev = live_predictor.prever(estado)
+        # Fase 5: ajustes do cerebro (confronto 2 fichas) injectados.
+        ajustes = _ajustes_cerebro_para(estado)
+        prev = live_predictor.prever(estado, ajustes_cerebro=ajustes)
         _imprimir_estado(estado, prev)
 
         # PROJECCOES aos 40'/55'/70': substituem sinais "faceis" de

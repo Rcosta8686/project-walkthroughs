@@ -289,6 +289,7 @@ def prever(
     lam_cantos_pre: float | None = None,
     lam_cartoes_pre: float | None = None,
     expectativa_pre=None,
+    ajustes_cerebro=None,
 ) -> PrevisaoLive:
     """Devolve previsao de eventos restantes para um jogo in-play.
 
@@ -542,6 +543,29 @@ def prever(
 
     lam_golos_casa_rest = lam_golos_rest * peso_casa
     lam_golos_fora_rest = lam_golos_rest * (1 - peso_casa)
+
+    # Fase 5: ajustes do cerebro (confronto 2 fichas). Aplicados DEPOIS
+    # do split casa/fora de golos para que o lam total e os parciais
+    # fiquem consistentes. Caps aplicados no proprio cerebro_live.
+    if ajustes_cerebro is not None:
+        lam_golos_rest *= ajustes_cerebro.lam_golos_mult
+        lam_golos_casa_rest *= ajustes_cerebro.lam_golos_mult
+        lam_golos_fora_rest *= ajustes_cerebro.lam_golos_mult
+        lam_cantos_rest *= ajustes_cerebro.lam_cantos_mult
+        lam_cards_rest *= ajustes_cerebro.lam_cards_mult
+        lam_shots_rest = (
+            lam_shots_casa_r * ajustes_cerebro.lam_shots_casa_mult
+            + lam_shots_fora_r * ajustes_cerebro.lam_shots_fora_mult
+        )
+        lam_sot_rest = (
+            lam_sot_casa_r * ajustes_cerebro.lam_shots_casa_mult
+            + lam_sot_fora_r * ajustes_cerebro.lam_shots_fora_mult
+        )
+        # Projeccoes totais por equipa (lam * mult + actual)
+        projeccao_shots_casa = shots_c + lam_shots_casa_r * ajustes_cerebro.lam_shots_casa_mult
+        projeccao_shots_fora = shots_f + lam_shots_fora_r * ajustes_cerebro.lam_shots_fora_mult
+        projeccao_sot_casa = sot_c + lam_sot_casa_r * ajustes_cerebro.lam_shots_casa_mult
+        projeccao_sot_fora = sot_f + lam_sot_fora_r * ajustes_cerebro.lam_shots_fora_mult
 
     # 1X2 live: convolui Poisson das 2 equipas para distribuicao final
     p_casa_vence, p_empate, p_fora_vence = _calc_1x2(
