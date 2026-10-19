@@ -24,7 +24,7 @@ except (AttributeError, OSError):
     pass
 
 from apostas.dados_referencia.ligas_prioritarias import (  # noqa: E402
-    sofascore_ids_prioritarios,
+    sofascore_ids_prioritarias,
 )
 from apostas.relatorios.preview import (  # noqa: E402
     formatar_preview_telegram, gerar_preview,
@@ -46,7 +46,7 @@ def main() -> None:
         data = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     fim = data + timedelta(days=1)
 
-    ids_ligas = None if args.todas_ligas else tuple(sofascore_ids_prioritarios())
+    ids_ligas = None if args.todas_ligas else tuple(sofascore_ids_prioritarias())
     preview = gerar_preview(data, fim, ids_ligas=ids_ligas)
     texto = formatar_preview_telegram(preview, titulo=f"📅 Preview {data:%d/%m}")
     print(texto)
