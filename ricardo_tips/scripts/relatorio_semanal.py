@@ -18,6 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from apostas.alertas import filtro_desempenho  # noqa: E402
+from apostas.alertas.historico_alertas import (  # noqa: E402
+    agregar_por_mercado, carregar_perfis,
+)
+from apostas.relatorios.melhorias_sombra import (  # noqa: E402
+    candidatos_a_reactivar, formatar_seccao_sombra,
+)
 from apostas.relatorios.periodicos import (  # noqa: E402
     agregar_edge_volume,
     formatar_relatorio_semanal_telegram,
@@ -56,6 +63,20 @@ def main() -> None:
         top_n=args.top, bottom_n=args.bottom,
     )
     texto = formatar_relatorio_semanal_telegram(rel)
+
+    # Seccao sombra: para cada (liga, mercado) actualmente bloqueado por
+    # M23 (filtro de desempenho), mostra ROI das ultimas 2 semanas +
+    # historico, e flag "candidato a reactivar" quando ROI recente >= 0.
+    try:
+        perfis = carregar_perfis(_csv_path())
+        perfis_mercado = agregar_por_mercado(perfis) if perfis else {}
+        bloqueios = filtro_desempenho.bloqueios_atuais(perfis_mercado)
+        if bloqueios:
+            trajectorias = candidatos_a_reactivar(rows, bloqueios, agora=fim)
+            texto += "\n" + formatar_seccao_sombra(trajectorias)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] seccao sombra falhou: {exc}")
+
     print(texto)
 
     if args.telegram:
