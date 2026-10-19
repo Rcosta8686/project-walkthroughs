@@ -10,7 +10,7 @@ Nao faz chamadas HTTP — tudo vem da tabela persistente.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable
 
 from apostas.modelos import historico_equipas
@@ -74,6 +74,40 @@ class SeccaoFadiga:
     jogos_ultimos_7d: int
     jogos_ultimos_14d: int
     dias_desde_ultimo_jogo: int | None
+    # Fase 9: minutos cumulados dos titulares mais usados nos ultimos N
+    # jogos. Preenchido quando ha dados de EstatisticaJogadorJogo.
+    minutos_top_titulares_7d: float | None = None  # media dos top 5
+    minutos_top_titulares_14d: float | None = None
+
+
+@dataclass
+class SeccaoCasaFora:
+    """Fase 7: split de desempenho em casa vs fora.
+
+    Permite ao confronto saber que uma equipa que marca 2.1 golos/jogo no
+    agregado marca 2.7 em casa e 1.5 fora — grande diferenca que ficha
+    agregada esconde.
+    """
+    n_casa: int
+    n_fora: int
+    # Agregados chave em cada contexto. None se n<3.
+    golos_marcados_casa: float | None
+    golos_marcados_fora: float | None
+    golos_sofridos_casa: float | None
+    golos_sofridos_fora: float | None
+    remates_casa: float | None
+    remates_fora: float | None
+    cantos_casa: float | None
+    cantos_fora: float | None
+    cards_am_casa: float | None
+    cards_am_fora: float | None
+    # Record W-D-L em cada contexto
+    vitorias_casa: int
+    empates_casa: int
+    derrotas_casa: int
+    vitorias_fora: int
+    empates_fora: int
+    derrotas_fora: int
 
 
 @dataclass
@@ -87,6 +121,8 @@ class FichaEquipa:
     por_parte: SeccaoPorParte
     por_resultado: SeccaoPorResultado
     fadiga: SeccaoFadiga
+    # Fase 7: split casa/fora. Pode ser None se n<3 em cada lado.
+    casa_fora: SeccaoCasaFora | None = None
     notas: list[str] = field(default_factory=list)
 
 
@@ -201,6 +237,40 @@ def _gerar_notas(ficha_base: dict, jogos: list[EstatisticaEquipaJogo]) -> list[s
     if f.jogos_ultimos_7d >= 2:
         notas.append(f"⏱ Carga alta: {f.jogos_ultimos_7d} jogos nos ultimos 7 dias")
 
+    # 13. Fase 9: carga titulares (minutos cumulados)
+    if f.minutos_top_titulares_7d is not None and f.minutos_top_titulares_7d >= 180:
+        notas.append(
+            f"🥵 Titulares TOP5 com {f.minutos_top_titulares_7d:.0f} min nos ultimos "
+            f"7 dias (desgaste)"
+        )
+
+    # 14. Fase 7: diferenca casa/fora
+    cf = ficha_base.get("casa_fora")
+    if cf is not None and cf.golos_marcados_casa is not None and cf.golos_marcados_fora is not None:
+        delta_g = cf.golos_marcados_casa - cf.golos_marcados_fora
+        if delta_g >= 0.5:
+            notas.append(
+                f"🏠 Muito melhor em casa: {cf.golos_marcados_casa:.1f} vs "
+                f"{cf.golos_marcados_fora:.1f} golos marcados"
+            )
+        elif delta_g <= -0.3:
+            notas.append(
+                f"✈ Melhor fora: {cf.golos_marcados_fora:.1f} vs "
+                f"{cf.golos_marcados_casa:.1f} golos marcados"
+            )
+    if cf is not None:
+        # Record muito desigual
+        if cf.n_casa >= 4 and cf.vitorias_casa >= cf.n_casa * 0.7:
+            notas.append(
+                f"🏠 Fortaleza em casa: {cf.vitorias_casa}W-"
+                f"{cf.empates_casa}D-{cf.derrotas_casa}L"
+            )
+        if cf.n_fora >= 4 and cf.derrotas_fora >= cf.n_fora * 0.6:
+            notas.append(
+                f"✈ Fraca fora: {cf.vitorias_fora}W-"
+                f"{cf.empates_fora}D-{cf.derrotas_fora}L"
+            )
+
     return notas
 
 
@@ -279,15 +349,46 @@ def gerar_ficha(team_id: int, n_jogos: int = 20) -> FichaEquipa | None:
         delta = hoje - jogos[0].data_jogo
         dias_desde = delta.days
 
+    # Fase 9: carga titulares (minutos cumulados nos ultimos jogos).
+    # Nao bloqueante — se falhar fica None e segue.
+    mins_7d, mins_14d = _minutos_titulares_recentes(team_id, hoje)
+
     fadiga = SeccaoFadiga(
         jogos_ultimos_7d=jogos_7d,
         jogos_ultimos_14d=jogos_14d,
         dias_desde_ultimo_jogo=dias_desde,
+        minutos_top_titulares_7d=mins_7d,
+        minutos_top_titulares_14d=mins_14d,
+    )
+
+    # Fase 7: casa/fora split
+    casa_jogos = [j for j in jogos if j.era_casa]
+    fora_jogos = [j for j in jogos if not j.era_casa]
+    casa_fora = SeccaoCasaFora(
+        n_casa=len(casa_jogos),
+        n_fora=len(fora_jogos),
+        golos_marcados_casa=_mn([j.golos_marcados for j in casa_jogos]) if len(casa_jogos) >= 3 else None,
+        golos_marcados_fora=_mn([j.golos_marcados for j in fora_jogos]) if len(fora_jogos) >= 3 else None,
+        golos_sofridos_casa=_mn([j.golos_sofridos for j in casa_jogos]) if len(casa_jogos) >= 3 else None,
+        golos_sofridos_fora=_mn([j.golos_sofridos for j in fora_jogos]) if len(fora_jogos) >= 3 else None,
+        remates_casa=_mn([j.remates for j in casa_jogos]) if len(casa_jogos) >= 3 else None,
+        remates_fora=_mn([j.remates for j in fora_jogos]) if len(fora_jogos) >= 3 else None,
+        cantos_casa=_mn([j.cantos for j in casa_jogos]) if len(casa_jogos) >= 3 else None,
+        cantos_fora=_mn([j.cantos for j in fora_jogos]) if len(fora_jogos) >= 3 else None,
+        cards_am_casa=_mn([j.cards_amarelos for j in casa_jogos]) if len(casa_jogos) >= 3 else None,
+        cards_am_fora=_mn([j.cards_amarelos for j in fora_jogos]) if len(fora_jogos) >= 3 else None,
+        vitorias_casa=sum(1 for j in casa_jogos if j.resultado == "W"),
+        empates_casa=sum(1 for j in casa_jogos if j.resultado == "D"),
+        derrotas_casa=sum(1 for j in casa_jogos if j.resultado == "L"),
+        vitorias_fora=sum(1 for j in fora_jogos if j.resultado == "W"),
+        empates_fora=sum(1 for j in fora_jogos if j.resultado == "D"),
+        derrotas_fora=sum(1 for j in fora_jogos if j.resultado == "L"),
     )
 
     base_dict = {
         "baseline": baseline, "por_parte": por_parte,
         "por_resultado": por_resultado, "fadiga": fadiga,
+        "casa_fora": casa_fora,
     }
     notas = _gerar_notas(base_dict, jogos)
 
@@ -301,8 +402,63 @@ def gerar_ficha(team_id: int, n_jogos: int = 20) -> FichaEquipa | None:
         por_parte=por_parte,
         por_resultado=por_resultado,
         fadiga=fadiga,
+        casa_fora=casa_fora,
         notas=notas,
     )
+
+
+def _minutos_titulares_recentes(
+    team_id: int, hoje: datetime,
+) -> tuple[float | None, float | None]:
+    """Fase 9: carga semanal rica.
+
+    Para cada jogador que foi titular nos ultimos N jogos da equipa,
+    soma minutos jogados nos ultimos 7 e 14 dias. Devolve media dos top
+    5 jogadores por minutos (os mais usados). None se nao houver dados.
+
+    Lazy import — EstatisticaJogadorJogo pode nao ter linhas em todas
+    as sessoes de teste.
+    """
+    try:
+        from sqlalchemy import func, select
+        from apostas.utils.db import abrir_sessao
+        from apostas.utils.schema import (
+            EstatisticaJogadorJogo as EJ, EstatisticaEquipaJogo as EE,
+        )
+    except Exception:  # noqa: BLE001
+        return None, None
+
+    def _top5_media_na_janela(dias: int) -> float | None:
+        limiar = hoje - timedelta(days=dias)
+        try:
+            with abrir_sessao() as s:
+                # Jogos recentes desta equipa
+                event_ids = s.scalars(
+                    select(EE.sofascore_event_id).where(
+                        EE.sofascore_team_id == team_id,
+                        EE.data_jogo >= limiar,
+                    )
+                ).all()
+                if not event_ids:
+                    return None
+                # Minutos por jogador em cada um desses jogos
+                rows = s.execute(
+                    select(EJ.sofascore_player_id, func.sum(EJ.minutos))
+                    .where(
+                        EJ.sofascore_team_id == team_id,
+                        EJ.sofascore_event_id.in_(event_ids),
+                    )
+                    .group_by(EJ.sofascore_player_id)
+                ).all()
+        except Exception:  # noqa: BLE001
+            return None
+        totais = sorted((m for (_pid, m) in rows if m is not None), reverse=True)
+        if not totais:
+            return None
+        top5 = totais[:5]
+        return sum(top5) / len(top5)
+
+    return _top5_media_na_janela(7), _top5_media_na_janela(14)
 
 
 # ─────────── Renderer Markdown (Obsidian-friendly) ────────────────────────
@@ -375,6 +531,46 @@ def ficha_markdown(ficha: FichaEquipa) -> str:
                      f"**{pr.virar_jogos_pct*100:.0f}%**")
         lines.append("")
 
+    # Casa / fora (Fase 7)
+    cf = ficha.casa_fora
+    if cf is not None and (cf.n_casa > 0 or cf.n_fora > 0):
+        lines.append("## Casa vs Fora")
+        lines.append("")
+        lines.append(
+            f"- Casa: {cf.n_casa} jogos  "
+            f"({cf.vitorias_casa}W-{cf.empates_casa}D-{cf.derrotas_casa}L)"
+        )
+        lines.append(
+            f"- Fora: {cf.n_fora} jogos  "
+            f"({cf.vitorias_fora}W-{cf.empates_fora}D-{cf.derrotas_fora}L)"
+        )
+        if (cf.golos_marcados_casa is not None
+                and cf.golos_marcados_fora is not None):
+            lines.append("")
+            lines.append("| Metrica | Casa | Fora |")
+            lines.append("|---|---|---|")
+            lines.append(
+                f"| Golos marcados | {_fmt(cf.golos_marcados_casa)} | "
+                f"{_fmt(cf.golos_marcados_fora)} |"
+            )
+            lines.append(
+                f"| Golos sofridos | {_fmt(cf.golos_sofridos_casa)} | "
+                f"{_fmt(cf.golos_sofridos_fora)} |"
+            )
+            lines.append(
+                f"| Remates | {_fmt(cf.remates_casa)} | "
+                f"{_fmt(cf.remates_fora)} |"
+            )
+            lines.append(
+                f"| Cantos | {_fmt(cf.cantos_casa)} | "
+                f"{_fmt(cf.cantos_fora)} |"
+            )
+            lines.append(
+                f"| Amarelos | {_fmt(cf.cards_am_casa)} | "
+                f"{_fmt(cf.cards_am_fora)} |"
+            )
+        lines.append("")
+
     # Fadiga
     f = ficha.fadiga
     lines.append("## Fadiga e carga")
@@ -388,6 +584,12 @@ def ficha_markdown(ficha: FichaEquipa) -> str:
             lines.append(f"- Ultimo jogo: **ontem**")
         else:
             lines.append(f"- Dias desde ultimo jogo: **{f.dias_desde_ultimo_jogo}**")
+    if f.minutos_top_titulares_7d is not None:
+        lines.append(
+            f"- Top5 titulares: **{f.minutos_top_titulares_7d:.0f} min** 7d"
+            + (f" · {f.minutos_top_titulares_14d:.0f} min 14d"
+               if f.minutos_top_titulares_14d is not None else "")
+        )
     lines.append("")
 
     lines.append("---")

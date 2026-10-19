@@ -151,6 +151,24 @@ def calcular_ajustes(
         elif padrao.startswith("🔄"):
             # Vira jogos — nao mexe no lambda, mas e flag para 1X2
             aj.notas.append(padrao)
+        elif padrao.startswith("🏠"):
+            # Fase 7: casa forte + adversario sofre fora → +golos casa
+            aj.lam_golos_mult *= 1.08
+            aj.lam_shots_casa_mult *= 1.05
+            aj.razoes.append("casa × adv-sofre-fora → golos+8%, shots-casa+5%")
+            aj.notas.append(padrao)
+        elif padrao.startswith("✈"):
+            # Fase 7: visitante perigoso fora
+            aj.lam_golos_mult *= 1.08
+            aj.lam_shots_fora_mult *= 1.05
+            aj.razoes.append("visitante-perigoso-fora → golos+8%, shots-fora+5%")
+            aj.notas.append(padrao)
+        elif padrao.startswith("🥵"):
+            # Fase 9: titulares desgastados → -shots 2a parte
+            aj.lam_shots_casa_mult *= 0.95
+            aj.lam_shots_fora_mult *= 0.95
+            aj.razoes.append("titulares desgastados → shots-5%")
+            aj.notas.append(padrao)
 
     # Fadiga: equipa com fadiga alta remata menos
     for alerta in res.alertas:

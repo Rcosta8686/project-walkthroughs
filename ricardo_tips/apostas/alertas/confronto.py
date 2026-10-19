@@ -143,6 +143,30 @@ def _padroes_cruzados(
                 f"vs {min(bc.posse_pct, bf.posse_pct):.0f}%)"
             )
 
+    # 6. Fase 7: casa/fora split cruzado
+    cfc = casa.casa_fora
+    cff = fora.casa_fora
+    if cfc is not None and cff is not None:
+        gmc = cfc.golos_marcados_casa
+        gsf = cff.golos_sofridos_fora
+        if gmc is not None and gsf is not None:
+            esperado_casa = (gmc + gsf) / 2
+            # Comparar com baseline agregada da casa
+            if bc.golos_marcados is not None and esperado_casa > bc.golos_marcados * 1.20:
+                out.append(
+                    f"🏠 Em casa + adversario sofre fora: {casa.nome} esperado "
+                    f"{esperado_casa:.1f} golos (vs {bc.golos_marcados:.1f} agregado)"
+                )
+        gmf = cff.golos_marcados_fora
+        gsc = cfc.golos_sofridos_casa
+        if gmf is not None and gsc is not None:
+            esperado_fora = (gmf + gsc) / 2
+            if bf.golos_marcados is not None and esperado_fora > bf.golos_marcados * 1.20:
+                out.append(
+                    f"✈ Visitante perigoso fora: {fora.nome} esperado "
+                    f"{esperado_fora:.1f} golos (vs {bf.golos_marcados:.1f} agregado)"
+                )
+
     return out
 
 
