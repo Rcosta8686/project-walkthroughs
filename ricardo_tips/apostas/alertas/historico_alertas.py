@@ -133,6 +133,53 @@ def perfil_para(perfis: dict, liga: str, mercado: str, lado: str) -> PerfilAlert
     return perfis.get(chave)
 
 
+@dataclass
+class PerfilMercado:
+    """Agregado por (liga, mercado) ignorando lado — usado pelo
+    filtro de desempenho para blacklist dinamica."""
+    liga: str
+    mercado: str
+    n_alertas: int
+    n_resolvidos: int
+    roi: float | None       # %
+    clv_medio: float | None  # %
+
+
+def agregar_por_mercado(perfis: dict) -> dict[tuple[str, str], PerfilMercado]:
+    """Agrega perfis (liga, mercado, lado) para (liga, mercado).
+
+    Devolve dict {(liga, mercado): PerfilMercado}. Serve o filtro de
+    desempenho que decide bloquear uma combinacao (liga, mercado) com
+    volume e ROI real conhecidos — menos sensivel ao lado especifico.
+    """
+    buckets: dict[tuple[str, str], dict] = {}
+    for (liga, mercado, _lado), p in perfis.items():
+        chave = (liga, mercado)
+        b = buckets.setdefault(chave, {
+            "n": 0, "n_res": 0, "roi_num": 0.0, "roi_den": 0,
+            "clv_num": 0.0, "clv_den": 0,
+        })
+        b["n"] += p.n_alertas
+        b["n_res"] += p.n_resolvidos
+        if p.roi is not None:
+            # Pondera ROI pelo volume de resolvidos
+            b["roi_num"] += p.roi * p.n_resolvidos
+            b["roi_den"] += p.n_resolvidos
+        if p.clv_medio is not None:
+            b["clv_num"] += p.clv_medio * p.n_alertas
+            b["clv_den"] += p.n_alertas
+
+    out: dict[tuple[str, str], PerfilMercado] = {}
+    for (liga, mercado), b in buckets.items():
+        out[(liga, mercado)] = PerfilMercado(
+            liga=liga, mercado=mercado,
+            n_alertas=b["n"], n_resolvidos=b["n_res"],
+            roi=(b["roi_num"] / b["roi_den"]) if b["roi_den"] else None,
+            clv_medio=(b["clv_num"] / b["clv_den"]) if b["clv_den"] else None,
+        )
+    return out
+
+
 def formatar_linha_telegram(p: PerfilAlerta) -> str:
     """Produz '📊 214 alertas · CLV +2.4% · ROI +3.1% · ✅ categoria forte'."""
     partes = [f"📊 {p.n_alertas} alertas"]

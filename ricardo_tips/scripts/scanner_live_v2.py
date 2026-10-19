@@ -47,7 +47,9 @@ import requests  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
-from apostas.alertas import analista, dual_sinal, filtros_mercado, telegram_live  # noqa: E402
+from apostas.alertas import (  # noqa: E402
+    analista, dual_sinal, filtro_desempenho, filtros_mercado, telegram_live,
+)
 from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
 from apostas.ingestao.odds_api import LIGAS_ODDS_API, _ALIAS_ODDS_API, _parse_commence_time  # noqa: E402
@@ -71,9 +73,12 @@ COOLDOWN_MIN = 15
 # Impede enviar duas vezes a projeccao do mesmo target no mesmo jogo.
 _projecoes_enviadas: dict[int, set[int]] = {}
 
-# Mercados nao-ganhadores (unders falhavam): sinais pontuais destes mercados
-# NAO vao mais para Telegram. Continuam a ser gravados no CSV para tracking.
-_MERCADOS_SO_PROJECAO = {"remates", "remates_a_baliza", "cantos", "sot"}
+# Mercados cujo sinal pontual nao vai a Telegram por *default*. O filtro
+# de desempenho (M23) pode manter aqui so o que nao bateu edge consistente.
+# Dados reais (2026-10): remates e remates_a_baliza mostram ROI +25% a
+# +48% em multiplas ligas, portanto saem desta lista. Cantos continuam
+# aqui porque a maior parte dos L sao cantos (ver relatorio semanal).
+_MERCADOS_SO_PROJECAO = {"cantos", "sot"}
 
 
 def _purgar_cooldown() -> None:
@@ -1018,17 +1023,32 @@ def _correr_ciclo(args) -> None:
             # M17: carrega perfis historicos (M16) uma vez por ciclo para
             # avaliar dual signal. Reaproveita o CSV live resolvido.
             perfis_hist: dict | None = None
+            perfis_mercado: dict | None = None
             try:
-                from apostas.alertas.historico_alertas import carregar_perfis
+                from apostas.alertas.historico_alertas import (
+                    agregar_por_mercado, carregar_perfis,
+                )
                 perfis_hist = carregar_perfis(_ficheiro_csv())
+                # M23: agrega por (liga, mercado) para o filtro de desempenho.
+                perfis_mercado = agregar_por_mercado(perfis_hist) if perfis_hist else None
             except Exception as exc:  # noqa: BLE001
-                log.debug("Carga perfis para dual-sinal falhou: %s", exc)
+                log.debug("Carga perfis para dual-sinal/desempenho falhou: %s", exc)
                 perfis_hist = None
+                perfis_mercado = None
             for s in todas_sugestoes:
                 # Blacklist por liga (dados reais: Brasileirao -42% ROI,
-                # LaLiga 2 -35% ROI com n>=50). Deixa aparecer no terminal
-                # mas nao notifica para evitar perdas acumuladas.
+                # LaLiga 2 -35% ROI com n>=50). Mantida como override extremo
+                # — M23 ja refina por (liga, mercado) mas isto apanha ligas
+                # inteiras muito mas quando o filtro ainda nao tem volume.
                 if analista.liga_na_blacklist(s.get("liga", "")):
+                    continue
+                # M23: filtro de desempenho — bloqueia (liga, mercado) com
+                # ROI real < -5% em n_resolvidos >= 30. Preserva mercados
+                # ganhadores (remates, SOT) mesmo em ligas globalmente fracas.
+                dec = filtro_desempenho.avaliar(
+                    perfis_mercado, s.get("liga", ""), s.get("mercado", ""),
+                )
+                if dec.bloquear:
                     continue
                 # Mercado 1X2 live: dados reais (n=188, ROI -27%, hit 54%)
                 # mostraram que o modelo nao bate a casa aqui. Previsao
@@ -1037,11 +1057,10 @@ def _correr_ciclo(args) -> None:
                 # mais dados mas nao notifica Telegram.
                 if s.get("mercado") == "1x2":
                     continue
-                # Remates / SOT / cantos: SO vao por projeccao agora
-                # (mensagens 40'/55'/70' com odd justa). Palpite pontual
-                # destes mercados fica no CSV mas nao envia Telegram, pois
-                # os unders falhavam e os overs sao melhor-servidos pela
-                # projeccao com odd justa que o user compara com a casa.
+                # Mercados em `_MERCADOS_SO_PROJECAO` (cantos, sot): sinal
+                # pontual nao vai, so por projeccao 40'/55'/70'. Remates
+                # e remates_a_baliza sairam da lista — M23 trata (liga,
+                # mercado) por dados reais e eles mostram +25%/+48% ROI.
                 if s.get("mercado") in _MERCADOS_SO_PROJECAO:
                     continue
                 # MODO VENCEDOR: so notifica se mercado vencedor OR liga
