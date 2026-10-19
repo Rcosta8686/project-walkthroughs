@@ -75,6 +75,10 @@ class EstadoLive:
     home_id: int | None = None
     away_id: int | None = None
 
+    # Pais da competicao (tournament.category.name). Permite filtrar
+    # jogos de paises banidos para apostas (Russia, Belarus, etc.).
+    pais: str | None = None
+
     # Expected goals acumulados
     xg_casa: float | None = None
     xg_fora: float | None = None
@@ -494,11 +498,17 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
         return None
     ev = event_json["event"]
     arbitro = ((ev.get("referee") or {}).get("name") if isinstance(ev.get("referee"), dict) else None)
+    _torneio = ev.get("tournament") or {}
+    _categoria = (_torneio.get("category") or {})
+    _pais = _categoria.get("name") or (
+        (_torneio.get("uniqueTournament") or {}).get("category") or {}
+    ).get("name")
     estado = EstadoLive(
         event_id=event_id,
         home=_unescape_nome(ev.get("homeTeam", {}).get("name")),
         away=_unescape_nome(ev.get("awayTeam", {}).get("name")),
-        liga=_unescape_nome(ev.get("tournament", {}).get("name")),
+        liga=_unescape_nome(_torneio.get("name")),
+        pais=_pais,
         minuto=_minuto_actual(ev),
         estado=ev.get("status", {}).get("code") or ev.get("status", {}).get("description", "?"),
         marcador_casa=int((ev.get("homeScore") or {}).get("current", 0) or 0),

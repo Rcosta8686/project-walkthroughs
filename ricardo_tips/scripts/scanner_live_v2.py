@@ -49,7 +49,7 @@ from sqlalchemy import select  # noqa: E402
 
 from apostas.alertas import (  # noqa: E402
     analista, cerebro_live, dual_sinal, filtro_desempenho, filtros_mercado,
-    telegram_live,
+    paises_banidos, telegram_live,
 )
 from apostas.alertas.telegram_cliente import cliente as telegram_cliente  # noqa: E402
 from apostas.ingestao import _flaresolverr, sofascore_live  # noqa: E402
@@ -968,6 +968,14 @@ def _correr_ciclo(args) -> None:
             print(f"    FLARESOLVERR OFF: {exc}")
             return
         if estado is None:
+            continue
+        # Filtra paises banidos (Russia, Belarus...) ANTES de qualquer analise.
+        # Jogos que a bet365 nao oferece nao devem gastar atencao do user.
+        banido, razao = paises_banidos.jogo_banido(
+            estado.pais, estado.liga, estado.home, estado.away,
+        )
+        if banido:
+            print(f"    [SKIP banido] {estado.home} vs {estado.away} — {razao}")
             continue
         # Grava snapshot do estado para historico/calibracao futura (Nivel 2)
         try:
