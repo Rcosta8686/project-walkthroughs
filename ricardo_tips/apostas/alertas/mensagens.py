@@ -102,6 +102,71 @@ def apostei_confirmado(
     return "\n".join(linhas)
 
 
+def ficha_equipa_resumida(ficha) -> str:
+    """Resumo Telegram-ready de uma ficha de equipa (Fase 4 do 2o Cerebro).
+
+    Mostra: liga, baseline, split casa/fora, record W-D-L, fadiga,
+    e as 5 notas tacticas mais importantes.
+    """
+    linhas = [f"🧠 *Ficha — {ficha.nome}*"]
+    if ficha.liga:
+        linhas.append(f"_{ficha.liga}_  ·  {ficha.jogos_lidos} jogos no histórico")
+    linhas.append("")
+
+    # Baseline
+    b = ficha.baseline
+    linhas.append("*Baseline (por jogo)*")
+    if b.golos_marcados is not None:
+        linhas.append(
+            f"⚽ {b.golos_marcados:.1f} marcados · {b.golos_sofridos:.1f} sofridos"
+        )
+    if b.remates is not None:
+        linhas.append(f"🎯 {b.remates:.1f} remates · {b.sot:.1f} SOT")
+    if b.cantos is not None:
+        linhas.append(f"🚩 {b.cantos:.1f} cantos")
+    if b.cards_amarelos is not None:
+        linhas.append(f"🟨 {b.cards_amarelos:.1f} amarelos")
+    if b.posse_pct is not None:
+        linhas.append(f"⚖ {b.posse_pct:.0f}% posse")
+
+    # Casa/fora
+    cf = ficha.casa_fora
+    if cf is not None and cf.n_casa > 0 and cf.n_fora > 0:
+        linhas.append("")
+        linhas.append("*Casa vs Fora*")
+        linhas.append(
+            f"🏠 {cf.n_casa}j — {cf.vitorias_casa}W/{cf.empates_casa}D/"
+            f"{cf.derrotas_casa}L"
+            + (f" · {cf.golos_marcados_casa:.1f} marcados"
+               if cf.golos_marcados_casa is not None else "")
+        )
+        linhas.append(
+            f"✈ {cf.n_fora}j — {cf.vitorias_fora}W/{cf.empates_fora}D/"
+            f"{cf.derrotas_fora}L"
+            + (f" · {cf.golos_marcados_fora:.1f} marcados"
+               if cf.golos_marcados_fora is not None else "")
+        )
+
+    # Fadiga
+    f = ficha.fadiga
+    linhas.append("")
+    linhas.append(
+        f"⏱ {f.jogos_ultimos_7d} jogos nos últimos 7d · "
+        f"{f.jogos_ultimos_14d} nos últimos 14d"
+    )
+    if f.minutos_top_titulares_7d is not None:
+        linhas.append(f"🥵 Top5 titulares: {f.minutos_top_titulares_7d:.0f} min 7d")
+
+    # Notas tacticas (top 5)
+    if ficha.notas:
+        linhas.append("")
+        linhas.append("*Padrões táticos*")
+        for n in ficha.notas[:5]:
+            linhas.append(f"• {n}")
+
+    return "\n".join(linhas)
+
+
 def pausado() -> str:
     return "⏸️ Alertas pausados. Usa /retomar para voltar a receber."
 
@@ -119,6 +184,7 @@ def ajuda() -> str:
         "`/registar ID STAKE ODD` — regista aposta pré-match pela sugestão\n"
         "`/apostei ID ODD STAKE` — regista aposta LIVE a partir de um alerta\n"
         "`/jogo ID` — análise detalhada de um jogo\n"
+        "`/equipa <nome>` — ficha táctica da equipa (padrões, casa/fora, carga)\n"
         "`/pausar` — não enviar alertas automáticos\n"
         "`/retomar` — reativar alertas"
     )

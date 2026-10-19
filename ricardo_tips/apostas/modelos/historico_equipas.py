@@ -326,3 +326,42 @@ def stats_por_contexto(team_id: int, resultado: str) -> list[EstatisticaEquipaJo
         for r in rows:
             s.expunge(r)
     return list(rows)
+
+
+# ─────────── Resolucao por nome (Fase 4 /equipa) ─────────────────────────
+
+def encontrar_equipa_por_nome(query: str, max_resultados: int = 5) -> list[tuple[int, str]]:
+    """Procura equipas cujo nome contem `query` (case-insensitive).
+
+    Devolve lista [(team_id, nome_mais_recente), ...] ordenada por
+    recencia do ultimo jogo (equipas mais activas primeiro). Util para
+    o comando /equipa no bot — resolve "Benfica" → sofascore_team_id.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    with abrir_sessao() as s:
+        # Agrupa por team_id, pega o nome mais recente e a data mais recente.
+        from sqlalchemy import func as sa_func
+        rows = s.execute(
+            select(
+                EstatisticaEquipaJogo.sofascore_team_id,
+                sa_func.max(EstatisticaEquipaJogo.data_jogo).label("ultima"),
+            )
+            .where(sa_func.lower(EstatisticaEquipaJogo.nome_equipa).like(f"%{q}%"))
+            .group_by(EstatisticaEquipaJogo.sofascore_team_id)
+            .order_by(desc("ultima"))
+            .limit(max_resultados)
+        ).all()
+        # Para cada id, apanha o nome mais recente
+        out: list[tuple[int, str]] = []
+        for tid, _ult in rows:
+            row = s.execute(
+                select(EstatisticaEquipaJogo.nome_equipa)
+                .where(EstatisticaEquipaJogo.sofascore_team_id == tid)
+                .order_by(desc(EstatisticaEquipaJogo.data_jogo))
+                .limit(1)
+            ).first()
+            if row:
+                out.append((int(tid), row[0]))
+    return out
