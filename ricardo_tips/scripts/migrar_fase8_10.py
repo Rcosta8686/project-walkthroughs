@@ -1,9 +1,14 @@
-"""Migracao Fase 8 (venue) + Fase 10 (ausencias). Idempotente.
+"""Migracao Fase 8 (venue) + Fase 10 (ausencias) + Nivel 3 (stats
+avancadas + arbitro). Idempotente.
 
-Adiciona a coluna `venue` a `estatistica_equipa_jogo` se nao existe.
-Nao altera dados antigos — fica NULL ate o backfill correr. SQLite
+Adiciona colunas em `estatistica_equipa_jogo`:
+  venue, arbitro, passes_longos_total, passes_longos_pct,
+  duels_won_pct, interceptions, tackles_total, offsides,
+  pass_accuracy_final_third
+
+Nao altera dados antigos — ficam NULL ate backfill correr. SQLite
 nao suporta ADD COLUMN com index implicitamente, portanto adicionamos
-apenas a coluna; o index da tabela ja esta na definicao do schema.
+apenas a coluna + CREATE INDEX separado.
 """
 from __future__ import annotations
 
@@ -28,25 +33,42 @@ def main() -> None:
     insp = inspect(engine)
 
     cols = {c["name"] for c in insp.get_columns("estatistica_equipa_jogo")}
-    print("\n=== Migracao Fase 8 + 10: colunas em estatistica_equipa_jogo ===\n")
+    print("\n=== Migracao Fase 8 + 10 + Nivel 3: colunas em estatistica_equipa_jogo ===\n")
+
+    # (nome_coluna, ddl, index_opcional)
+    adicoes = [
+        ("venue",                     "VARCHAR(100)", True),
+        ("arbitro",                   "VARCHAR(100)", True),
+        ("passes_longos_total",       "INTEGER",      False),
+        ("passes_longos_pct",         "FLOAT",        False),
+        ("duels_won_pct",             "FLOAT",        False),
+        ("interceptions",             "INTEGER",      False),
+        ("tackles_total",             "INTEGER",      False),
+        ("offsides",                  "INTEGER",      False),
+        ("pass_accuracy_final_third", "FLOAT",        False),
+    ]
+
     with engine.begin() as conn:
-        if "venue" in cols:
-            print("  ✓ venue (ja existe)")
-        else:
-            print("  + venue  (adiciona)")
+        for nome, ddl, criar_index in adicoes:
+            if nome in cols:
+                print(f"  ✓ {nome} (ja existe)")
+                continue
+            print(f"  + {nome}  (adiciona)")
             conn.execute(text(
-                "ALTER TABLE estatistica_equipa_jogo "
-                "ADD COLUMN venue VARCHAR(100)"
+                f"ALTER TABLE estatistica_equipa_jogo ADD COLUMN {nome} {ddl}"
             ))
-            try:
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_estatistica_equipa_jogo_venue "
-                    "ON estatistica_equipa_jogo (venue)"
-                ))
-            except Exception as exc:  # noqa: BLE001
-                print(f"    (nao criou index, nao bloqueante: {exc})")
-    print("\n✅ Migracao OK. Backfill de venues antigos:")
-    print("   venv\\Scripts\\python.exe scripts\\backfill_venue.py --limite 500\n")
+            if criar_index:
+                try:
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS ix_estatistica_equipa_jogo_{nome} "
+                        f"ON estatistica_equipa_jogo ({nome})"
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"    (nao criou index, nao bloqueante: {exc})")
+
+    print("\n✅ Migracao OK. Backfill opcional:")
+    print("   venv\\Scripts\\python.exe scripts\\backfill_venue.py --limite 500")
+    print("   venv\\Scripts\\python.exe scripts\\backfill_stats_nivel3.py --limite 500\n")
 
 
 if __name__ == "__main__":

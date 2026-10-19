@@ -116,6 +116,14 @@ class _StatsEquipa:
     cards_am_2t: float | None = None
     fouls_1t: float | None = None
     fouls_2t: float | None = None
+    # Nivel 3: stats avancadas
+    passes_longos_total: int | None = None
+    passes_longos_pct: float | None = None
+    duels_won_pct: float | None = None
+    interceptions: int | None = None
+    tackles_total: int | None = None
+    offsides: int | None = None
+    pass_accuracy_final_third: float | None = None
 
 
 def _extrair_stats_equipa(stats_json: dict, lado: str) -> _StatsEquipa:
@@ -154,6 +162,28 @@ def _extrair_stats_equipa(stats_json: dict, lado: str) -> _StatsEquipa:
         stats.posse = _item_any_group(p_all, "Ball possession", "Possession", lado=lado)
         stats.passes = _item_any_group(p_all, "Passes", lado=lado)
         stats.passes_pct = _item_any_group(p_all, "Accurate passes", lado=lado)
+        # Nivel 3: stats avancadas
+        stats.passes_longos_total = _item_any_group(
+            p_all, "Long balls", "Long ball", lado=lado,
+        )
+        stats.passes_longos_pct = _item_any_group(
+            p_all, "Accurate long balls", "Long balls accuracy", lado=lado,
+        )
+        stats.duels_won_pct = _item_any_group(
+            p_all, "Ground duels", "Duels won", lado=lado,
+        )
+        stats.interceptions = _item_any_group(
+            p_all, "Interceptions", lado=lado,
+        )
+        stats.tackles_total = _item_any_group(
+            p_all, "Tackles", lado=lado,
+        )
+        stats.offsides = _item_any_group(
+            p_all, "Offsides", "Offside", lado=lado,
+        )
+        stats.pass_accuracy_final_third = _item_any_group(
+            p_all, "Final third entries", "Final third phase", lado=lado,
+        )
     return stats
 
 
@@ -242,6 +272,13 @@ def gravar_jogo_terminado(event_id: int) -> int:
         venue_raw = (v.get("stadium") or {}).get("name") if isinstance(v.get("stadium"), dict) else None
     venue = _unescape(venue_raw) if venue_raw else None
 
+    # Nivel 3: arbitro
+    arbitro_obj = ev.get("referee")
+    arbitro = None
+    if isinstance(arbitro_obj, dict):
+        arbitro_raw = arbitro_obj.get("name")
+        arbitro = _unescape(arbitro_raw) if arbitro_raw else None
+
     stats_h = _extrair_stats_equipa(stats_json, "home")
     stats_a = _extrair_stats_equipa(stats_json, "away")
 
@@ -286,6 +323,14 @@ def gravar_jogo_terminado(event_id: int) -> int:
             fouls_2t=stats.fouls_2t,
             dias_desde_jogo_anterior=dias,
             venue=venue,
+            arbitro=arbitro,
+            passes_longos_total=stats.passes_longos_total,
+            passes_longos_pct=stats.passes_longos_pct,
+            duels_won_pct=stats.duels_won_pct,
+            interceptions=stats.interceptions,
+            tackles_total=stats.tackles_total,
+            offsides=stats.offsides,
+            pass_accuracy_final_third=stats.pass_accuracy_final_third,
         )
 
     adic = 0

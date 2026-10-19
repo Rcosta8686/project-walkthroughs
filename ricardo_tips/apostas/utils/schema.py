@@ -451,6 +451,20 @@ class EstatisticaEquipaJogo(Base):
     # linhas antigas.
     venue: Mapped[str | None] = mapped_column(String(100), index=True)
 
+    # Nivel 3: stats detalhadas + arbitro no historico persistente.
+    # arbitro cruzar com `referencias.fator_arbitro` para explicar perfil
+    # de cards de arbitro em futuros alertas de cartoes do mesmo juiz.
+    arbitro: Mapped[str | None] = mapped_column(String(100), index=True)
+    # Stats avancadas (jogo inteiro). Nullable quando Sofascore nao
+    # devolveu (ligas pequenas / jogos antigos).
+    passes_longos_total: Mapped[int | None] = mapped_column(Integer)
+    passes_longos_pct: Mapped[float | None] = mapped_column(Float)
+    duels_won_pct: Mapped[float | None] = mapped_column(Float)
+    interceptions: Mapped[int | None] = mapped_column(Integer)
+    tackles_total: Mapped[int | None] = mapped_column(Integer)
+    offsides: Mapped[int | None] = mapped_column(Integer)
+    pass_accuracy_final_third: Mapped[float | None] = mapped_column(Float)
+
     # Meta
     data_ingestao: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, index=True
