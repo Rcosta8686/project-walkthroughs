@@ -446,6 +446,11 @@ class EstatisticaEquipaJogo(Base):
     jogo_europeu_antes: Mapped[bool | None] = mapped_column(Integer)  # 0/1
     minutos_jogados: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
 
+    # Fase 8: estadio (venue.name do raw event Sofascore). Preenchido
+    # em `gravar_jogo_terminado` e via `scripts/backfill_venue.py` para
+    # linhas antigas.
+    venue: Mapped[str | None] = mapped_column(String(100), index=True)
+
     # Meta
     data_ingestao: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, index=True

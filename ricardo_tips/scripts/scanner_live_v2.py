@@ -587,8 +587,8 @@ def _linha_live(mercado: str, lado: str, linha: float | None, estado) -> bool:
 
 
 def _ajustes_cerebro_para(estado):
-    """Fase 5: ajustes do cerebro a aplicar no predictor. None se nao ha
-    historico suficiente ou IDs em falta."""
+    """Fase 5+10: ajustes do cerebro a aplicar no predictor. None se nao
+    ha historico suficiente ou IDs em falta."""
     if estado.home_id is None or estado.away_id is None:
         return None
     try:
@@ -596,6 +596,8 @@ def _ajustes_cerebro_para(estado):
             estado.home_id, estado.away_id,
             minuto=estado.minuto,
             score_casa=estado.marcador_casa, score_fora=estado.marcador_fora,
+            missing_casa=getattr(estado, "missing_casa", None),
+            missing_fora=getattr(estado, "missing_fora", None),
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("cerebro falhou %s-%s: %s", estado.home_id, estado.away_id, exc)

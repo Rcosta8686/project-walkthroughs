@@ -234,6 +234,14 @@ def gravar_jogo_terminado(event_id: int) -> int:
                 or (ev.get("tournament") or {}).get("uniqueTournament", {}).get("name"))
     liga = _unescape(liga_raw) if liga_raw else None
 
+    # Fase 8: estadio
+    venue_raw = (ev.get("venue") or {}).get("name") if isinstance(ev.get("venue"), dict) else None
+    if not venue_raw:
+        # Fallback: alguns payloads tem venue.stadium.name
+        v = ev.get("venue") or {}
+        venue_raw = (v.get("stadium") or {}).get("name") if isinstance(v.get("stadium"), dict) else None
+    venue = _unescape(venue_raw) if venue_raw else None
+
     stats_h = _extrair_stats_equipa(stats_json, "home")
     stats_a = _extrair_stats_equipa(stats_json, "away")
 
@@ -277,6 +285,7 @@ def gravar_jogo_terminado(event_id: int) -> int:
             fouls_1t=stats.fouls_1t,
             fouls_2t=stats.fouls_2t,
             dias_desde_jogo_anterior=dias,
+            venue=venue,
         )
 
     adic = 0

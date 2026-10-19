@@ -79,6 +79,12 @@ class EstadoLive:
     # jogos de paises banidos para apostas (Russia, Belarus, etc.).
     pais: str | None = None
 
+    # Fase 10: ausencias pre-match (lesoes, suspensos, selecao). Cada
+    # entry e um dict {nome, tipo, razao}. Preenchido quando
+    # pregame-form respondeu com dados.
+    missing_casa: list[dict] = field(default_factory=list)
+    missing_fora: list[dict] = field(default_factory=list)
+
     # Expected goals acumulados
     xg_casa: float | None = None
     xg_fora: float | None = None
@@ -587,6 +593,19 @@ def _preencher_contexto_pre(estado: EstadoLive) -> None:
             estado.forma_fora = sofascore_contexto.obter_forma_recente(away_id) or {}
         except Exception as exc:  # noqa: BLE001
             log.debug("Forma fora %s falhou: %s", away_id, exc)
+
+    # Fase 10: ausencias (lesoes, suspensos, selecao). Nao bloqueante.
+    try:
+        from apostas.alertas.ausencias import obter_ausencias
+        aus_c, aus_f = obter_ausencias(estado.event_id)
+        estado.missing_casa = [
+            {"nome": a.nome, "tipo": a.tipo, "razao": a.razao} for a in aus_c
+        ]
+        estado.missing_fora = [
+            {"nome": a.nome, "tipo": a.tipo, "razao": a.razao} for a in aus_f
+        ]
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Ausencias %s falhou: %s", estado.event_id, exc)
 
 
 # ───────────────────────── Helpers de parsing ─────────────────────────

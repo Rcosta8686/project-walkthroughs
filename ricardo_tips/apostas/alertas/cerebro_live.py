@@ -84,8 +84,14 @@ def calcular_ajustes(
     score_casa: int | None = None,
     score_fora: int | None = None,
     agora: datetime | None = None,
+    missing_casa: list | None = None,
+    missing_fora: list | None = None,
 ) -> Optional[AjustesCerebro]:
     """Calcula ajustes do cerebro para 1 jogo.
+
+    `missing_casa` e `missing_fora` sao listas opcionais de dicts com
+    {"nome","tipo","razao"} (Fase 10). Afecta `lam_shots_<lado>_mult`
+    quando ha pelo menos 3 ausencias claras do mesmo lado.
 
     Devolve None quando o confronto nao tem dados suficientes (<3 jogos
     numa das equipas). Nesse caso o predictor funciona sem ajustes
@@ -181,6 +187,30 @@ def calcular_ajustes(
                 aj.lam_shots_fora_mult *= 0.95
                 aj.razoes.append(f"fadiga {res.nome_fora} → shots-5%")
             aj.notas.append(alerta)
+
+    # Fase 10: ausencias. 3+ missing confirmados do mesmo lado → -5% shots
+    # dessa equipa; 5+ → -8% golos tambem (equipa descompensada).
+    def _n_missing_confirmados(lst):
+        if not lst:
+            return 0
+        return sum(1 for a in lst if (a.get("tipo") or "").lower() == "missing")
+
+    nc = _n_missing_confirmados(missing_casa)
+    nf = _n_missing_confirmados(missing_fora)
+    if nc >= 3:
+        aj.lam_shots_casa_mult *= 0.95
+        aj.razoes.append(f"casa {nc} ausencias → shots-5%")
+        aj.notas.append(f"🚑 Casa: {nc} ausencias confirmadas")
+    if nc >= 5:
+        aj.lam_golos_mult *= 0.95
+        aj.razoes.append(f"casa {nc} ausencias → golos-5%")
+    if nf >= 3:
+        aj.lam_shots_fora_mult *= 0.95
+        aj.razoes.append(f"fora {nf} ausencias → shots-5%")
+        aj.notas.append(f"🚑 Fora: {nf} ausencias confirmadas")
+    if nf >= 5:
+        aj.lam_golos_mult *= 0.95
+        aj.razoes.append(f"fora {nf} ausencias → golos-5%")
 
     # Cap duro: nao deixar os multiplicadores saltarem alem destes limites
     aj.lam_golos_mult = max(0.75, min(1.30, aj.lam_golos_mult))
