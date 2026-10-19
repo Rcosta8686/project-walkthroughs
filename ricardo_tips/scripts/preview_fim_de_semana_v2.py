@@ -32,17 +32,30 @@ from apostas.relatorios.preview import (  # noqa: E402
 
 
 def _janela_fim_de_semana(agora: datetime) -> tuple[datetime, datetime]:
-    """De agora ate segunda 00:00 UTC. Se agora e sabado ou domingo,
-    janela cobre o resto do dia e ate seg 00:00."""
-    # Dias ate domingo (inclusive)
-    # weekday(): seg=0, ter=1, ... dom=6
-    diff_para_segunda = (0 - agora.weekday()) % 7
-    if diff_para_segunda == 0 and agora.hour >= 12:
-        diff_para_segunda = 7  # Se segunda ja de tarde, apanha a semana seguinte
-    fim = (agora + timedelta(days=diff_para_segunda)).replace(
-        hour=0, minute=0, second=0, microsecond=0,
-    )
-    inicio = agora.replace(minute=0, second=0, microsecond=0)
+    """Janela do PROXIMO (ou actual) fim-de-semana.
+
+    weekday(): seg=0, ter=1, qua=2, qui=3, sex=4, sab=5, dom=6.
+
+    Regra:
+      - Sex, sab, dom → janela comeca agora e vai ate seg 00:00.
+      - Seg a qui → janela vai de proxima sex 00:00 ate proxima seg 00:00.
+    """
+    wd = agora.weekday()
+    if wd >= 4:  # sex, sab, dom
+        inicio = agora.replace(minute=0, second=0, microsecond=0)
+        # dias ate segunda-feira seguinte (nao incluindo hoje se for sex)
+        dias_ate_seg = (7 - wd) % 7 if wd != 0 else 7
+        # Correcao: para sex (4), queremos 3 dias; para sab (5), 2; para dom (6), 1
+        dias_ate_seg = 7 - wd
+        fim = (agora + timedelta(days=dias_ate_seg)).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+    else:  # seg (0), ter (1), qua (2), qui (3)
+        dias_ate_sex = 4 - wd
+        inicio = (agora + timedelta(days=dias_ate_sex)).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        fim = inicio + timedelta(days=3)  # sex → seg
     return inicio, fim
 
 
