@@ -528,10 +528,10 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             log.warning("Gravar projecao %s falhou: %s", mercado, exc)
 
         if enviar_telegram:
-            # Voz dos treinadores — passa raw live stats para ter observacao
-            # NOW (ritmo de remates/cantos/cards vs baseline). Silencia se as
-            # fichas tiverem <5 jogos.
+            # Voz dos treinadores + sintese do mega-cerebro.
             extras = ""
+            yel_c_live = int(getattr(estado, "yellow_cards_casa", 0) or 0)
+            yel_f_live = int(getattr(estado, "yellow_cards_fora", 0) or 0)
             try:
                 from apostas.alertas.analise_treinador import (
                     linhas_formatadas_para_telegram,
@@ -544,15 +544,50 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                         score_fora=int(estado.marcador_fora or 0),
                         sot_c=sot_c, sot_f=sot_f,
                         cantos_c=can_c, cantos_f=can_f,
-                        cards_c=int(getattr(estado, "yellow_cards_casa", 0) or 0),
-                        cards_f=int(getattr(estado, "yellow_cards_fora", 0) or 0),
+                        cards_c=yel_c_live, cards_f=yel_f_live,
                     )
             except Exception as exc:  # noqa: BLE001
                 log.debug("Treinador na projecao falhou: %s", exc)
+            # Mega-cerebro: 1 linha de sintese (silencio se sinal fraco)
+            try:
+                from apostas.alertas.mega_cerebro import linha_para_telegram as mega_linha
+                if estado.home_id and estado.away_id:
+                    extras += mega_linha(
+                        home_id=int(estado.home_id),
+                        away_id=int(estado.away_id),
+                        minuto=minuto,
+                        score_casa=int(estado.marcador_casa or 0),
+                        score_fora=int(estado.marcador_fora or 0),
+                        sot_c=sot_c, sot_f=sot_f,
+                        cantos_c=can_c, cantos_f=can_f,
+                        cards_c=yel_c_live, cards_f=yel_f_live,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Mega-cerebro na projecao falhou: %s", exc)
+            # ROI historico do mercado+liga
+            roi_line = ""
+            try:
+                from apostas.alertas.historico_alertas import (
+                    agregar_por_mercado, carregar_perfis,
+                )
+                from apostas.utils.config import project_root
+                csv_path = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
+                perfis = carregar_perfis(csv_path)
+                if perfis:
+                    merc_key = "sot" if mercado == "sot" else mercado
+                    agg = agregar_por_mercado(perfis).get((estado.liga, merc_key))
+                    if agg and agg.n_resolvidos >= 10 and agg.roi is not None:
+                        sinal = "+" if agg.roi >= 0 else ""
+                        roi_line = f"📊 {agg.n_resolvidos} alertas · ROI {sinal}{agg.roi:.1f}%"
+                        if agg.clv_medio is not None:
+                            s2 = "+" if agg.clv_medio >= 0 else ""
+                            roi_line += f" · CLV {s2}{agg.clv_medio:.1f}%"
+            except Exception as exc:  # noqa: BLE001
+                log.debug("ROI historico na projecao falhou: %s", exc)
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
-                extras=extras,
+                extras=extras, roi_line=roi_line,
             )
             try:
                 telegram_cliente().enviar(msg)

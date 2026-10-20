@@ -306,11 +306,14 @@ def formatar_telegram(
     score_fora: int,
     *,
     extras: str = "",
+    roi_line: str = "",
 ) -> str:
     """Mensagem Telegram compacta.
 
-    `extras`: texto opcional a inserir ANTES da nota final (ex: linhas de
-    voz dos treinadores). Pode comecar com '\\n'.
+    `extras`: texto opcional a inserir ANTES da nota final (vozes dos
+      treinadores, mega-cerebro). Pode comecar com '\\n'.
+    `roi_line`: 1 linha curta com ROI/CLV historico do mercado+liga
+      (ex: '📊 42 alertas · ROI +12.4% · CLV +2.1%'). Vazio se nao ha.
     """
     nome_merc = _NOMES_MERCADO.get(proj.mercado, proj.mercado)
     emoji = _EMOJI_MERCADO.get(proj.mercado, "📊")
@@ -332,6 +335,8 @@ def formatar_telegram(
             f"{nome_fora}: {proj.valor_atual_fora:.0f}→"
             f"{proj.projecao_final_fora:.1f}"
         )
+    if roi_line:
+        linhas.append(roi_line)
     if proj.aviso_fadiga:
         linhas.append(f"⚠ {proj.aviso_fadiga}")
     msg = "\n".join(linhas)
