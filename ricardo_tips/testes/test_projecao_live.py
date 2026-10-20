@@ -153,8 +153,40 @@ def test_formatar_telegram_contem_essencial():
     assert "Genoa" in msg
     assert "1-0" in msg
     assert "Remates a baliza" in msg
-    assert "over @" in msg
-    assert "under @" in msg
+    assert "projeccao" in msg
+    assert "⭐" in msg
+    assert "🎯" in msg  # emoji SoT no topo e footer
+    assert "Analista Projecao" in msg
+    # Mudanca: nao devem aparecer as linhas de over/under por linha
+    assert "over @" not in msg
+    assert "under @" not in msg
+    # Mudanca: nao deve ter a linha duplicada do estado
+    assert "reduz, nao abre" not in msg
+
+
+def test_formatar_telegram_com_extras():
+    """Extras (vozes de treinadores) sao injectados antes da nota final."""
+    proj = pl.projetar(
+        mercado="cantos",
+        minuto=55,
+        score_casa=1,
+        score_fora=0,
+        valor_atual_casa=3,
+        valor_atual_fora=2,
+        lam_rest_casa=2.0,
+        lam_rest_fora=2.0,
+        nome_casa="A",
+        nome_fora="B",
+    )
+    msg = pl.formatar_telegram(
+        proj, "A", "B", 1, 0,
+        extras="\n🎙 Treinador A: a ganhar 1 ao 55'",
+    )
+    assert "🎙 Treinador A" in msg
+    # Extras aparecem antes da nota final
+    pos_extras = msg.index("🎙 Treinador A")
+    pos_nota = msg.index("So aposta")
+    assert pos_extras < pos_nota
 
 
 def test_deve_projetar_dispara_so_uma_vez():
@@ -212,12 +244,22 @@ def test_tem_valor_actionavel_linha_media_devolve_true():
     assert pl.tem_valor_actionavel(proj)
 
 
-def test_contexto_estado_mensagens():
-    assert pl._contexto_estado(0, 0, "A", "B") is None
-    assert pl._contexto_estado(1, 0, "A", "B") == "🏠 A a ganhar 1-0 (reduz, nao abre)"
-    assert pl._contexto_estado(0, 1, "A", "B") == "✈ B a ganhar 1-0 (reduz, nao abre)"
-    assert "A a ganhar por 2" in pl._contexto_estado(2, 0, "A", "B")
-    assert "Empate 1-1" in pl._contexto_estado(1, 1, "A", "B")
+def test_estrelas_projecao():
+    """Estrelas 1-3 consoante o numero de linhas accionaveis (0.25-0.75)."""
+    proj = pl.projetar(
+        mercado="cantos",
+        minuto=55,
+        score_casa=0,
+        score_fora=0,
+        valor_atual_casa=3,
+        valor_atual_fora=3,
+        lam_rest_casa=2.0,
+        lam_rest_fora=2.0,
+        nome_casa="A",
+        nome_fora="B",
+    )
+    n = pl._estrelas_projecao(proj)
+    assert 1 <= n <= 3
 
 
 def test_valor_actual_ja_passou_linha():

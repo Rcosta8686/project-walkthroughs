@@ -7,10 +7,12 @@ from apostas.alertas import telegram_live
 
 
 class _Baseline:
-    def __init__(self, remates=12.0, posse_pct=55, cards_amarelos=2.5):
+    def __init__(self, remates=12.0, posse_pct=55, cards_amarelos=2.5,
+                 cantos=5.0):
         self.remates = remates
         self.posse_pct = posse_pct
         self.cards_amarelos = cards_amarelos
+        self.cantos = cantos
 
 
 class _PorResultado:

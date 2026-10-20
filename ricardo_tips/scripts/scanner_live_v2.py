@@ -528,9 +528,31 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             log.warning("Gravar projecao %s falhou: %s", mercado, exc)
 
         if enviar_telegram:
+            # Voz dos treinadores — passa raw live stats para ter observacao
+            # NOW (ritmo de remates/cantos/cards vs baseline). Silencia se as
+            # fichas tiverem <5 jogos.
+            extras = ""
+            try:
+                from apostas.alertas.analise_treinador import (
+                    linhas_formatadas_para_telegram,
+                )
+                if estado.home_id and estado.away_id:
+                    extras = linhas_formatadas_para_telegram(
+                        int(estado.home_id), int(estado.away_id),
+                        minuto=minuto,
+                        score_casa=int(estado.marcador_casa or 0),
+                        score_fora=int(estado.marcador_fora or 0),
+                        sot_c=sot_c, sot_f=sot_f,
+                        cantos_c=can_c, cantos_f=can_f,
+                        cards_c=int(getattr(estado, "yellow_cards_casa", 0) or 0),
+                        cards_f=int(getattr(estado, "yellow_cards_fora", 0) or 0),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Treinador na projecao falhou: %s", exc)
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
+                extras=extras,
             )
             try:
                 telegram_cliente().enviar(msg)

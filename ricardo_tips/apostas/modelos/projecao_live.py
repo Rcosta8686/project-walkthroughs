@@ -277,21 +277,25 @@ _NOMES_MERCADO = {
 }
 
 
-def _contexto_estado(score_casa: int, score_fora: int,
-                      nome_casa: str, nome_fora: str) -> str | None:
-    """Nota de 1 linha sobre o estado do jogo. None se empate inicial."""
-    diff = score_casa - score_fora
-    if diff == 0:
-        if score_casa == 0:
-            return None  # 0-0, nada a dizer
-        return f"⚽ Empate {score_casa}-{score_fora}"
-    if diff >= 2:
-        return f"🏠 {nome_casa} a ganhar por {diff} ({score_casa}-{score_fora})"
-    if diff == 1:
-        return f"🏠 {nome_casa} a ganhar 1-0 (reduz, nao abre)"
-    if diff == -1:
-        return f"✈ {nome_fora} a ganhar 1-0 (reduz, nao abre)"
-    return f"✈ {nome_fora} a ganhar por {-diff} ({score_casa}-{score_fora})"
+_EMOJI_MERCADO = {
+    "sot": "🎯",
+    "cantos": "🚩",
+    "remates": "💥",
+}
+
+
+def _estrelas_projecao(proj: ProjecaoResumo) -> int:
+    """Numero de estrelas (1-3) baseado em quantas linhas sao accionaveis.
+
+    Uma linha e "accionavel" se a probabilidade over cai dentro de uma
+    zona onde a casa provavelmente estica a odd em algum sentido
+    (0.25 - 0.75). 3 linhas accionaveis = 3 estrelas. 1 linha = 1 estrela.
+    Minimo 1 (a projeccao em si ja passou o filtro tem_valor_actionavel).
+    """
+    if not proj.linhas_total:
+        return 1
+    n = sum(1 for lo in proj.linhas_total if 0.25 <= lo.prob_over <= 0.75)
+    return max(1, min(3, n))
 
 
 def formatar_telegram(
@@ -300,25 +304,25 @@ def formatar_telegram(
     nome_fora: str,
     score_casa: int,
     score_fora: int,
+    *,
+    extras: str = "",
 ) -> str:
-    """Mensagem Telegram compacta."""
+    """Mensagem Telegram compacta.
+
+    `extras`: texto opcional a inserir ANTES da nota final (ex: linhas de
+    voz dos treinadores). Pode comecar com '\\n'.
+    """
     nome_merc = _NOMES_MERCADO.get(proj.mercado, proj.mercado)
+    emoji = _EMOJI_MERCADO.get(proj.mercado, "📊")
+    estrelas_str = "⭐" * _estrelas_projecao(proj)
+
     linhas = [
-        f"📊 *PROJECAO {proj.minuto}'* | {nome_casa} {score_casa}-{score_fora} {nome_fora}",
+        f"{estrelas_str} {emoji} *PROJECAO {proj.minuto}'* "
+        f"| {nome_casa} {score_casa}-{score_fora} {nome_fora}",
+        f"*{nome_merc}:* {proj.valor_atual_total:.0f} → "
+        f"*{proj.projecao_final_total:.1f}* (projeccao)",
     ]
-    ctx = _contexto_estado(score_casa, score_fora, nome_casa, nome_fora)
-    if ctx:
-        linhas.append(ctx)
-    linhas.extend([
-        f"*{nome_merc}* — TOTAL DO JOGO",
-        f"  agora {proj.valor_atual_total:.0f} → projeccao final {proj.projecao_final_total}",
-    ])
-    for lo in proj.linhas_total:
-        linhas.append(
-            f"   {lo.linha}: over @{lo.over_justa:.2f} | "
-            f"under @{lo.under_justa:.2f}"
-        )
-    # Por equipa (so mostra se as projecoes das 2 equipas sao >= 0.5)
+    # Split por equipa quando as projecoes nao sao insignificantes
     if (proj.linha_casa and proj.linha_fora
             and (proj.projecao_final_casa >= 0.5
                  or proj.projecao_final_fora >= 0.5)):
@@ -329,11 +333,14 @@ def formatar_telegram(
             f"{proj.projecao_final_fora:.1f}"
         )
     if proj.aviso_fadiga:
-        linhas.append(f"  ⚠ {proj.aviso_fadiga}")
-    linhas.append(
-        "_So aposta se a casa paga MAIS do que a odd justa._"
-    )
-    return "\n".join(linhas)
+        linhas.append(f"⚠ {proj.aviso_fadiga}")
+    msg = "\n".join(linhas)
+    if extras:
+        # Garante exactamente 1 \n entre o corpo e os extras
+        msg = msg + (extras if extras.startswith("\n") else "\n" + extras)
+    msg += "\n_So aposta se a casa paga MAIS do que a odd justa._"
+    msg += f"\nAnalista Projecao · {emoji}"
+    return msg
 
 
 # ─────────── Filtro: projeccao e informativa? ─────────────────────────────

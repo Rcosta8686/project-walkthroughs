@@ -145,10 +145,12 @@ def test_texto_mostra_a_perder():
 # ─── gerar_para_ambas ───────────────────────────────────────────────
 
 class _Baseline:
-    def __init__(self, remates=12.0, posse_pct=55, cards_amarelos=2.5):
+    def __init__(self, remates=12.0, posse_pct=55, cards_amarelos=2.5,
+                 cantos=5.0):
         self.remates = remates
         self.posse_pct = posse_pct
         self.cards_amarelos = cards_amarelos
+        self.cantos = cantos
 
 
 class _PorResultado:
@@ -224,3 +226,77 @@ def test_gerar_para_ambas_devolve_none_quando_confronto_e_none():
     )
     assert voz_c is None
     assert voz_f is None
+
+
+# ─── Variedade de texto ─────────────────────────────────────────────
+
+def test_variantes_mudam_entre_equipas():
+    """Mesma postura, nomes diferentes devem (frequentemente) escolher
+    variantes diferentes. Nao ha garantia 100% mas numa amostra grande
+    aparece mais que uma variante."""
+    textos = set()
+    for nome in [f"Equipa{i}" for i in range(10)]:
+        r = analise_treinador(
+            nome, diff=1, minuto=65, jogos_lidos=10, posse_media=50,
+        )
+        textos.add(r.texto)
+    assert len(textos) >= 2  # pelo menos 2 variantes aparecem
+
+
+def test_variantes_mudam_ao_longo_do_jogo():
+    """Mesma equipa, minutos de decadas diferentes podem mudar frase."""
+    textos = set()
+    # Testa minutos de varias decadas - devem produzir pelo menos 1 variante,
+    # possivelmente mais consoante o hash.
+    for minuto in [10, 25, 35, 50, 65, 75]:
+        r = analise_treinador(
+            "Benfica", diff=0, minuto=minuto, jogos_lidos=10, posse_media=55,
+        )
+        textos.add(r.texto)
+    assert len(textos) >= 1  # smoke test — nao crasha, produz texto
+
+
+# ─── Observacao NOW ─────────────────────────────────────────────────
+
+def test_obs_now_remates_acima_do_normal():
+    """A pressionar — remates muito acima do esperado."""
+    r = analise_treinador(
+        "Dortmund", diff=-1, minuto=60, jogos_lidos=10,
+        posse_media=50,
+        remates_media=10.0,  # media 10 por 90
+        remates_atuais=15,   # a 60' ja levou 15 (esperado ~6.7)
+    )
+    assert "pressionar" in r.texto or "acima do normal" in r.texto
+
+
+def test_obs_now_jogo_preso():
+    """Poucos remates em jogo avancado."""
+    r = analise_treinador(
+        "Hertha", diff=0, minuto=60, jogos_lidos=10,
+        posse_media=48,
+        remates_media=12.0,
+        remates_atuais=2,  # muito baixo
+    )
+    assert "jogo preso" in r.texto or "preso" in r.texto
+
+
+def test_obs_now_amarelos_demais():
+    r = analise_treinador(
+        "Atleti", diff=0, minuto=60, jogos_lidos=10,
+        posse_media=50,
+        cards_media=2.0,
+        cards_atuais=5,  # 5 amarelos a 60' quando media e 2 por jogo
+    )
+    assert "amarelos acima do normal" in r.texto
+
+
+def test_obs_now_silencia_sem_baseline():
+    """Sem baseline de remates/cantos/cards, nao arrisca observacao."""
+    r = analise_treinador(
+        "X", diff=0, minuto=60, jogos_lidos=10, posse_media=50,
+        remates_atuais=5, cantos_atuais=3,
+    )
+    # Nao deve ter " · " de observacao NOW (pode ter o tag de perfil)
+    # Verificar que nao tem palavras que requerem baseline
+    assert "pressionar" not in r.texto
+    assert "jogo preso" not in r.texto

@@ -70,6 +70,15 @@ def _fase_do_jogo(minuto: int) -> str:
     return "⏱ Descontos"
 
 
+def _int_or_none(v):
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _linhas_treinador(s: dict) -> str:
     """Analise 'ponto de vista do treinador' das duas equipas.
 
@@ -93,22 +102,22 @@ def _linhas_treinador(s: dict) -> str:
     except (ValueError, AttributeError):
         return ""
     try:
-        from apostas.alertas.analise_treinador import gerar_para_ambas
-        voz_c, voz_f = gerar_para_ambas(
+        from apostas.alertas.analise_treinador import (
+            linhas_formatadas_para_telegram,
+        )
+        return linhas_formatadas_para_telegram(
             int(home_id), int(away_id),
             minuto=minuto, score_casa=score_c, score_fora=score_f,
+            sot_c=_int_or_none(s.get("shots_on_target_c")),
+            sot_f=_int_or_none(s.get("shots_on_target_f")),
+            cantos_c=_int_or_none(s.get("corners_c")),
+            cantos_f=_int_or_none(s.get("corners_f")),
+            cards_c=_int_or_none(s.get("yellows_c")),
+            cards_f=_int_or_none(s.get("yellows_f")),
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("Analise treinador falhou: %s", exc)
         return ""
-    linhas = []
-    if voz_c is not None:
-        linhas.append(f"🎙 {voz_c.texto}")
-    if voz_f is not None:
-        linhas.append(f"🎙 {voz_f.texto}")
-    if not linhas:
-        return ""
-    return "\n" + "\n".join(linhas)
 
 
 def _emoji_mercado(mercado: str) -> str:
@@ -237,6 +246,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
                 f"_Procura esta odd. Se bater o alvo, mete._"
                 f"{apostei_line}"
+                f"\nAnalista Narrativo · {_emoji_mercado(mercado)}"
             )
         else:
             try:
@@ -263,6 +273,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"\n"
                 f"{link_line}"
                 f"{apostei_line}"
+                f"\nAnalista EV · {_emoji_mercado(mercado)}"
             )
         cliente().enviar(texto)
     except Exception as exc:  # noqa: BLE001
