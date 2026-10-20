@@ -32,7 +32,7 @@ if (-not (Test-Path $VenvPy)) {
     exit 1
 }
 
-# ───────────── Lista de tasks ─────────────
+# ------------- Lista de tasks -------------
 # Cada entrada:
 #   Name:       nome final no Task Scheduler (ja com prefixo)
 #   Script:     ficheiro .py sob scripts\
@@ -112,9 +112,9 @@ $Tasks = @(
 )
 
 
-# ───────────── Remover modo ─────────────
+# ============ Remover modo ============
 if ($Remover) {
-    Write-Host "`n🗑  Removendo tasks RicardoTips_*...`n"
+    Write-Host "`n[REMOVER] Tasks RicardoTips_*...`n"
     foreach ($t in $Tasks) {
         $name = $t.Name
         $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
@@ -125,13 +125,13 @@ if ($Remover) {
             Write-Host "  (nao existia): $name"
         }
     }
-    Write-Host "`n✅ Remocao OK.`n"
+    Write-Host "`n[OK] Remocao completa.`n"
     exit 0
 }
 
 
-# ───────────── Criar/actualizar ─────────────
-Write-Host "`n⚙  Instalar tasks RicardoTips em $ProjectRoot`n"
+# ============ Criar/actualizar ============
+Write-Host "`n[INSTALAR] Tasks RicardoTips em $ProjectRoot`n"
 
 function New-RicardoTrigger {
     param($TaskDef)
@@ -148,15 +148,15 @@ function New-RicardoTrigger {
                 -Weekly -DaysOfWeek $TaskDef.DayOfWeek -At $TaskDef.Time
         }
         "Monthly" {
-            # Monthly trigger — PowerShell nao tem helper directo, usamos CIM
+            # Monthly trigger - PowerShell nao tem helper directo, usamos CIM
             $trigger = New-ScheduledTaskTrigger -Daily -At $TaskDef.Time
             # Hack: Daily + ByDays filter via CIM instance mais a frente.
-            # Para simplicidade usamos Daily — na pratica so corre quando
+            # Para simplicidade usamos Daily - na pratica so corre quando
             # for dia 1 (filtro no proprio script).
             return $trigger
         }
         "OnceEvery" {
-            # Repeat trigger — comeca agora, repete cada N minutos
+            # Repeat trigger - comeca agora, repete cada N minutos
             $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
                 -RepetitionInterval (New-TimeSpan -Minutes $TaskDef.IntervalMinutes) `
                 -RepetitionDuration ([TimeSpan]::MaxValue)
@@ -169,7 +169,7 @@ foreach ($t in $Tasks) {
     $name = $t.Name
     $scriptPath = Join-Path $Scripts $t.Script
     if (-not (Test-Path $scriptPath)) {
-        Write-Warning "  SKIP $name — nao encontrou $scriptPath"
+        Write-Warning "  SKIP $name - nao encontrou $scriptPath"
         continue
     }
 
@@ -207,11 +207,11 @@ foreach ($t in $Tasks) {
         -Action $action `
         -Trigger $trigger `
         -Settings $settings `
-        -Description "Ricardo Tips — $($t.Trigger)" `
+        -Description "Ricardo Tips - $($t.Trigger)" `
         -RunLevel Limited | Out-Null
 
-    Write-Host "  ✓ instalada: $name ($($t.Trigger))"
+    Write-Host "  [+] instalada: $name ($($t.Trigger))"
 }
 
-Write-Host "`n✅ Tasks instaladas. Ver no Task Scheduler → RicardoTips_*"
+Write-Host "`n[OK] Tasks instaladas. Ver no Task Scheduler -> RicardoTips_*"
 Write-Host "   Para remover tudo: .\scripts\instalar_tasks_windows.ps1 -Remover`n"
