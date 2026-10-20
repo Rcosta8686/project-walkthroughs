@@ -654,6 +654,9 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
             "resultado": "",
             "lucro": "",
             "resolvido_em": "",
+            # Nao vao para CSV, so para a mensagem Telegram
+            "home_id": estado.home_id,
+            "away_id": estado.away_id,
         })
 
     for bm in odds_json.get("bookmakers", []):
@@ -929,6 +932,8 @@ def _sinal_para_sugestao(estado, sinal) -> dict:
         # Nao vai para CSV mas e passado ao Telegram em memoria:
         "racional_str": racional_str,
         "titulo": sinal.titulo,
+        "home_id": estado.home_id,
+        "away_id": estado.away_id,
     }
 
 

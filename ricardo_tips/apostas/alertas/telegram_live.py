@@ -70,6 +70,47 @@ def _fase_do_jogo(minuto: int) -> str:
     return "⏱ Descontos"
 
 
+def _linhas_treinador(s: dict) -> str:
+    """Analise 'ponto de vista do treinador' das duas equipas.
+
+    Devolve 0, 1 ou 2 linhas prefixadas com '🎙 Treinador ...'. Fica em
+    silencio se nao houver IDs no sinal ou se as fichas ainda tiverem
+    menos de 5 jogos (dados ruidosos demais).
+    """
+    home_id = s.get("home_id")
+    away_id = s.get("away_id")
+    if not home_id or not away_id:
+        return ""
+    try:
+        minuto = int(s.get("minuto") or 0)
+    except (TypeError, ValueError):
+        return ""
+    marcador = str(s.get("marcador") or "")
+    try:
+        parte_c, parte_f = marcador.split("-", 1)
+        score_c = int(parte_c.strip())
+        score_f = int(parte_f.strip())
+    except (ValueError, AttributeError):
+        return ""
+    try:
+        from apostas.alertas.analise_treinador import gerar_para_ambas
+        voz_c, voz_f = gerar_para_ambas(
+            int(home_id), int(away_id),
+            minuto=minuto, score_casa=score_c, score_fora=score_f,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Analise treinador falhou: %s", exc)
+        return ""
+    linhas = []
+    if voz_c is not None:
+        linhas.append(f"🎙 {voz_c.texto}")
+    if voz_f is not None:
+        linhas.append(f"🎙 {voz_f.texto}")
+    if not linhas:
+        return ""
+    return "\n" + "\n".join(linhas)
+
+
 def _emoji_mercado(mercado: str) -> str:
     return {
         "golos": "⚽",
@@ -157,6 +198,9 @@ def enviar_sugestao_live(s: dict) -> None:
         except Exception as exc:  # noqa: BLE001
             log.debug("Historico perfil falhou: %s", exc)
 
+        # Treinadores: 1 linha por equipa com o que o mister quer agora
+        treinadores_line = _linhas_treinador(s)
+
         # M19: melhor casa suica (vem de filtros_mercado via scanner)
         melhor_casa_line = ""
         outras_casas_str = s.get("outras_casas") or ""
@@ -187,6 +231,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
                 f"{historico_line}"
+                f"{treinadores_line}"
                 f"{racional_section}"
                 f"\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
@@ -208,6 +253,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
                 f"{historico_line}"
+                f"{treinadores_line}"
                 f"\n"
                 f"\n"
                 f"*Aposta:* {aposta_fmt}\n"

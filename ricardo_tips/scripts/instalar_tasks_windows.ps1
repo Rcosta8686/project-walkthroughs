@@ -156,10 +156,12 @@ function New-RicardoTrigger {
             return $trigger
         }
         "OnceEvery" {
-            # Repeat trigger - comeca agora, repete cada N minutos
+            # Repeat trigger - comeca agora, repete cada N minutos durante
+            # 10 anos (Windows nao aceita [TimeSpan]::MaxValue — ultrapassa
+            # intervalo interno P99999999DT23H59M59S).
             $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
                 -RepetitionInterval (New-TimeSpan -Minutes $TaskDef.IntervalMinutes) `
-                -RepetitionDuration ([TimeSpan]::MaxValue)
+                -RepetitionDuration (New-TimeSpan -Days 3650)
             return $trigger
         }
     }
