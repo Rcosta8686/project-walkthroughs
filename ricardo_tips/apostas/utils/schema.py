@@ -21,6 +21,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from apostas.utils.tempo import agora_utc
+
 
 class Base(DeclarativeBase):
     pass
@@ -161,7 +163,7 @@ class OddsCorrentes(Base):
     odd: Mapped[float] = mapped_column(Float, nullable=False)
     casa_de_apostas: Mapped[str] = mapped_column(String(30), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
 
 
@@ -185,7 +187,7 @@ class EstadoLiveSnapshot(Base):
     event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     jogo_id: Mapped[int | None] = mapped_column(ForeignKey("jogos.id"), index=True)
     ts: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
     liga: Mapped[str | None] = mapped_column(String(80))
     home: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -248,7 +250,7 @@ class Lesao(Base):
     tipo: Mapped[str | None] = mapped_column(String(100))  # joelho | suspensão | dúvida
     data_estimada_regresso: Mapped[datetime | None] = mapped_column(DateTime)
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
 
 
@@ -266,7 +268,7 @@ class Sugestao(Base):
     odd_referencia: Mapped[float] = mapped_column(Float, nullable=False)
     ev: Mapped[float] = mapped_column(Float, nullable=False)
     enviado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
     estado: Mapped[str] = mapped_column(String(20), default="pendente")  # pendente|aceite|ignorado
 
@@ -284,7 +286,7 @@ class ApostaReal(Base):
     odd_executada: Mapped[float] = mapped_column(Float, nullable=False)
     casa_de_apostas: Mapped[str] = mapped_column(String(30), nullable=False)
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
     # ganho | perdido | reembolso | pendente
     resultado: Mapped[str | None] = mapped_column(String(10))
@@ -315,7 +317,7 @@ class OddsSnapshotPrelive(Base):
     casa: Mapped[str] = mapped_column(String(40), nullable=False)
     momento: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
 
     __table_args__ = (
@@ -376,7 +378,7 @@ class EquipaPerfil(Base):
     # Meta
     n_jogos_analisados: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     data_atualizacao: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
 
     # Notas livres (padroes nao-numericos)
@@ -467,7 +469,7 @@ class EstatisticaEquipaJogo(Base):
 
     # Meta
     data_ingestao: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
     fonte: Mapped[str] = mapped_column(String(30), nullable=False, default="sofascore")
 
@@ -542,7 +544,7 @@ class EstatisticaJogadorJogo(Base):
     minuto_vermelho: Mapped[int | None] = mapped_column(Integer)
 
     data_ingestao: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
 
     __table_args__ = (
@@ -588,7 +590,7 @@ class ProjecaoLive(Base):
     odds_justas_json: Mapped[str | None] = mapped_column(Text)
 
     data_envio: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
 
     __table_args__ = (
@@ -627,7 +629,7 @@ class FalhaAlerta(Base):
     categoria: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     nota: Mapped[str | None] = mapped_column(Text)
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
 
 
@@ -645,7 +647,7 @@ class Hipotese(Base):
     titulo: Mapped[str] = mapped_column(String(200), nullable=False)
     descricao: Mapped[str] = mapped_column(Text, nullable=False)
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
     # ativa | confirmada | refutada | inconclusiva
     estado: Mapped[str] = mapped_column(String(20), nullable=False, default="ativa")
@@ -682,7 +684,7 @@ class ApostaRealLive(Base):
     stake: Mapped[float] = mapped_column(Float, nullable=False)
     prob_modelo: Mapped[float | None] = mapped_column(Float)
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow
+        DateTime, nullable=False, default=agora_utc
     )
     # pendente | W | L | push
     resultado: Mapped[str | None] = mapped_column(String(10))
@@ -724,7 +726,7 @@ class SinalMegaCerebro(Base):
     # Classificacao da heuristica (razao → tag curta, para agregar relatorio)
     heuristica: Mapped[str] = mapped_column(String(30), nullable=False, default="?")
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True
+        DateTime, nullable=False, default=agora_utc, index=True
     )
     # Resolucao: pendente | acerto | falha | nao_resolvido
     resolvido: Mapped[str] = mapped_column(
@@ -746,7 +748,7 @@ class BancaRegisto(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     data: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, index=True, unique=True
+        DateTime, nullable=False, default=agora_utc, index=True, unique=True
     )
     saldo_chf: Mapped[float] = mapped_column(Float, nullable=False)
     apostas_abertas_stake: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

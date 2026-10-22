@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.alertas import analise_softs  # noqa: E402
 from apostas.utils.config import project_root  # noqa: E402
@@ -108,7 +109,7 @@ def main() -> None:
         writer = csv.DictWriter(fp, fieldnames=CSV_COLUNAS)
         if novo:
             writer.writeheader()
-        ts = datetime.utcnow().isoformat()
+        ts = agora_utc().isoformat()
         for s in sugestoes:
             key = (s.jogo.id, s.sugestao.mercado, s.sugestao.lado, s.casa_soft)
             if key in existentes:

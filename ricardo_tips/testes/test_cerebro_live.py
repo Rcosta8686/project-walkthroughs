@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from apostas.alertas import cerebro_live
+from apostas.utils.tempo import agora_utc
 
 
 # ─── Helper: mock ResultadoConfronto ───────────────────────────────
@@ -135,7 +136,7 @@ def test_multiplos_padroes_acumulam_com_cap():
 
 
 def test_cache_evita_chamada_duplicada():
-    agora = datetime.utcnow()
+    agora = agora_utc()
     with patch(
         "apostas.alertas.confronto.analisar_confronto",
         return_value=_mock_confronto(),
@@ -147,7 +148,7 @@ def test_cache_evita_chamada_duplicada():
 
 
 def test_cache_expira_apos_ttl():
-    agora = datetime.utcnow()
+    agora = agora_utc()
     with patch(
         "apostas.alertas.confronto.analisar_confronto",
         return_value=_mock_confronto(),

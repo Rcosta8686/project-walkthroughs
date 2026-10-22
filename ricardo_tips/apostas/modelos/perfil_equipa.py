@@ -26,6 +26,7 @@ from apostas.ingestao import sofascore_contexto, sofascore_live
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import EquipaPerfil
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -98,7 +99,7 @@ def _agregar_jogo(team_id: int, event_json: dict) -> Optional[_AgregadoJogo]:
     gs = aws if era_casa else hs
 
     data_utc = ev.get("startTimestamp")
-    data = datetime.fromtimestamp(int(data_utc)) if data_utc else datetime.utcnow()
+    data = datetime.fromtimestamp(int(data_utc)) if data_utc else agora_utc()
 
     return _AgregadoJogo(
         event_id=int(ev.get("id") or 0),
@@ -212,7 +213,7 @@ def calcular_perfil(team_id: int, nome: str, liga: str | None = None,
     virar_pct = (virou / denom) if denom > 0 else None
 
     # Carga de jogos
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     carga_7d = sum(1 for a in agregados if (hoje - a.data).days <= 7)
     carga_14d = sum(1 for a in agregados if (hoje - a.data).days <= 14)
 
@@ -236,14 +237,14 @@ def calcular_perfil(team_id: int, nome: str, liga: str | None = None,
         carga_jogos_14d=carga_14d,
         viagens_longas_14d=0,  # TODO: inferir de ligas internacionais
         n_jogos_analisados=len(agregados),
-        data_atualizacao=datetime.utcnow(),
+        data_atualizacao=agora_utc(),
     )
 
 
 def _perfil_vazio(team_id: int, nome: str, liga: str | None) -> EquipaPerfil:
     return EquipaPerfil(
         sofascore_team_id=team_id, nome=nome, liga=liga,
-        n_jogos_analisados=0, data_atualizacao=datetime.utcnow(),
+        n_jogos_analisados=0, data_atualizacao=agora_utc(),
     )
 
 
@@ -305,7 +306,7 @@ def calcular_perfil_do_historico(
     can_2t = _mn([j.cantos_2t for j in jogos])
 
     # Carga semanal
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     carga_7d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 7)
     carga_14d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 14)
 
@@ -344,7 +345,7 @@ def calcular_perfil_do_historico(
         carga_jogos_14d=carga_14d,
         viagens_longas_14d=0,
         n_jogos_analisados=len(jogos),
-        data_atualizacao=datetime.utcnow(),
+        data_atualizacao=agora_utc(),
         notas=notas_str,
     )
 
@@ -367,7 +368,7 @@ def atualizar_perfil(team_id: int, nome: str, liga: str | None = None,
     """
     perfil_atual = obter_perfil(team_id)
     if perfil_atual:
-        idade = datetime.utcnow() - perfil_atual.data_atualizacao
+        idade = agora_utc() - perfil_atual.data_atualizacao
         if idade < timedelta(hours=ttl_horas):
             return perfil_atual
 

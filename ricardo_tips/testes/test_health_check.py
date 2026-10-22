@@ -9,6 +9,7 @@ import pytest
 from apostas.alertas.health_check import (
     _check_bd, _check_csv_vivo, correr_health_check, formatar_telegram,
 )
+from apostas.utils.tempo import agora_utc
 
 
 def test_csv_inexistente_devolve_erro(tmp_path):
@@ -20,7 +21,7 @@ def test_csv_inexistente_devolve_erro(tmp_path):
 def test_csv_recente_e_ok(tmp_path):
     p = tmp_path / "sug.csv"
     p.write_text("ts_scan\n2026-10-19T20:00:00\n")
-    agora = datetime.utcnow()
+    agora = agora_utc()
     ok, _, det = _check_csv_vivo(p, agora=agora, minutos_limite=60)
     assert ok is True
     assert "csv_mtime" in det
@@ -31,7 +32,7 @@ def test_csv_antigo_detectado(tmp_path):
     p.write_text("ts_scan\n")
     # Simula CSV antigo via st_mtime no passado
     import os
-    agora = datetime.utcnow()
+    agora = agora_utc()
     passado = agora - timedelta(hours=2)
     os.utime(p, (passado.timestamp(), passado.timestamp()))
     ok, erro, det = _check_csv_vivo(p, agora=agora, minutos_limite=30)

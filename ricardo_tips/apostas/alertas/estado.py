@@ -13,6 +13,7 @@ from typing import Any
 
 from apostas.utils import config as _config
 from apostas.utils.logger import get_logger
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -63,5 +64,5 @@ def esta_pausado() -> bool:
 
 def marcar_analise_feita(ref: datetime | None = None) -> None:
     e = ler()
-    e["ultima_analise_utc"] = (ref or datetime.utcnow()).isoformat(timespec="seconds")
+    e["ultima_analise_utc"] = (ref or agora_utc()).isoformat(timespec="seconds")
     gravar(e)

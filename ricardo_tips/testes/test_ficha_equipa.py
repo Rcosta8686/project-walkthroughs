@@ -13,6 +13,7 @@ from apostas.relatorios.ficha_equipa import (
     _pct_diff, ficha_markdown, gerar_ficha,
 )
 from apostas.utils.schema import Base, EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ def engine_test(monkeypatch):
 
 def _seed(engine, team_id=42, nome="AS Roma", n_W=5, n_L=3, n_D=2):
     """Insere jogos com padrao: a perder -> +remates, 2T > 1T."""
-    now = datetime.utcnow()
+    now = agora_utc()
     base = n_W + n_L + n_D
     rows = []
     for i in range(n_W):
@@ -125,7 +126,7 @@ def test_gerar_ficha_poucos_jogos_devolve_none(engine_test):
 def test_padrao_amarelos_explodem_2T(engine_test):
     """Caso Roma 2026/27: 0.4 am 1T, 1.4 am 2T → +250% → deve dar nota."""
     from datetime import datetime, timedelta
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         for i in range(8):
             s.add(EstatisticaEquipaJogo(
@@ -150,7 +151,7 @@ def test_padrao_amarelos_explodem_2T(engine_test):
 def test_padrao_perder_remata_menos_dominante(engine_test):
     """Equipa dominante (perde a jogar menos) → nota 'A perder, remata MENOS'."""
     from datetime import datetime, timedelta
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         # 6 W com 18 remates (muito), 4 L com 10 remates (menos que baseline 15)
         for i in range(6):

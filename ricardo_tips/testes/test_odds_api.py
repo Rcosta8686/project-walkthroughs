@@ -11,6 +11,7 @@ from apostas.ingestao import odds_api, ligas_equipas
 from apostas.utils import config as config_mod
 from apostas.utils import db as db_mod
 from apostas.utils.schema import Equipa, Jogo, Liga, OddsCorrentes
+from apostas.utils.tempo import agora_utc
 
 
 def test_mock_devolve_jogos_para_epl():
@@ -54,7 +55,7 @@ def bd_com_jogo(tmp_path, monkeypatch):
         s.flush()
         s.add(Jogo(
             id_externo=99999, liga_id=liga.id, epoca=2026,
-            data_utc=datetime.utcnow() + timedelta(days=1, hours=15),
+            data_utc=agora_utc() + timedelta(days=1, hours=15),
             casa_id=arsenal.id, fora_id=chelsea.id,
             estado="agendado",
         ))
@@ -128,4 +129,4 @@ def test_sincronizar_cria_jogos_futuros(bd_com_equipas_sem_jogos):
         )
         assert jogo is not None
         assert jogo.estado == "agendado"
-        assert jogo.data_utc > datetime.utcnow()
+        assert jogo.data_utc > agora_utc()

@@ -14,6 +14,7 @@ from apostas.alertas.confronto import (
 )
 from apostas.modelos import historico_equipas
 from apostas.utils.schema import Base, EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def engine_test(monkeypatch):
 
 def _seed_equipa(engine, team_id, nome, remates_base, cards_base,
                   diferenca_2t=True, carrega_a_perder=True):
-    now = datetime.utcnow()
+    now = agora_utc()
     rows = []
     for i in range(8):
         rem_1t = remates_base * 0.4

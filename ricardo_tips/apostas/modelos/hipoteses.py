@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from apostas.utils.db import abrir_sessao
 from apostas.utils.schema import Hipotese
+from apostas.utils.tempo import agora_utc
 
 
 ESTADOS_VALIDOS = ("ativa", "confirmada", "refutada", "inconclusiva")
@@ -97,7 +98,7 @@ def resolver(
             row.evidencia_contra = evidencia_contra
         if decisao_final is not None:
             row.decisao_final = decisao_final
-        row.resolvido_em = datetime.utcnow()
+        row.resolvido_em = agora_utc()
     return True
 
 

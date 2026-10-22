@@ -17,6 +17,7 @@ from typing import Any
 from apostas.utils import config as _config
 from apostas.utils.config import get_env
 from apostas.utils.logger import get_logger
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -60,7 +61,7 @@ class ClienteTelegram:
         p = caminho_outbox()
         p.parent.mkdir(parents=True, exist_ok=True)
         entrada = {
-            "ts": datetime.utcnow().isoformat(timespec="seconds"),
+            "ts": agora_utc().isoformat(timespec="seconds"),
             "chat_id": chat_id,
             "texto": texto,
         }

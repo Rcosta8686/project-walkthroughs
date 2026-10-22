@@ -23,6 +23,7 @@ from typing import Iterable
 
 from apostas.modelos import no_vig
 from apostas.utils.logger import get_logger
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -234,7 +235,7 @@ def avaliar(
 
     # 5) Odd stale (M18)
     if timestamp_leitura is not None:
-        idade = datetime.utcnow() - timestamp_leitura
+        idade = agora_utc() - timestamp_leitura
         if idade > timedelta(seconds=IDADE_ODD_MAX_SEG):
             return ResultadoFiltros(
                 passa=False,

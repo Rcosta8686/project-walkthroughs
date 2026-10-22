@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
@@ -50,7 +51,7 @@ def main():
     parser.add_argument("--linha", type=float, default=2.5)
     args = parser.parse_args()
 
-    agora = datetime.utcnow()
+    agora = agora_utc()
     fim = agora + timedelta(hours=args.horas_fim)
 
     with abrir_sessao() as s:

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from apostas.modelos.historico_equipas import _extrair_stats_equipa
 from apostas.utils import config as config_mod, db as db_mod
 from apostas.utils.schema import EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 # ─── Schema: colunas novas existem ─────────────────────────────
@@ -29,7 +30,7 @@ def test_schema_tem_colunas_nivel3(bd_vazia):
     """Schema inicializado tem colunas arbitro + stats avancadas."""
     e = EstatisticaEquipaJogo(
         sofascore_team_id=1, sofascore_event_id=1,
-        nome_equipa="X", data_jogo=datetime.utcnow(),
+        nome_equipa="X", data_jogo=agora_utc(),
         era_casa=1, golos_marcados=0, golos_sofridos=0, resultado="D",
         arbitro="Pierluigi Collina",
         passes_longos_total=50, passes_longos_pct=0.65,

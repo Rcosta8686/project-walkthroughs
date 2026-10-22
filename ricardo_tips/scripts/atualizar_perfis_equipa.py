@@ -23,6 +23,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.ingestao import sofascore_live  # noqa: E402
 from apostas.modelos import perfil_equipa  # noqa: E402
@@ -81,7 +82,7 @@ def main() -> None:
             continue
         # Decide: foi recalculado ou veio do cache?
         from datetime import datetime, timedelta
-        idade = datetime.utcnow() - perfil.data_atualizacao
+        idade = agora_utc() - perfil.data_atualizacao
         if idade < timedelta(minutes=5):
             print(f"✓ actualizado (n={perfil.n_jogos_analisados})")
             novos += 1

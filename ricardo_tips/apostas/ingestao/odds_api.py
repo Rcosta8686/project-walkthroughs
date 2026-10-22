@@ -26,6 +26,7 @@ from apostas.utils.config import get_env
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import Equipa, Jogo, Liga, OddsCorrentes
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -458,7 +459,7 @@ def _processar_jogo(s, jogo_json: dict, liga: Liga, resultado: ResultadoOddsApi)
         # Jogo futuro ainda não ingerido pelo football-data (CSVs só têm jogos
         # jogados). Cria aqui para que a análise live tenha a quem atribuir
         # odds e sugestões.
-        if data > datetime.utcnow():
+        if data > agora_utc():
             id_ext = _id_externo_odds_api(jogo_json)
             # Protege contra colisões: se já existe outro jogo com este id,
             # salta (não devia acontecer com hash de 63 bits).
@@ -601,7 +602,7 @@ def _upsert_odd(
     # Actualiza se o preço mudou significativamente (>0.5%)
     if abs(existente.odd - odd) / existente.odd > 0.005:
         existente.odd = odd
-        existente.timestamp = datetime.utcnow()
+        existente.timestamp = agora_utc()
         resultado.odds_atualizadas += 1
         return True
     return False

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from apostas.utils.logger import get_logger
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -97,7 +98,7 @@ def calcular_ajustes(
     numa das equipas). Nesse caso o predictor funciona sem ajustes
     (comportamento antigo).
     """
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     chave = (int(home_id), int(away_id))
 
     cacheado = _cached(chave, agora)

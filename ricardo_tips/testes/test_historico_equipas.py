@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from apostas.modelos import historico_equipas, perfil_equipa
 from apostas.utils.schema import Base, EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 @pytest.fixture
@@ -105,7 +106,7 @@ def _insere_jogos(engine_test, team_id, jogos_data):
 
 
 def test_stats_recentes_e_contexto(engine_test):
-    now = datetime.utcnow()
+    now = agora_utc()
     team_id = 42
     jogos = []
     for i in range(5):
@@ -131,7 +132,7 @@ def test_stats_recentes_e_contexto(engine_test):
 
 
 def test_calcular_perfil_do_historico_com_dados(engine_test):
-    now = datetime.utcnow()
+    now = agora_utc()
     team_id = 99
     jogos = []
     for i in range(3):
@@ -179,7 +180,7 @@ def test_perfil_do_historico_sem_dados_devolve_none(engine_test):
 
 
 def test_virar_jogos_pct(engine_test):
-    now = datetime.utcnow()
+    now = agora_utc()
     team_id = 101
     jogos = [
         # perdia 1T, ganhou (virou)

@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 import requests  # noqa: E402
 
@@ -29,7 +30,7 @@ _BASE = "https://api.the-odds-api.com/v4"
 
 def main() -> None:
     api_key = get_env("ODDS_API_KEY", required=True)
-    agora = datetime.utcnow()
+    agora = agora_utc()
 
     for nome_liga, sport in LIGAS_ODDS_API.items():
         print(f"\n{'=' * 80}")

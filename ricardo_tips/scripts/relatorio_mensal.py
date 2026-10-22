@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
@@ -82,7 +83,7 @@ def _saldo_na_data(data: datetime) -> float | None:
 
 
 def main() -> None:
-    agora = datetime.utcnow()
+    agora = agora_utc()
     parser = argparse.ArgumentParser(description="Relatorio mensal M22.")
     parser.add_argument("--mes", type=int, default=agora.month)
     parser.add_argument("--ano", type=int, default=agora.year)

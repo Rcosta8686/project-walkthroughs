@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from apostas.alertas import filtros_mercado as fm
+from apostas.utils.tempo import agora_utc
 
 
 def _bookmaker(key: str, mercado: str, outcomes: list[dict]) -> dict:
@@ -57,7 +58,7 @@ def test_bloqueia_odd_stale():
     ]
     r = fm.avaliar(
         bms, "totals", "over", "under", 2.5,
-        timestamp_leitura=datetime.utcnow() - timedelta(seconds=120),
+        timestamp_leitura=agora_utc() - timedelta(seconds=120),
     )
     assert not r.passa
     assert "stale" in r.razao_bloqueio.lower()

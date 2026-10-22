@@ -35,6 +35,7 @@ from sqlalchemy import and_, or_, select
 
 from apostas.utils.db import abrir_sessao
 from apostas.utils.schema import EstatisticasJogo, Jogo
+from apostas.utils.tempo import agora_utc
 
 
 @dataclass
@@ -93,7 +94,7 @@ class RatingsForma:
     ):
         self.max_jogos = max_jogos
         self.meia_vida_dias = meia_vida_dias
-        self.ref_data = ref_data or datetime.utcnow()
+        self.ref_data = ref_data or agora_utc()
 
     def _peso(self, data_jogo: datetime) -> float:
         """Decay exponencial com meia-vida."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta
+from apostas.utils.tempo import agora_utc
 
 # Jogos sintéticos por sport_key — poucas equipas por liga para o mock
 _JOGOS_POR_SPORT = {
@@ -36,7 +37,7 @@ _JOGOS_POR_SPORT = {
 
 def jogos_sport(sport_key: str) -> list[dict]:
     pares = _JOGOS_POR_SPORT.get(sport_key, [])
-    agora = datetime.utcnow()
+    agora = agora_utc()
     rng = random.Random(hash(sport_key) & 0xFFFFFFFF)
     out = []
     for i, (casa, fora) in enumerate(pares):

@@ -10,6 +10,7 @@ from apostas.alertas import bot, mensagens
 from apostas.modelos.historico_equipas import encontrar_equipa_por_nome
 from apostas.utils import config as config_mod, db as db_mod
 from apostas.utils.schema import EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def bd_com_equipas(tmp_path, monkeypatch):
     db_mod.reset_engine()
     db_mod.criar_schema()
 
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     with db_mod.abrir_sessao() as s:
         # Benfica — 10 jogos (5 casa 5 fora)
         for i in range(10):

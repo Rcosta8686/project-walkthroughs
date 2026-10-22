@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from apostas.alertas import confronto_tactico
 from apostas.modelos import historico_jogadores
 from apostas.utils.schema import Base, EstatisticaJogadorJogo
+from apostas.utils.tempo import agora_utc
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def engine_test(monkeypatch):
 
 def test_perfil_jogador_calcula_metricas_90(engine_test):
     """Jogador com 10 jogos × 90 min, 1.5 faltas por jogo → agressividade 1.5."""
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         for i in range(10):
             s.add(EstatisticaJogadorJogo(
@@ -69,7 +70,7 @@ def test_perfil_jogador_calcula_metricas_90(engine_test):
 
 
 def test_perfil_defesa_agressivo(engine_test):
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         for i in range(10):
             s.add(EstatisticaJogadorJogo(
@@ -103,7 +104,7 @@ def test_perfil_poucos_jogos_devolve_none(engine_test):
 
 def test_confronto_tactico_identifica_matchup(engine_test):
     """Driblador LW vs defesa agressivo RB → matchup severidade alta."""
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         # driblador LW
         for i in range(10):
@@ -150,7 +151,7 @@ def test_confronto_tactico_identifica_matchup(engine_test):
 
 
 def test_perfil_destaca_jogador_amarelado_e_em_forma(engine_test):
-    now = datetime.utcnow()
+    now = agora_utc()
     with Session(engine_test) as s:
         # Jogador com forma e amarelado
         for i in range(10):

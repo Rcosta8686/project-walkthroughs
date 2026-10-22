@@ -42,6 +42,7 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 import requests  # noqa: E402
 
@@ -88,7 +89,7 @@ _MERCADOS_SO_PROJECAO = {"cantos", "sot"}
 
 def _purgar_cooldown() -> None:
     """Remove entradas antigas (>COOLDOWN_MIN) do dict de dedup."""
-    agora = datetime.utcnow()
+    agora = agora_utc()
     limite = COOLDOWN_MIN * 60
     expiradas = [k for k, ts in _cooldown.items()
                  if (agora - ts).total_seconds() > limite]
@@ -102,12 +103,12 @@ def _em_cooldown(event_id, mercado, lado, linha) -> bool:
     ts = _cooldown.get(key)
     if ts is None:
         return False
-    return (datetime.utcnow() - ts).total_seconds() < COOLDOWN_MIN * 60
+    return (agora_utc() - ts).total_seconds() < COOLDOWN_MIN * 60
 
 
 def _marcar_enviado(event_id, mercado, lado, linha) -> None:
     key = (str(event_id), mercado, lado, str(linha))
-    _cooldown[key] = datetime.utcnow()
+    _cooldown[key] = agora_utc()
 
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
@@ -256,7 +257,7 @@ def _odds_api_live_evento(sport: str, home: str, away: str) -> dict | None:
     r = requests.get(url, params={"apiKey": api_key}, timeout=20)
     if not r.ok:
         return None
-    agora = datetime.utcnow()
+    agora = agora_utc()
     for ev in r.json() if isinstance(r.json(), list) else []:
         h = (ev.get("home_team") or "").lower()
         a = (ev.get("away_team") or "").lower()
@@ -752,7 +753,7 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
         if ev < ev_min:
             return
         sugestoes.append({
-            "ts_scan": datetime.utcnow().isoformat(timespec="seconds"),
+            "ts_scan": agora_utc().isoformat(timespec="seconds"),
             "event_id": estado.event_id,
             "liga": estado.liga,
             "home": estado.home,
@@ -1031,7 +1032,7 @@ def _sinal_para_sugestao(estado, sinal) -> dict:
     """Converte Sinal numa linha de sugestao para o CSV."""
     racional_str = "\n".join(f"· {r}" for r in sinal.racional) if sinal.racional else ""
     return {
-        "ts_scan": datetime.utcnow().isoformat(timespec="seconds"),
+        "ts_scan": agora_utc().isoformat(timespec="seconds"),
         "event_id": estado.event_id,
         "liga": estado.liga,
         "home": estado.home,
@@ -1076,7 +1077,7 @@ def _imprimir_sugestoes(sugs) -> None:
 
 
 def _correr_ciclo(args) -> None:
-    agora = datetime.utcnow().strftime("%H:%M:%S")
+    agora = agora_utc().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
     if args.todas_ligas:
         jogos = sofascore_live.listar_jogos_live()  # tudo

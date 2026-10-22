@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+from apostas.utils.tempo import agora_utc
 
 
 @dataclass
@@ -380,7 +381,7 @@ def resolver_sinais_do_evento(
                            "hi": 8, "lo": 6},
     }
     from datetime import datetime
-    agora = datetime.utcnow()
+    agora = agora_utc()
     n = 0
     for row in rows:
         banda = bands.get(row.mercado)

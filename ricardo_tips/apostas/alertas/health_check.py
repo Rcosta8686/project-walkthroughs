@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from apostas.utils.tempo import agora_utc
 
 
 # Limiar: se o CSV live nao for actualizado em >N minutos, scanner
@@ -57,7 +58,7 @@ def _check_csv_vivo(
     agora: datetime | None = None,
 ) -> tuple[bool, str, dict]:
     """CSV foi tocado nos ultimos N minutos?"""
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     if not csv_path.exists():
         return False, "CSV live nao existe", {}
     try:

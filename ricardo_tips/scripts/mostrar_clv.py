@@ -24,6 +24,7 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
@@ -45,7 +46,7 @@ def main() -> None:
                         help="Enviar resumo para Telegram")
     args = parser.parse_args()
 
-    desde = datetime.utcnow() - timedelta(days=args.dias)
+    desde = agora_utc() - timedelta(days=args.dias)
 
     # Agrupa snapshots por (event, mercado, linha, lado)
     with abrir_sessao() as s:

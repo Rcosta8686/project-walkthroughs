@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -67,7 +68,7 @@ def main() -> None:
     parser.add_argument("--todas-ligas", action="store_true")
     args = parser.parse_args()
 
-    agora = datetime.utcnow()
+    agora = agora_utc()
     if args.inicio:
         inicio = datetime.strptime(args.inicio, "%Y-%m-%d")
     else:

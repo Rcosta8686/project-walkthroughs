@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from sqlalchemy import select  # noqa: E402
 
@@ -273,7 +274,7 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Resolver mega event %s falhou: %s", eid, exc)
 
-        agora = datetime.utcnow().isoformat(timespec="seconds")
+        agora = agora_utc().isoformat(timespec="seconds")
         for row in linhas_grupo:
             wl = _wl_por_mercado(row["mercado"], row["lado"], row.get("linha") or "", res)
             if wl is None:

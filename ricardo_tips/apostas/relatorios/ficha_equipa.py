@@ -16,6 +16,7 @@ from typing import Iterable
 from apostas.modelos import historico_equipas
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -341,7 +342,7 @@ def gerar_ficha(team_id: int, n_jogos: int = 20) -> FichaEquipa | None:
     )
 
     # Fadiga
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     jogos_7d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 7)
     jogos_14d = sum(1 for j in jogos if (hoje - j.data_jogo).days <= 14)
     dias_desde = None

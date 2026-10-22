@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from apostas.modelos.melhorias import passa_stop_loss as _pode_apostar
 from apostas.utils.db import abrir_sessao
 from apostas.utils.schema import ApostaReal, BancaRegisto, Sugestao
+from apostas.utils.tempo import agora_utc
 
 
 BANCA_INICIAL_CHF_DEFAULT = 50.0
@@ -73,7 +74,7 @@ def _soma_lucro_desde(desde: datetime) -> tuple[float, int, float]:
 def estado_banca_actual() -> EstadoBanca:
     """Snapshot do estado da banca para decisao pre-sinal."""
     saldo = saldo_actual()
-    hoje = _data_truncada(datetime.utcnow())
+    hoje = _data_truncada(agora_utc())
     semana_atras = hoje - timedelta(days=7)
 
     lucro_dia, abertas_num, abertas_stake = _soma_lucro_desde(hoje)
@@ -104,7 +105,7 @@ def estado_banca_actual() -> EstadoBanca:
 def gravar_snapshot_hoje() -> int:
     """Grava snapshot diario em BancaRegisto. Chamado no fim do dia / inicio."""
     estado = estado_banca_actual()
-    hoje = _data_truncada(datetime.utcnow())
+    hoje = _data_truncada(agora_utc())
     with abrir_sessao() as s:
         ja_existe = s.scalars(
             select(BancaRegisto).where(BancaRegisto.data == hoje)

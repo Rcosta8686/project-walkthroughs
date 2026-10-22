@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -62,7 +63,7 @@ def main() -> None:
         print(f"CSV live nao existe em {csv_path}")
         return
 
-    agora = datetime.utcnow()
+    agora = agora_utc()
     limiar = agora - timedelta(days=args.manter)
     print(f"\n╔ Compactar — manter linhas desde {limiar:%Y-%m-%d} ╗\n")
 

@@ -10,6 +10,7 @@ from apostas.alertas import ausencias, cerebro_live
 from apostas.modelos import estadios
 from apostas.utils import config as config_mod, db as db_mod
 from apostas.utils.schema import EstatisticaEquipaJogo
+from apostas.utils.tempo import agora_utc
 
 
 # ─── Fase 8: estadios ────────────────────────────────────────────
@@ -22,7 +23,7 @@ def bd_com_venue(tmp_path, monkeypatch):
     db_mod.reset_engine()
     db_mod.criar_schema()
 
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     with db_mod.abrir_sessao() as s:
         # Estadio da Luz: 10 jogos distintos (2 linhas cada = 20 linhas)
         for i in range(10):
@@ -72,7 +73,7 @@ def test_perfil_estadio_min_jogos_filtra(bd_com_venue):
         s.add(EstatisticaEquipaJogo(
             sofascore_team_id=1, sofascore_event_id=5555,
             nome_equipa="X", liga="L",
-            data_jogo=datetime.utcnow(), era_casa=1,
+            data_jogo=agora_utc(), era_casa=1,
             golos_marcados=1, golos_sofridos=0, resultado="W",
             venue="Pequeno Estádio",
         ))
@@ -90,7 +91,7 @@ def test_perfil_estadio_query_vazia_devolve_none(bd_com_venue):
 
 def test_comparar_com_liga_devolve_delta(bd_com_venue):
     # Adiciona varios jogos noutros estadios da mesma liga para ter media
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     with db_mod.abrir_sessao() as s:
         for i in range(20):
             s.add(EstatisticaEquipaJogo(

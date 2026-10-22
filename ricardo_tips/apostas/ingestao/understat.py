@@ -31,6 +31,7 @@ from apostas.utils.config import get_env, project_root
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import Equipa, EstatisticasJogo, Jogo, Liga
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -192,7 +193,7 @@ def sincronizar(
 ) -> ResultadoIngestaoUnderstat:
     """Puxa xG para cada liga suportada em cada época, actualiza EstatisticasJogo."""
     modo = modo or (get_env("MODO", "desenvolvimento") or "desenvolvimento").lower()
-    epocas = epocas or [datetime.utcnow().year - 1, datetime.utcnow().year]
+    epocas = epocas or [agora_utc().year - 1, agora_utc().year]
     resultado = ResultadoIngestaoUnderstat()
 
     with abrir_sessao() as s:

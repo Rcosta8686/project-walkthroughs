@@ -27,6 +27,7 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.alertas import analise, analise_softs  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
@@ -74,7 +75,7 @@ def main() -> None:
                         help="Envia resumo das sugestoes para o Telegram.")
     args = parser.parse_args()
 
-    ref = datetime.fromisoformat(args.referencia) if args.referencia else datetime.utcnow()
+    ref = datetime.fromisoformat(args.referencia) if args.referencia else agora_utc()
     horas_inicio, horas_fim = _janela_fim_de_semana(ref)
 
     mercados = ("golos", "1x2") if args.mercado == "todos" else (args.mercado,)

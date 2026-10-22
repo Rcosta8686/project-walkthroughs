@@ -23,6 +23,7 @@ from apostas.utils.config import load_config
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import Equipa, Jogo, Liga, OddsCorrentes, OddsFecho, Sugestao
+from apostas.utils.tempo import agora_utc
 
 log = get_logger(__name__)
 
@@ -60,7 +61,7 @@ def identificar_sugestoes(
     casa_ref = "Pinnacle_Closing"
     meia_vida = float(cfg["modelo"]["decay_meia_vida_dias"])
 
-    ref = referencia or datetime.utcnow()
+    ref = referencia or agora_utc()
     inicio = ref + timedelta(hours=janela_horas[0])
     fim = ref + timedelta(hours=janela_horas[1])
 

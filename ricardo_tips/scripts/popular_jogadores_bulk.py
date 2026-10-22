@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -48,7 +49,7 @@ log = get_logger(__name__)
 
 def _event_ids_recentes(dias: int, liga: str | None) -> list[tuple[int, str, datetime]]:
     """Devolve (event_id, liga, data_jogo) distintos nos ultimos N dias."""
-    limiar = datetime.utcnow() - timedelta(days=dias)
+    limiar = agora_utc() - timedelta(days=dias)
     with abrir_sessao() as s:
         q = select(
             EstatisticaEquipaJogo.sofascore_event_id,

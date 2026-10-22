@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.alertas import filtro_desempenho  # noqa: E402
 from apostas.alertas.historico_alertas import (  # noqa: E402
@@ -55,7 +56,7 @@ def main() -> None:
                         help="Envia o relatorio via bot Telegram.")
     args = parser.parse_args()
 
-    fim = datetime.utcnow()
+    fim = agora_utc()
     inicio = fim - timedelta(days=args.dias)
     rows = _ler_csv(_csv_path())
     rel = agregar_edge_volume(

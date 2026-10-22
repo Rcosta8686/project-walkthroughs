@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable
+from apostas.utils.tempo import agora_utc
 
 
 @dataclass
@@ -26,7 +27,7 @@ def agregar_por_heuristica(
 ) -> list[LinhaRelatorioMega]:
     """Dado um iteravel de SinalMegaCerebro, agrupa por heuristica e
     devolve lista ordenada por n_total desc."""
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     inicio = agora - timedelta(days=dias)
     buckets: dict[str, dict] = {}
     for s in sinais:
@@ -77,7 +78,7 @@ def obter_relatorio_semanal(dias: int = 7) -> str:
         return ""
     try:
         with abrir_sessao() as sess:
-            inicio = datetime.utcnow() - timedelta(days=dias)
+            inicio = agora_utc() - timedelta(days=dias)
             rows = sess.execute(
                 select(SinalMegaCerebro).where(
                     SinalMegaCerebro.criado_em >= inicio

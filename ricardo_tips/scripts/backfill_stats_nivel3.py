@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -67,7 +68,7 @@ def main() -> None:
             .limit(args.limite)
         )
         if args.dias:
-            limiar = datetime.utcnow() - timedelta(days=args.dias)
+            limiar = agora_utc() - timedelta(days=args.dias)
             q = q.where(EstatisticaEquipaJogo.data_jogo >= limiar)
         event_ids = list(s.scalars(q).all())
 

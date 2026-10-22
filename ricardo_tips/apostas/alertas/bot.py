@@ -32,6 +32,7 @@ from apostas.utils.logger import get_logger
 from apostas.utils.schema import (
     ApostaReal, ApostaRealLive, Equipa, Jogo, Liga, Sugestao,
 )
+from apostas.utils.tempo import agora_utc
 
 if TYPE_CHECKING:
     from telegram import Update
@@ -43,7 +44,7 @@ log = get_logger(__name__)
 # ─── Lógica dos comandos (puros, testáveis sem Telegram) ────────────
 
 def comando_hoje(agora: datetime | None = None) -> str:
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     inicio = agora.replace(hour=0, minute=0, second=0, microsecond=0)
     fim = inicio + timedelta(days=1)
     return mensagens.resumo_dia(
@@ -53,7 +54,7 @@ def comando_hoje(agora: datetime | None = None) -> str:
 
 
 def comando_amanha(agora: datetime | None = None) -> str:
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     inicio_hoje = agora.replace(hour=0, minute=0, second=0, microsecond=0)
     inicio = inicio_hoje + timedelta(days=1)
     fim = inicio + timedelta(days=1)
@@ -64,7 +65,7 @@ def comando_amanha(agora: datetime | None = None) -> str:
 
 
 def comando_stats(agora: datetime | None = None) -> str:
-    agora = agora or datetime.utcnow()
+    agora = agora or agora_utc()
     inicio_mes = agora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     with abrir_sessao() as s:

@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.ingestao import football_data_uk, ligas_equipas, odds_api, understat  # noqa: E402
 from apostas.utils.config import get_env, load_config  # noqa: E402
@@ -34,7 +35,7 @@ log = get_logger(__name__)
 
 def _epocas_a_puxar(n_anteriores: int = 2) -> list[int]:
     """Devolve [época_atual - n_anteriores, ..., época_atual]."""
-    hoje = datetime.utcnow()
+    hoje = agora_utc()
     epoca_atual = hoje.year if hoje.month >= 7 else hoje.year - 1
     return list(range(epoca_atual - n_anteriores, epoca_atual + 1))
 

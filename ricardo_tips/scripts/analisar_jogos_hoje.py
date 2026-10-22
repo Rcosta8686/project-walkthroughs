@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.alertas import analise, estado, mensagens  # noqa: E402
 from apostas.alertas.telegram_cliente import cliente as telegram  # noqa: E402
@@ -41,7 +42,7 @@ def main() -> None:
     parser.add_argument("--modelo", default="gap", choices=("gap", "poisson"))
     args = parser.parse_args()
 
-    ref = datetime.fromisoformat(args.referencia) if args.referencia else datetime.utcnow()
+    ref = datetime.fromisoformat(args.referencia) if args.referencia else agora_utc()
 
     if estado.esta_pausado():
         log.info("Alertas pausados — a saltar envio.")

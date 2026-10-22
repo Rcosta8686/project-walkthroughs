@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -43,7 +44,7 @@ def main() -> None:
     if args.data:
         data = datetime.strptime(args.data, "%Y-%m-%d")
     else:
-        data = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        data = agora_utc().replace(hour=0, minute=0, second=0, microsecond=0)
     fim = data + timedelta(days=1)
 
     ids_ligas = None if args.todas_ligas else tuple(sofascore_ids_prioritarias())

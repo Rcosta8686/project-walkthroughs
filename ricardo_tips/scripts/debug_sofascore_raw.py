@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.ingestao import _flaresolverr  # noqa: E402
 
@@ -65,7 +66,7 @@ def _testar(url: str, warmup: str | None) -> None:
 
 
 def main() -> None:
-    hoje = datetime.utcnow().strftime("%Y-%m-%d")
+    hoje = agora_utc().strftime("%Y-%m-%d")
     warmup = "https://www.sofascore.com/"
 
     print(">>> Teste 1: endpoint api.sofascore.com COM warmup")

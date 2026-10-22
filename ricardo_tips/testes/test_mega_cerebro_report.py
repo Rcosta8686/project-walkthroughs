@@ -10,13 +10,14 @@ from apostas.relatorios.mega_cerebro_report import (
     agregar_por_heuristica,
     formatar_telegram,
 )
+from apostas.utils.tempo import agora_utc
 
 
 class _Sinal:
     def __init__(self, heuristica, resolvido, dias_atras=1):
         self.heuristica = heuristica
         self.resolvido = resolvido
-        self.criado_em = datetime.utcnow() - timedelta(days=dias_atras)
+        self.criado_em = agora_utc() - timedelta(days=dias_atras)
 
 
 def test_agregar_vazio_devolve_lista_vazia():

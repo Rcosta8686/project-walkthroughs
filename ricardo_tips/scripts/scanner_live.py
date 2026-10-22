@@ -40,6 +40,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.alertas import analise_softs  # noqa: E402
 from apostas.ingestao import odds_api_live  # noqa: E402
@@ -90,7 +91,7 @@ def _gravar_sugestoes(sugestoes, f: Path) -> int:
         writer = csv.DictWriter(fp, fieldnames=CSV_COLUNAS_LIVE)
         if novo:
             writer.writeheader()
-        ts = datetime.utcnow().isoformat()
+        ts = agora_utc().isoformat()
         for s in sugestoes:
             linha_str = (
                 str(s.sugestao.linha) if s.sugestao.linha is not None else ""
@@ -137,7 +138,7 @@ def _imprimir_sugestoes(sugestoes) -> None:
 
 
 def _correr_ciclo(args) -> None:
-    agora = datetime.utcnow().strftime("%H:%M:%S")
+    agora = agora_utc().strftime("%H:%M:%S")
     print(f"\n[{agora}] A puxar odds live...")
     r = odds_api_live.puxar_live(
         minutos_atras=args.minutos_atras,

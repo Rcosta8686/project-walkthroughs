@@ -12,6 +12,7 @@ from apostas.alertas import dual_sinal
 from apostas.alertas.historico_alertas import PerfilAlerta
 from apostas.modelos import espeleologia, hipoteses
 from apostas.utils import config as config_mod, db as db_mod
+from apostas.utils.tempo import agora_utc
 
 
 # ═══════════════════════ M17 — Dual Signal ═══════════════════════════
@@ -220,7 +221,7 @@ def test_hipoteses_filtra_por_estado(bd_vazia):
 
 def test_hipoteses_resolver_preenche_timestamps_e_evidencia(bd_vazia):
     hid = hipoteses.adicionar("T", "D")
-    antes = datetime.utcnow()
+    antes = agora_utc()
     hipoteses.resolver(
         hid, "refutada",
         evidencia_contra="n=50, ROI -3%",

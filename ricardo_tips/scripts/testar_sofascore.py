@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from apostas.utils.tempo import agora_utc  # noqa: E402
 
 from apostas.ingestao import sofascore  # noqa: E402
 
@@ -33,7 +34,7 @@ def main():
     )
     args = parser.parse_args()
 
-    data = datetime.fromisoformat(args.data) if args.data else datetime.utcnow()
+    data = datetime.fromisoformat(args.data) if args.data else agora_utc()
 
     print(f"\n{'=' * 78}")
     print(f"  TESTE SOFASCORE — jogos de {data.date()}")

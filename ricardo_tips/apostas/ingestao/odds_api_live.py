@@ -49,6 +49,7 @@ from apostas.ingestao.odds_api import (
     _processar_jogo,
 )
 from apostas.utils.config import get_env
+from apostas.utils.tempo import agora_utc
 from apostas.utils.db import abrir_sessao
 from apostas.utils.logger import get_logger
 from apostas.utils.schema import Liga
@@ -111,7 +112,7 @@ def puxar_live(
     sport_keys = list(sports) if sports is not None else list(LIGAS_ODDS_API.values())
     sport_para_liga = {v: k for k, v in LIGAS_ODDS_API.items()}
     key = get_env("ODDS_API_KEY", required=True)
-    agora = datetime.utcnow()
+    agora = agora_utc()
     inicio = agora - timedelta(minutes=minutos_atras)
     fim = agora + timedelta(minutes=minutos_frente)
 
