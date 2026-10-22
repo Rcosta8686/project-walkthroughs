@@ -84,3 +84,85 @@ def test_correr_health_check_devolve_resultado(tmp_path, monkeypatch):
     r = correr_health_check()
     assert isinstance(r.tudo_ok, bool)
     assert isinstance(r.problemas, list)
+
+
+def test_fichas_check_vazio_detectado(tmp_path, monkeypatch):
+    """BD sem jogos de equipa → alerta 'fichas vazias'."""
+    from apostas.utils import config as config_mod, db as db_mod
+    monkeypatch.setattr(config_mod, "db_path", lambda: tmp_path / "test.db")
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+    db_mod.criar_schema()
+    from apostas.alertas.health_check import _check_fichas_desactualizadas
+    ok, erro, det = _check_fichas_desactualizadas()
+    assert ok is False
+    assert "vazias" in erro
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+
+
+def test_fichas_check_pct_fracas_detectado(tmp_path, monkeypatch):
+    """Mais de 50% das equipas com <5 jogos → alerta."""
+    from datetime import datetime
+    from apostas.utils import config as config_mod, db as db_mod
+    monkeypatch.setattr(config_mod, "db_path", lambda: tmp_path / "test.db")
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+    db_mod.criar_schema()
+    from apostas.utils.schema import EstatisticaEquipaJogo
+    from apostas.utils.db import abrir_sessao
+    with abrir_sessao() as sess:
+        # 2 equipas com so 2 jogos cada, 1 equipa com 6 jogos
+        for eid in (1, 2):
+            for i in range(2):
+                sess.add(EstatisticaEquipaJogo(
+                    sofascore_event_id=100 + eid*10 + i,
+                    sofascore_team_id=eid,
+                    nome_equipa=f"E{eid}", era_casa=True,
+                    data_jogo=datetime(2026, 1, 1),
+                    resultado="W",
+                ))
+        for i in range(6):
+            sess.add(EstatisticaEquipaJogo(
+                sofascore_event_id=200 + i,
+                sofascore_team_id=99,
+                nome_equipa="E99", era_casa=True,
+                data_jogo=datetime(2026, 1, 1),
+                resultado="W",
+            ))
+    from apostas.alertas.health_check import _check_fichas_desactualizadas
+    ok, erro, det = _check_fichas_desactualizadas()
+    assert ok is False
+    assert "desactualizadas" in erro
+    assert det["fichas_fracas"] == 2
+    assert det["fichas_total_equipas"] == 3
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+
+
+def test_fichas_check_ok_quando_maioria_tem_dados(tmp_path, monkeypatch):
+    from datetime import datetime
+    from apostas.utils import config as config_mod, db as db_mod
+    monkeypatch.setattr(config_mod, "db_path", lambda: tmp_path / "test.db")
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+    db_mod.criar_schema()
+    from apostas.utils.schema import EstatisticaEquipaJogo
+    from apostas.utils.db import abrir_sessao
+    with abrir_sessao() as sess:
+        # 3 equipas com 10 jogos cada
+        for eid in (1, 2, 3):
+            for i in range(10):
+                sess.add(EstatisticaEquipaJogo(
+                    sofascore_event_id=eid*100 + i,
+                    sofascore_team_id=eid,
+                    nome_equipa=f"E{eid}", era_casa=True,
+                    data_jogo=datetime(2026, 1, 1),
+                    resultado="W",
+                ))
+    from apostas.alertas.health_check import _check_fichas_desactualizadas
+    ok, erro, det = _check_fichas_desactualizadas()
+    assert ok is True
+    assert erro == ""
+    db_mod._engine = None
+    db_mod._SessionLocal = None

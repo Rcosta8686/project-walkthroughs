@@ -214,3 +214,75 @@ def test_linha_telegram_prefixa_newline_quando_sinal():
     )
     assert linha.startswith("\n")
     assert "🧠" in linha
+
+
+# ─── Fase A: heuristicas de contexto ─────────────────────────────
+
+class _Contexto:
+    def __init__(self, **kw):
+        self.peso_jogo = kw.get("peso_jogo", "baixo")
+        self.razao = kw.get("razao", "")
+        self.casa_ja_qualificada = kw.get("casa_ja_qualificada", False)
+        self.fora_ja_qualificada = kw.get("fora_ja_qualificada", False)
+        self.casa_precisa_pts = kw.get("casa_precisa_pts", False)
+        self.fora_precisa_pts = kw.get("fora_precisa_pts", False)
+
+
+def test_heuristica_5_peso_muito_alto_ambas_acima_dispara():
+    """Final + ambas acima do normal (mesmo moderado) → over remates."""
+    sint = sintetizar(
+        minuto=50, score_casa=1, score_fora=1,
+        sot_c=7, sot_f=7,
+        baseline_sot_c=5.0, baseline_sot_f=5.0,
+        contexto=_Contexto(peso_jogo="muito_alto", razao="final"),
+    )
+    assert sint is not None
+    assert sint.mercado == "remates"
+    assert sint.confianca == 3
+
+
+def test_heuristica_6_equipa_precisa_pts_chasing():
+    """Casa precisa pts, fora ja qualificada, casa a perder com SoT acima."""
+    sint = sintetizar(
+        minuto=60, score_casa=0, score_fora=1,
+        sot_c=8, sot_f=4,
+        baseline_sot_c=5.0, baseline_sot_f=5.0,
+        contexto=_Contexto(
+            peso_jogo="alto",
+            casa_precisa_pts=True, fora_ja_qualificada=True,
+        ),
+    )
+    assert sint is not None
+    assert sint.mercado == "remates"
+    assert sint.direccao == "over"
+    assert "precisa pts" in sint.razao
+
+
+def test_heuristica_7_ambas_precisam_pts():
+    """Ambas as equipas precisam pts, ambas moderadamente acima do normal
+    → H7 dispara (H2 nao, porque ratio esta entre 1.1 e 1.25)."""
+    # minuto=60, baseline=5, valor=4 → ratio ~1.2
+    sint = sintetizar(
+        minuto=60, score_casa=0, score_fora=0,
+        sot_c=4, sot_f=4,
+        baseline_sot_c=5.0, baseline_sot_f=5.0,
+        contexto=_Contexto(
+            peso_jogo="alto",
+            casa_precisa_pts=True, fora_precisa_pts=True,
+        ),
+    )
+    assert sint is not None
+    assert sint.mercado == "remates"
+    assert "ambas as equipas a precisar" in sint.razao
+
+
+def test_sem_contexto_fluxo_normal_continua():
+    """Heuristicas base funcionam sem contexto."""
+    sint = sintetizar(
+        minuto=50, score_casa=1, score_fora=1,
+        sot_c=8, sot_f=8,
+        baseline_sot_c=5.0, baseline_sot_f=5.0,
+        contexto=None,
+    )
+    assert sint is not None
+    assert sint.mercado == "remates"

@@ -210,6 +210,33 @@ def enviar_sugestao_live(s: dict) -> None:
         # Treinadores: 1 linha por equipa com o que o mister quer agora
         treinadores_line = _linhas_treinador(s)
 
+        # Mega-cerebro: 1 linha de sintese quando ha sinal claro
+        mega_line = ""
+        try:
+            from apostas.alertas.mega_cerebro import linha_para_telegram as _mega_tg
+            home_id = s.get("home_id")
+            away_id = s.get("away_id")
+            if home_id and away_id:
+                try:
+                    _mc, _mf = str(s.get("marcador") or "0-0").split("-", 1)
+                    sc_c = int(_mc.strip())
+                    sc_f = int(_mf.strip())
+                except (ValueError, AttributeError):
+                    sc_c = sc_f = 0
+                mega_line = _mega_tg(
+                    home_id=int(home_id), away_id=int(away_id),
+                    minuto=int(minuto) if str(minuto).isdigit() else 0,
+                    score_casa=sc_c, score_fora=sc_f,
+                    sot_c=_int_or_none(s.get("shots_on_target_c")),
+                    sot_f=_int_or_none(s.get("shots_on_target_f")),
+                    cantos_c=_int_or_none(s.get("corners_c")),
+                    cantos_f=_int_or_none(s.get("corners_f")),
+                    cards_c=_int_or_none(s.get("yellows_c")),
+                    cards_f=_int_or_none(s.get("yellows_f")),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Mega-cerebro na msg EV falhou: %s", exc)
+
         # M19: melhor casa suica (vem de filtros_mercado via scanner)
         melhor_casa_line = ""
         outras_casas_str = s.get("outras_casas") or ""
@@ -241,6 +268,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
                 f"{historico_line}"
                 f"{treinadores_line}"
+                f"{mega_line}"
                 f"{racional_section}"
                 f"\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
@@ -264,6 +292,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
                 f"{historico_line}"
                 f"{treinadores_line}"
+                f"{mega_line}"
                 f"\n"
                 f"\n"
                 f"*Aposta:* {aposta_fmt}\n"

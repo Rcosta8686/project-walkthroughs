@@ -74,6 +74,10 @@ COOLDOWN_MIN = 15
 # Impede enviar duas vezes a projeccao do mesmo target no mesmo jogo.
 _projecoes_enviadas: dict[int, set[int]] = {}
 
+# Primeiro minuto em que vimos cada jogo. Se > 15, o scanner apanhou-o
+# tarde (restart ou arrancou pelo meio) — adicionamos aviso na projecao.
+_primeiro_minuto_visto: dict[int, int] = {}
+
 # Mercados cujo sinal pontual nao vai a Telegram por *default*. O filtro
 # de desempenho (M23) pode manter aqui so o que nao bateu edge consistente.
 # Dados reais (2026-10): remates e remates_a_baliza mostram ROI +25% a
@@ -433,6 +437,9 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     """
     event_id = estado.event_id
     minuto = int(estado.minuto or 0)
+    # Guarda o primeiro minuto em que vimos este jogo
+    if event_id not in _primeiro_minuto_visto:
+        _primeiro_minuto_visto[event_id] = minuto
     if minuto < projecao_live.MINUTOS_PROJECAO[0]:
         return 0
     # Filtro 1: muito perto do fim — projeccao perde sentido
@@ -548,20 +555,82 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                     )
             except Exception as exc:  # noqa: BLE001
                 log.debug("Treinador na projecao falhou: %s", exc)
-            # Mega-cerebro: 1 linha de sintese (silencio se sinal fraco)
+            # Aviso se apanhamos o jogo tarde — projecao pode ser menos
+            # fiavel se perdemos os primeiros N minutos
+            primeiro_min = _primeiro_minuto_visto.get(event_id, minuto)
+            if primeiro_min > 15:
+                extras += f"\n⚠ Jogo apanhado ao {primeiro_min}' — projecao pode subestimar ritmo inicial"
+            # Contexto de competicao (Fase A): peso do jogo + standings
+            contexto = None
             try:
-                from apostas.alertas.mega_cerebro import linha_para_telegram as mega_linha
+                from apostas.segundo_cerebro.contexto_competicao import (
+                    obter_contexto, resumo_telegram as resumo_ctx,
+                )
+                contexto = obter_contexto(
+                    liga_nome=estado.liga,
+                    tournament_id=estado.tournament_id,
+                    season_id=estado.season_id,
+                    home_id=estado.home_id,
+                    away_id=estado.away_id,
+                )
+                linha_ctx = resumo_ctx(contexto, estado.home, estado.away)
+                if linha_ctx:
+                    extras += "\n" + linha_ctx
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Contexto competicao falhou: %s", exc)
+            # Mega-cerebro: 1 linha de sintese (silencio se sinal fraco)
+            # Alem da linha, grava o sinal no ledger (Fase D) para o resolver
+            # poder avaliar depois.
+            try:
+                from apostas.alertas import mega_cerebro
                 if estado.home_id and estado.away_id:
-                    extras += mega_linha(
-                        home_id=int(estado.home_id),
-                        away_id=int(estado.away_id),
-                        minuto=minuto,
-                        score_casa=int(estado.marcador_casa or 0),
-                        score_fora=int(estado.marcador_fora or 0),
-                        sot_c=sot_c, sot_f=sot_f,
-                        cantos_c=can_c, cantos_f=can_f,
-                        cards_c=yel_c_live, cards_f=yel_f_live,
-                    )
+                    # Primeiro produz a sintese completa (sem passar logo pelo
+                    # wrapper string-only) para podermos tambem gravar o ledger.
+                    try:
+                        from apostas.alertas.confronto import analisar_confronto
+                        _res_conf = analisar_confronto(
+                            int(estado.home_id), int(estado.away_id),
+                            minuto=minuto,
+                            score_casa=int(estado.marcador_casa or 0),
+                            score_fora=int(estado.marcador_fora or 0),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("Confronto no mega falhou: %s", exc)
+                        _res_conf = None
+                    _sint = None
+                    if _res_conf is not None:
+                        _sint = mega_cerebro.sintetizar_a_partir_confronto(
+                            minuto=minuto,
+                            score_casa=int(estado.marcador_casa or 0),
+                            score_fora=int(estado.marcador_fora or 0),
+                            sot_c=sot_c, sot_f=sot_f,
+                            cantos_c=can_c, cantos_f=can_f,
+                            cards_c=yel_c_live, cards_f=yel_f_live,
+                            ficha_casa=_res_conf.ficha_casa,
+                            ficha_fora=_res_conf.ficha_fora,
+                            contexto=contexto,
+                        )
+                    if _sint is not None:
+                        extras += "\n" + _sint.to_telegram()
+                        # Fase D: grava no ledger
+                        try:
+                            from apostas.utils.db import abrir_sessao
+                            with abrir_sessao() as sess:
+                                mega_cerebro.gravar_sinal(
+                                    sess,
+                                    event_id=int(estado.event_id),
+                                    liga=estado.liga,
+                                    home=estado.home, away=estado.away,
+                                    minuto=minuto,
+                                    score_casa=int(estado.marcador_casa or 0),
+                                    score_fora=int(estado.marcador_fora or 0),
+                                    sot_c=sot_c, sot_f=sot_f,
+                                    cantos_c=can_c, cantos_f=can_f,
+                                    cards_c=yel_c_live, cards_f=yel_f_live,
+                                    sintese=_sint,
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            log.debug("Gravar sinal mega falhou: %s", exc)
             except Exception as exc:  # noqa: BLE001
                 log.debug("Mega-cerebro na projecao falhou: %s", exc)
             # ROI historico do mercado+liga

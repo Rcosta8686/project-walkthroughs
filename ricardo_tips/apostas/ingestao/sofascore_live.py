@@ -79,6 +79,12 @@ class EstadoLive:
     # jogos de paises banidos para apostas (Russia, Belarus, etc.).
     pais: str | None = None
 
+    # Fase A — contexto de competicao: uniqueTournament.id + season.id
+    # Permite puxar standings e saber se as equipas estao qualificadas
+    # ou a precisar de pontos.
+    tournament_id: int | None = None
+    season_id: int | None = None
+
     # Fase 10: ausencias pre-match (lesoes, suspensos, selecao). Cada
     # entry e um dict {nome, tipo, razao}. Preenchido quando
     # pregame-form respondeu com dados.
@@ -509,12 +515,18 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     _pais = _categoria.get("name") or (
         (_torneio.get("uniqueTournament") or {}).get("category") or {}
     ).get("name")
+    _ut = _torneio.get("uniqueTournament") or {}
+    _tournament_id = _ut.get("id") or _torneio.get("id")
+    _season = ev.get("season") or {}
+    _season_id = _season.get("id")
     estado = EstadoLive(
         event_id=event_id,
         home=_unescape_nome(ev.get("homeTeam", {}).get("name")),
         away=_unescape_nome(ev.get("awayTeam", {}).get("name")),
         liga=_unescape_nome(_torneio.get("name")),
         pais=_pais,
+        tournament_id=int(_tournament_id) if _tournament_id else None,
+        season_id=int(_season_id) if _season_id else None,
         minuto=_minuto_actual(ev),
         estado=ev.get("status", {}).get("code") or ev.get("status", {}).get("description", "?"),
         marcador_casa=int((ev.get("homeScore") or {}).get("current", 0) or 0),

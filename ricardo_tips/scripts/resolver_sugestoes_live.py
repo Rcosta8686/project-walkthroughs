@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 
+from apostas.alertas import mega_cerebro  # noqa: E402
 from apostas.ingestao import sofascore_live  # noqa: E402
 from apostas.ingestao._flaresolverr import FlaresolverrIndisponivel  # noqa: E402
 from apostas.modelos import clv_tracker, historico_equipas, historico_jogadores  # noqa: E402
@@ -262,6 +263,15 @@ def main() -> None:
                 print(f"        → historico jogadores: +{n_jog} linhas")
         except Exception as exc:  # noqa: BLE001
             log.warning("Historico jogadores event %s falhou: %s", eid, exc)
+
+        # Fase D: resolve sinais pendentes do mega-cerebro para este jogo
+        try:
+            with abrir_sessao() as sess:
+                n_mega = mega_cerebro.resolver_sinais_do_evento(sess, int(eid), res)
+                if n_mega:
+                    print(f"        → sinais mega-cerebro: {n_mega} resolvidos")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Resolver mega event %s falhou: %s", eid, exc)
 
         agora = datetime.utcnow().isoformat(timespec="seconds")
         for row in linhas_grupo:

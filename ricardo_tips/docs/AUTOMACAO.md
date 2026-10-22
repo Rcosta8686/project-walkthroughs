@@ -13,8 +13,9 @@ Como instalar as tasks que fazem o sistema correr sozinho.
 | **Previsão EV fim-de-semana** | **Sex 18:00** | ✅ |
 | **Relatório semanal** | **Seg 09:00** | ✅ |
 | **Relatório mensal** | **Dia 1, 07:00** | ✅ |
-| **Health check** (flaresolverr + CSV + BD) | Cada 30 min | ⚠ Só se houver problema |
+| **Health check** (flaresolverr + CSV + BD + fichas) | Cada 30 min | ⚠ Só se houver problema |
 | **Compactar CSV** (arquiva >90 dias) | **Dom 23:00** | ❌ Silencioso |
+| **Popular mini-cérebros** (ficha das equipas) | **Dom 02:00** | ❌ Silencioso |
 
 ## Instalar
 

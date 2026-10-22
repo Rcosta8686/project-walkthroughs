@@ -77,6 +77,15 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] seccao sombra falhou: {exc}")
 
+    # Seccao mega-cerebro: taxa de acerto por heuristica (Fase D)
+    try:
+        from apostas.relatorios.mega_cerebro_report import obter_relatorio_semanal
+        txt_mega = obter_relatorio_semanal(dias=args.dias)
+        if txt_mega:
+            texto += "\n\n" + txt_mega
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] seccao mega falhou: {exc}")
+
     print(texto)
 
     if args.telegram:

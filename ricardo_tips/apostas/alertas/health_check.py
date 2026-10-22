@@ -95,6 +95,54 @@ def _check_bd(db_path: Path) -> tuple[bool, str]:
         return False, f"BD falhou: {exc}"
 
 
+def _check_fichas_desactualizadas(min_jogos: int = 5) -> tuple[bool, str, dict]:
+    """Alerta se mais de 50% das equipas de ligas prioritarias tem ficha
+    com < min_jogos. Se o populator parou, isto detecta.
+
+    Devolve (ok, erro, detalhes).
+    """
+    try:
+        from sqlalchemy import select, func
+        from apostas.utils.db import abrir_sessao
+        from apostas.utils.schema import EstatisticaEquipaJogo
+    except Exception as exc:  # noqa: BLE001
+        return True, "", {"fichas_check": f"nao disponivel: {exc}"}
+
+    try:
+        with abrir_sessao() as sess:
+            total_jogos = sess.execute(
+                select(func.count(EstatisticaEquipaJogo.id))
+            ).scalar_one() or 0
+            # Equipas com pelo menos min_jogos de historico
+            team_counts = sess.execute(
+                select(EstatisticaEquipaJogo.sofascore_team_id,
+                       func.count(EstatisticaEquipaJogo.id).label("n"))
+                .group_by(EstatisticaEquipaJogo.sofascore_team_id)
+            ).all()
+            fracas = sum(1 for _, n in team_counts if n < min_jogos)
+            total_equipas = len(team_counts)
+    except Exception as exc:  # noqa: BLE001
+        return True, "", {"fichas_check": f"query falhou: {exc}"}
+
+    det = {
+        "fichas_total_jogos": total_jogos,
+        "fichas_total_equipas": total_equipas,
+        "fichas_fracas": fracas,
+    }
+    if total_equipas == 0:
+        return False, "fichas vazias — popular_cerebros nunca correu", det
+    pct_fracas = fracas / total_equipas
+    det["fichas_pct_fracas"] = round(pct_fracas * 100, 1)
+    if pct_fracas > 0.5:
+        return (
+            False,
+            f"fichas desactualizadas — {int(pct_fracas*100)}% das equipas "
+            f"com <{min_jogos} jogos",
+            det,
+        )
+    return True, "", det
+
+
 def correr_health_check(
     *,
     csv_path: Path | None = None,
@@ -128,6 +176,13 @@ def correr_health_check(
     if not ok:
         r.tudo_ok = False
         r.problemas.append(f"❌ Base de dados: {erro}")
+
+    # 4. Fichas desactualizadas
+    ok, erro, det = _check_fichas_desactualizadas()
+    r.detalhes.update(det)
+    if not ok:
+        r.tudo_ok = False
+        r.problemas.append(f"⚠ Fichas: {erro}")
 
     return r
 

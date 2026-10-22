@@ -691,6 +691,50 @@ class ApostaRealLive(Base):
     clv: Mapped[float | None] = mapped_column(Float)
 
 
+class SinalMegaCerebro(Base):
+    """Sinal emitido pelo mega-cerebro durante um jogo (Fase D).
+
+    Cada emissao e gravada aqui. Quando o jogo acaba, o resolver vai ver
+    se o sinal (ex: over cantos) se confirmou olhando ao total final.
+    O relatorio semanal cruza isto para dizer qual heuristica acerta.
+    """
+
+    __tablename__ = "sinais_mega_cerebro"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    liga: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    home: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    away: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    minuto_emitido: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_casa_emitido: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_fora_emitido: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Dados live no momento (para debug/analise)
+    sot_c: Mapped[int | None] = mapped_column(Integer)
+    sot_f: Mapped[int | None] = mapped_column(Integer)
+    cantos_c: Mapped[int | None] = mapped_column(Integer)
+    cantos_f: Mapped[int | None] = mapped_column(Integer)
+    cards_c: Mapped[int | None] = mapped_column(Integer)
+    cards_f: Mapped[int | None] = mapped_column(Integer)
+    # Sintese
+    mercado: Mapped[str] = mapped_column(String(30), nullable=False)
+    direccao: Mapped[str] = mapped_column(String(10), nullable=False)
+    razao: Mapped[str] = mapped_column(Text, nullable=False)
+    confianca: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Classificacao da heuristica (razao → tag curta, para agregar relatorio)
+    heuristica: Mapped[str] = mapped_column(String(30), nullable=False, default="?")
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    # Resolucao: pendente | acerto | falha | nao_resolvido
+    resolvido: Mapped[str] = mapped_column(
+        String(15), nullable=False, default="pendente"
+    )
+    resolvido_em: Mapped[datetime | None] = mapped_column(DateTime)
+    # Valor final observado (ex: total cantos no jogo = 11)
+    valor_final: Mapped[float | None] = mapped_column(Float)
+
+
 class BancaRegisto(Base):
     """Registo diario de banca para tracking + stop-loss (M13).
 

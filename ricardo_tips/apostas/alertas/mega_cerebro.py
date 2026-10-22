@@ -84,6 +84,8 @@ def sintetizar(
     remates_a_perder_f: float | None = None,
     baseline_remates_c: float | None = None,
     baseline_remates_f: float | None = None,
+    # Fase A: contexto de competicao
+    contexto=None,  # ContextoJogo | None
 ) -> Optional[SinteseMega]:
     """Combina estado live + perfis das 2 equipas em 1 leitura.
 
@@ -175,6 +177,59 @@ def sintetizar(
                 confianca=2,
             )
 
+    # Heuristica 5 (Fase A): peso MUITO ALTO + ambas as equipas acima do
+    # normal → sinal forte over remates. Jogos de final/semi/playoff
+    # tipicamente abrem no 2T.
+    if (contexto is not None
+            and getattr(contexto, "peso_jogo", None) == "muito_alto"
+            and r_sot_c is not None and r_sot_f is not None
+            and r_sot_c >= 1.15 and r_sot_f >= 1.15
+            and minuto >= 40):
+        return SinteseMega(
+            mercado="remates", direccao="over",
+            razao=f"{contexto.razao} + ambas acima do normal — jogo nao vai poupar",
+            confianca=3,
+        )
+
+    # Heuristica 6 (Fase A): equipa a precisar de pontos a chasing
+    # (perder) + adversario ja qualificado + minuto medio.
+    # Sinal: equipa a perder vai dar tudo, acima da media em SoT → over SoT
+    if contexto is not None and 40 <= minuto <= 80:
+        # Equipa que precisa pts a perder
+        for lado_name, lado_diff, r_sot_lado, precisa, segura_adv in (
+            ("casa", diff_c, r_sot_c,
+             getattr(contexto, "casa_precisa_pts", False),
+             getattr(contexto, "fora_ja_qualificada", False)),
+            ("fora", -diff_c, r_sot_f,
+             getattr(contexto, "fora_precisa_pts", False),
+             getattr(contexto, "casa_ja_qualificada", False)),
+        ):
+            if (lado_diff <= 0 and precisa and segura_adv
+                    and r_sot_lado is not None and r_sot_lado >= 1.2):
+                return SinteseMega(
+                    mercado="remates", direccao="over",
+                    razao=(f"equipa {lado_name} precisa pts + adversario "
+                           f"ja qualificado — chasing com SoT acima"),
+                    confianca=3,
+                )
+
+    # Heuristica 7 (Fase A): ambas as equipas a precisar de pontos (jogo
+    # de peso alto). Ambas atacam, jogo abre.
+    if contexto is not None and minuto >= 35:
+        c_prec = getattr(contexto, "casa_precisa_pts", False)
+        f_prec = getattr(contexto, "fora_precisa_pts", False)
+        peso = getattr(contexto, "peso_jogo", None)
+        if c_prec and f_prec and peso in ("alto", "muito_alto"):
+            # Confirma com ritmo real das 2 equipas
+            if (r_sot_c is not None and r_sot_f is not None
+                    and r_sot_c >= 1.1 and r_sot_f >= 1.1):
+                return SinteseMega(
+                    mercado="remates", direccao="over",
+                    razao=("ambas as equipas a precisar pts — jogo nao "
+                           "vai ser fechado"),
+                    confianca=3,
+                )
+
     return None
 
 
@@ -187,6 +242,7 @@ def sintetizar_a_partir_confronto(
     cantos_c: int | None, cantos_f: int | None,
     cards_c: int | None, cards_f: int | None,
     ficha_casa=None, ficha_fora=None,
+    contexto=None,
 ) -> Optional[SinteseMega]:
     """Wrapper que extrai os campos relevantes das FichaEquipa."""
     if ficha_casa is None or ficha_fora is None:
@@ -210,7 +266,138 @@ def sintetizar_a_partir_confronto(
         posse_c=bc.posse_pct, posse_f=bf.posse_pct,
         remates_a_perder_c=prc.remates_L, remates_a_perder_f=prf.remates_L,
         baseline_remates_c=bc.remates, baseline_remates_f=bf.remates,
+        contexto=contexto,
     )
+
+
+def classificar_heuristica(razao: str) -> str:
+    """Tag curta da heuristica a partir do texto da razao. Serve para
+    agregar o relatorio semanal por tipo de sinal."""
+    r = (razao or "").lower()
+    if "amarelos" in r:
+        return "H1_amarelos"
+    if "nao vai poupar" in r:
+        return "H5_peso_muito_alto"
+    if "precisa pts" in r and "ja qualificado" in r:
+        return "H6_chasing_contexto"
+    if "ambas as equipas a precisar" in r:
+        return "H7_ambas_pts"
+    if "ambas acima" in r:
+        return "H2_ambas_remates"
+    if "pressao pelas pontas" in r:
+        return "H3_pressao_lateral"
+    if "controlar" in r or "baixou ritmo" in r:
+        return "H4_dominante_controla"
+    return "H?_outra"
+
+
+def gravar_sinal(
+    session,
+    *,
+    event_id: int,
+    liga: str, home: str, away: str,
+    minuto: int,
+    score_casa: int, score_fora: int,
+    sot_c: int | None, sot_f: int | None,
+    cantos_c: int | None, cantos_f: int | None,
+    cards_c: int | None, cards_f: int | None,
+    sintese: SinteseMega,
+) -> int | None:
+    """Grava uma emissao do mega-cerebro na tabela SinalMegaCerebro.
+
+    Devolve o id da row ou None se falhar.
+    """
+    try:
+        from apostas.utils.schema import SinalMegaCerebro
+    except Exception:  # noqa: BLE001
+        return None
+    row = SinalMegaCerebro(
+        event_id=int(event_id), liga=liga, home=home, away=away,
+        minuto_emitido=int(minuto),
+        score_casa_emitido=int(score_casa),
+        score_fora_emitido=int(score_fora),
+        sot_c=sot_c, sot_f=sot_f,
+        cantos_c=cantos_c, cantos_f=cantos_f,
+        cards_c=cards_c, cards_f=cards_f,
+        mercado=sintese.mercado,
+        direccao=sintese.direccao,
+        razao=sintese.razao,
+        confianca=int(sintese.confianca),
+        heuristica=classificar_heuristica(sintese.razao),
+    )
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def resolver_sinais_do_evento(
+    session, event_id: int, totais_finais: dict,
+) -> int:
+    """Resolve todos os sinais pendentes de 1 jogo.
+
+    `totais_finais` deve ter: cantos_total, cards_amarelos_total,
+    shots_total, shots_on_target_total. Compara direccao+mercado com o
+    valor_atual_total do mercado (nao com linhas de aposta — o mega nao
+    emite odds, so direccao).
+
+    O criterio de acerto para o mega e "a direccao estava certa face ao
+    ritmo ate agora"? Nao — para avaliar o SINAL em si, comparamos com o
+    valor FINAL do jogo e a direccao esperada:
+      - over + total alto (acima da media do mercado) → acerto
+      - under + total baixo → acerto
+
+    Vamos usar bands ajustadas a baseline tipico:
+      cantos: over se >=11 ; under se <=9
+      cards: over se >=5 ; under se <=3
+      remates: over se >=22 ; under se <=18
+      sot: over se >=8 ; under se <=6
+    """
+    try:
+        from apostas.utils.schema import SinalMegaCerebro
+        from sqlalchemy import select
+    except Exception:  # noqa: BLE001
+        return 0
+
+    rows = session.execute(
+        select(SinalMegaCerebro).where(
+            SinalMegaCerebro.event_id == int(event_id),
+            SinalMegaCerebro.resolvido == "pendente",
+        )
+    ).scalars().all()
+    if not rows:
+        return 0
+
+    bands = {
+        "cantos":        {"val": totais_finais.get("cantos_total"),
+                           "hi": 11, "lo": 9},
+        "under_cantos":  {"val": totais_finais.get("cantos_total"),
+                           "hi": 11, "lo": 9},
+        "cards":         {"val": totais_finais.get("cards_amarelos_total"),
+                           "hi": 5, "lo": 3},
+        "remates":       {"val": totais_finais.get("shots_total"),
+                           "hi": 22, "lo": 18},
+        "sot":           {"val": totais_finais.get("shots_on_target_total"),
+                           "hi": 8, "lo": 6},
+    }
+    from datetime import datetime
+    agora = datetime.utcnow()
+    n = 0
+    for row in rows:
+        banda = bands.get(row.mercado)
+        if not banda or banda["val"] is None:
+            row.resolvido = "nao_resolvido"
+            row.resolvido_em = agora
+            continue
+        row.valor_final = float(banda["val"])
+        # Para over: acerto se val >= hi
+        # Para under (incluindo under_cantos): acerto se val <= lo
+        if row.direccao == "over":
+            row.resolvido = "acerto" if banda["val"] >= banda["hi"] else "falha"
+        else:
+            row.resolvido = "acerto" if banda["val"] <= banda["lo"] else "falha"
+        row.resolvido_em = agora
+        n += 1
+    return n
 
 
 def linha_para_telegram(
@@ -223,6 +410,7 @@ def linha_para_telegram(
     sot_c: int | None = None, sot_f: int | None = None,
     cantos_c: int | None = None, cantos_f: int | None = None,
     cards_c: int | None = None, cards_f: int | None = None,
+    contexto=None,
     confronto_fn=None,
 ) -> str:
     """Devolve '\\n🧠 Mega: ...' ou '' quando nao ha sinal.
@@ -251,6 +439,7 @@ def linha_para_telegram(
         cantos_c=cantos_c, cantos_f=cantos_f,
         cards_c=cards_c, cards_f=cards_f,
         ficha_casa=res.ficha_casa, ficha_fora=res.ficha_fora,
+        contexto=contexto,
     )
     if sint is None:
         return ""

@@ -108,6 +108,14 @@ $Tasks = @(
         Trigger = "Weekly"
         DayOfWeek = "Sunday"
         Time = "23:00"
+    },
+    @{
+        Name = "RicardoTips_PopularCerebros"
+        Script = "popular_cerebros.py"
+        Args = ""
+        Trigger = "Weekly"
+        DayOfWeek = "Sunday"
+        Time = "02:00"
     }
 )
 
