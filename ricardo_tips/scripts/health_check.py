@@ -1,16 +1,28 @@
 """Health check — chamado pelo Task Scheduler cada 30 min.
 
-Verifica flaresolverr + CSV live + BD. Se algo falhar, envia 1 mensagem
-Telegram. Se tudo OK, fica em silencio (nao enche a atencao).
+Verifica flaresolverr + CSV live + BD + fichas. Se algo falhar, envia 1
+mensagem Telegram. Se tudo OK, fica em silencio.
+
+**Dedupe**: nao envia o mesmo problema duas vezes seguidas. Guarda o
+hash dos problemas em `dados/health_check_estado.json`:
+  - estado mudou (novo problema OU problema diferente) → envia
+  - estado igual + <6h desde ultimo envio → silencio
+  - estado igual + >=6h → re-envia como lembrete
+  - problema resolveu (tudo_ok e estado anterior tinha problemas) →
+    envia 1 mensagem "✅ Resolvido"
 
 Uso:
-  python scripts/health_check.py                   # imprime + Telegram se problema
-  python scripts/health_check.py --sempre          # imprime sempre (debug)
+  python scripts/health_check.py                   # dedupe activo
+  python scripts/health_check.py --sempre          # imprime sempre
+  python scripts/health_check.py --forcar          # ignora dedupe
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -24,26 +36,107 @@ except (AttributeError, OSError):
 from apostas.alertas.health_check import (  # noqa: E402
     correr_health_check, formatar_telegram,
 )
+from apostas.utils.config import project_root  # noqa: E402
+from apostas.utils.tempo import agora_utc  # noqa: E402
+
+_ESTADO_PATH = project_root() / "dados" / "health_check_estado.json"
+_HORAS_RELEMBRAR = 6
+
+
+def _hash_problemas(problemas: list[str]) -> str:
+    """Hash estavel dos problemas (ignora detalhes variaveis como minutos)."""
+    # Normaliza — remove numeros variaveis que fazem o hash mudar sem razao
+    import re
+    normalizados = []
+    for p in sorted(problemas):
+        # Remove numeros (minutos, percentagens) para que "sem update ha 30 min"
+        # e "sem update ha 45 min" tenham o mesmo hash
+        n = re.sub(r"\d+", "N", p)
+        normalizados.append(n)
+    raw = "\n".join(normalizados).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:12]
+
+
+def _ler_estado() -> dict:
+    if not _ESTADO_PATH.exists():
+        return {}
+    try:
+        return json.loads(_ESTADO_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _escrever_estado(d: dict) -> None:
+    _ESTADO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ESTADO_PATH.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] nao gravou estado: {exc}")
+
+
+def _deve_enviar(resultado, estado: dict, forcar: bool) -> tuple[bool, str]:
+    """Decide se envia a mensagem. Devolve (envia, motivo)."""
+    if forcar:
+        return True, "flag --forcar"
+    anterior_ok = estado.get("tudo_ok", True)
+    anterior_hash = estado.get("hash")
+    anterior_ts = estado.get("ultimo_envio")
+
+    if resultado.tudo_ok and not anterior_ok:
+        return True, "problemas resolvidos"
+    if resultado.tudo_ok:
+        return False, "tudo OK (silencio)"
+
+    # Com problemas
+    h_atual = _hash_problemas(resultado.problemas)
+    if anterior_ok or anterior_hash != h_atual:
+        return True, "estado mudou"
+    # Mesmo estado — espera 6h antes de relembrar
+    if anterior_ts:
+        from datetime import datetime
+        try:
+            ts = datetime.fromisoformat(anterior_ts)
+            if agora_utc() - ts >= timedelta(hours=_HORAS_RELEMBRAR):
+                return True, f"relembra ({_HORAS_RELEMBRAR}h passaram)"
+        except Exception:  # noqa: BLE001
+            return True, "ts anterior invalido"
+    return False, "mesmo problema, <6h desde ultimo"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sempre", action="store_true",
                         help="Imprime relatorio mesmo quando tudo OK.")
+    parser.add_argument("--forcar", action="store_true",
+                        help="Ignora dedupe e envia sempre.")
     args = parser.parse_args()
 
     r = correr_health_check()
     texto = formatar_telegram(r)
     print(texto)
 
-    if r.tudo_ok and not args.sempre:
+    estado = _ler_estado()
+    envia, motivo = _deve_enviar(r, estado, forcar=args.forcar)
+    print(f"\n[dedupe] {motivo}")
+
+    if r.tudo_ok and not args.sempre and not envia:
         return 0
 
-    if not r.tudo_ok:
+    if envia:
         try:
             from apostas.alertas.telegram_cliente import cliente
-            cliente().enviar(texto)
-            print("\n[OK] Alerta enviado para Telegram.")
+            # Se resolveu, prefixar
+            msg = texto
+            if r.tudo_ok:
+                msg = "✅ Sistema OK — problemas anteriores resolvidos."
+            cliente().enviar(msg)
+            print("\n[OK] Mensagem enviada para Telegram.")
+            _escrever_estado({
+                "tudo_ok": r.tudo_ok,
+                "hash": _hash_problemas(r.problemas) if r.problemas else "",
+                "ultimo_envio": agora_utc().isoformat(),
+                "problemas": r.problemas,
+            })
         except Exception as exc:  # noqa: BLE001
             print(f"\n[ERRO] Nao conseguiu enviar Telegram: {exc}")
             return 2
