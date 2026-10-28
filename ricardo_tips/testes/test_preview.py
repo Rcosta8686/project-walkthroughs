@@ -154,6 +154,66 @@ def test_formatar_preview_tem_icones_para_padroes():
     assert "4.5" in texto
 
 
+def test_escolher_aposta_golos_altos_sugere_over():
+    """Projeccao 4.7 golos → recomenda OVER 3.5 com estrelas altas."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
+    j = LinhaJogoPreview(
+        hora="19:00", liga="L", home="A", away="B",
+        event_id=1, home_id=1, away_id=2,
+        golos_esperados=4.7,
+    )
+    aposta = _escolher_aposta(j)
+    assert aposta is not None
+    assert aposta.mercado == "golos"
+    assert aposta.direccao == "over"
+    assert aposta.linha == 3.5
+    assert aposta.estrelas == 3  # edge > 0.18
+
+
+def test_escolher_aposta_projecao_perto_da_linha_sem_recomendacao():
+    """Projeccao 2.5 (= linha) nao sugere nada — edge insignificante."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
+    j = LinhaJogoPreview(
+        hora="19:00", liga="L", home="A", away="B",
+        event_id=1, home_id=1, away_id=2,
+        golos_esperados=2.5,  # exactamente na linha
+    )
+    assert _escolher_aposta(j) is None
+
+
+def test_escolher_aposta_escolhe_mercado_com_maior_edge():
+    """Dado varios mercados, escolhe aquele com maior |prob-0.5|."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
+    j = LinhaJogoPreview(
+        hora="19:00", liga="L", home="A", away="B",
+        event_id=1, home_id=1, away_id=2,
+        golos_esperados=2.5,     # neutro (linha 2.5)
+        cards_esperados=4.5,      # neutro (linha 4.5)
+        cantos_esperados=14.0,    # muito acima — linha 12.5 fica edge >~0.13
+        sot_esperados=8.5,        # neutro
+    )
+    aposta = _escolher_aposta(j)
+    assert aposta is not None
+    assert aposta.mercado == "cantos"
+    assert aposta.direccao == "over"
+
+
+def test_formatar_linha_inclui_aposta_quando_edge_forte():
+    """Preview com projecao forte mostra linha '⭐⭐⭐ ... OVER X.X ...'."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _formatar_linha
+    j = LinhaJogoPreview(
+        hora="19:00", liga="Serie A", home="Napoli", away="Pisa",
+        event_id=1, home_id=1, away_id=2,
+        golos_esperados=4.5,
+        cantos_esperados=11.0,
+    )
+    linhas = _formatar_linha(j)
+    txt = "\n".join(linhas)
+    assert "⭐" in txt
+    assert "OVER" in txt
+    assert "@ " in txt  # odd justa
+
+
 def test_formatar_preview_ordena_por_hora():
     agora = datetime(2026, 10, 19, 12, 0)
     ts_19h = int(datetime(2026, 10, 19, 19, 0).timestamp())

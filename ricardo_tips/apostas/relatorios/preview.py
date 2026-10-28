@@ -6,19 +6,71 @@ A logica puxa:
   - Para cada jogo, consulta `confronto.analisar_confronto(home_id, away_id)`
     (sem minuto/score — pre-match) → ResultadoConfronto com projeccoes
     esperadas, padroes cruzados e alertas de fadiga.
-  - Formata em texto Telegram-ready com 1-2 linhas por jogo + os padroes
-    descobertos.
+  - Para cada jogo, escolhe o MELHOR mercado (over/under golos, cards,
+    cantos ou SoT) comparando a projeccao com as linhas tipicas das
+    casas e calcula a odd justa Poisson. Pontua com estrelas pela
+    confianca do edge.
+  - Formata em texto Telegram-ready: por cada jogo, 1 linha "aposta
+    recomendada" + racional (padroes + ROI historico se disponivel) +
+    projecoes brutas compactas.
 
 Nao chama Sofascore pelo live predictor — e so pre-match, mais barato.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from apostas.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+
+# ─── Mercados e linhas tipicas ────────────────────────────────────────
+
+# Linhas tipicas (half-point, sem push) que as casas oferecem em pre-match.
+# Escolhemos a linha mais proxima da projeccao para calcular EV.
+_LINHAS_TIPICAS = {
+    "golos":  [1.5, 2.5, 3.5],
+    "cards":  [2.5, 3.5, 4.5, 5.5, 6.5],
+    "cantos": [7.5, 8.5, 9.5, 10.5, 11.5, 12.5],
+    "sot":    [6.5, 7.5, 8.5, 9.5, 10.5, 11.5],
+}
+
+_NOMES_MERCADO = {
+    "golos":  ("⚽", "golos"),
+    "cards":  ("🟨", "cards amarelos"),
+    "cantos": ("🚩", "cantos"),
+    "sot":    ("🎯", "remates a baliza"),
+}
+
+
+def _poisson_prob_over(linha: float, lam: float) -> float:
+    """P(X > linha) com X ~ Poisson(lam). Linha .5 = sem push.
+
+    Para linha 2.5 → P(X >= 3) = 1 - P(X <= 2) = 1 - sum pmf(0..2).
+    """
+    if lam <= 0:
+        return 0.0
+    n_min = int(math.floor(linha)) + 1
+    prob_abaixo = 0.0
+    for k in range(n_min):
+        prob_abaixo += math.exp(-lam) * (lam ** k) / math.factorial(k)
+    return max(0.0, min(1.0, 1.0 - prob_abaixo))
+
+
+@dataclass
+class ApostaRecomendada:
+    """Melhor mercado para 1 jogo, pronto para Telegram."""
+    mercado: str          # 'golos' | 'cards' | 'cantos' | 'sot'
+    linha: float
+    direccao: str         # 'over' | 'under'
+    projeccao: float
+    prob: float           # 0.0-1.0
+    odd_fair: float       # 1/prob
+    edge: float           # |prob - 0.5|  (quanto mais, mais confianca)
+    estrelas: int         # 1-3
 
 
 @dataclass
@@ -155,6 +207,93 @@ def gerar_preview(
 
 # ─── Formatacao Telegram ───────────────────────────────────────────
 
+def _escolher_aposta(j: LinhaJogoPreview) -> ApostaRecomendada | None:
+    """Dado um jogo com projecoes, devolve o mercado com maior edge
+    vs linhas tipicas das casas. None se nenhum mercado tem edge
+    significativo (>=55% ou <=45%)."""
+    candidatos: list[ApostaRecomendada] = []
+    projs = (
+        ("golos", j.golos_esperados),
+        ("cards", j.cards_esperados),
+        ("cantos", j.cantos_esperados),
+        ("sot", j.sot_esperados),
+    )
+    for mercado, lam in projs:
+        if lam is None or lam <= 0.5:
+            continue
+        linhas = _LINHAS_TIPICAS[mercado]
+        linha = min(linhas, key=lambda l: abs(l - lam))
+        prob_over = _poisson_prob_over(linha, lam)
+        edge = abs(prob_over - 0.5)
+        direccao = "over" if prob_over >= 0.5 else "under"
+        prob = prob_over if direccao == "over" else 1 - prob_over
+        candidatos.append(ApostaRecomendada(
+            mercado=mercado, linha=linha, direccao=direccao,
+            projeccao=round(lam, 1), prob=round(prob, 3),
+            odd_fair=round(1.0 / prob, 2) if prob > 0.01 else 100.0,
+            edge=round(edge, 3), estrelas=0,
+        ))
+    if not candidatos:
+        return None
+    melhor = max(candidatos, key=lambda a: a.edge)
+    # Edge minimo para destacar — abaixo disto a projecao esta demasiado
+    # proxima da linha e nao vale emitir recomendacao.
+    if melhor.edge < 0.07:
+        return None
+    # Estrelas por edge: >=0.18 → 3, >=0.12 → 2, resto 1
+    if melhor.edge >= 0.18:
+        melhor.estrelas = 3
+    elif melhor.edge >= 0.12:
+        melhor.estrelas = 2
+    else:
+        melhor.estrelas = 1
+    return melhor
+
+
+_cache_perfis_preview: dict | None = None
+
+
+def _roi_para_mercado(liga: str, mercado: str) -> str:
+    """Devolve '📊 ROI +12% em 45 alertas' ou '' se nao ha historico."""
+    global _cache_perfis_preview
+    try:
+        from apostas.alertas.historico_alertas import (
+            agregar_por_mercado, carregar_perfis,
+        )
+        from apostas.utils.config import project_root
+    except Exception:  # noqa: BLE001
+        return ""
+    if _cache_perfis_preview is None:
+        try:
+            csv_path = (project_root() / "dados" / "tracking"
+                        / "sugestoes_live_v2.csv")
+            _cache_perfis_preview = carregar_perfis(csv_path) or {}
+        except Exception:  # noqa: BLE001
+            _cache_perfis_preview = {}
+    if not _cache_perfis_preview:
+        return ""
+    merc_key = "remates_a_baliza" if mercado == "sot" else mercado
+    try:
+        agg = agregar_por_mercado(_cache_perfis_preview).get((liga, merc_key))
+    except Exception:  # noqa: BLE001
+        return ""
+    if agg is None or agg.n_resolvidos < 10 or agg.roi is None:
+        return ""
+    sinal = "+" if agg.roi >= 0 else ""
+    return f"📊 ROI {sinal}{agg.roi:.1f}% em {agg.n_resolvidos} alertas"
+
+
+def _formatar_aposta(aposta: ApostaRecomendada) -> str:
+    emoji, nome = _NOMES_MERCADO[aposta.mercado]
+    estrelas = "⭐" * aposta.estrelas
+    direccao_up = aposta.direccao.upper()
+    return (
+        f"   {estrelas} {emoji} *{direccao_up} {aposta.linha:.1f} {nome}* "
+        f"@ {aposta.odd_fair:.2f}  ({aposta.prob*100:.0f}% · "
+        f"proj {aposta.projeccao})"
+    )
+
+
 def _emoji_padroes(padroes: list[str]) -> str:
     """Compacta padroes em icons sequenciais para a linha resumo."""
     icons = []
@@ -173,7 +312,13 @@ def _emoji_padroes(padroes: list[str]) -> str:
 
 
 def _formatar_linha(j: LinhaJogoPreview) -> list[str]:
-    """Produz 1-3 linhas de texto para 1 jogo."""
+    """Produz linhas de texto para 1 jogo:
+      1. Titulo: hora + equipas + icons de padroes
+      2. Liga + projecoes brutas (compactas)
+      3. Aposta recomendada (quando ha edge >=7%): mercado + linha + odd justa
+      4. ROI historico do (liga, mercado) se disponivel
+      5. Padrao detalhado principal (quando ha)
+    """
     linhas = []
     titulo = f"⚽ *{j.hora}*  {j.home} vs {j.away}"
     icons = _emoji_padroes(j.padroes)
@@ -181,7 +326,7 @@ def _formatar_linha(j: LinhaJogoPreview) -> list[str]:
         titulo += f"  {icons}"
     linhas.append(titulo)
 
-    # Projecoes (quando temos dados)
+    # Projecoes compactas (quando temos dados)
     projs = []
     if j.golos_esperados is not None:
         projs.append(f"⚽ {j.golos_esperados:.1f}")
@@ -192,12 +337,20 @@ def _formatar_linha(j: LinhaJogoPreview) -> list[str]:
     if j.sot_esperados is not None:
         projs.append(f"🎯 {j.sot_esperados:.1f}")
     if projs:
-        linhas.append(f"   _{j.liga}_  ·  Projecoes: {' · '.join(projs)}")
+        linhas.append(f"   _{j.liga}_  ·  {' · '.join(projs)}")
     else:
         linhas.append(f"   _{j.liga}_")
 
-    # Primeiro padrao detalhado (nao mais que 1 por jogo para nao estourar
-    # o limite Telegram de 4096 chars num preview de 15-30 jogos)
+    # Aposta recomendada (melhor mercado por edge)
+    aposta = _escolher_aposta(j)
+    if aposta is not None:
+        linhas.append(_formatar_aposta(aposta))
+        # ROI historico desse mercado nessa liga (se >=10 resolvidos)
+        roi_line = _roi_para_mercado(j.liga, aposta.mercado)
+        if roi_line:
+            linhas.append(f"   {roi_line}")
+
+    # Padrao detalhado (max 1 — espaco Telegram)
     if j.padroes:
         linhas.append(f"   → {j.padroes[0]}")
     return linhas
@@ -233,7 +386,10 @@ def formatar_preview_telegram(
 
     # Legenda icons no fim (compacta)
     linhas.append(
-        "_Legenda_: ⚡ ambas carregam 2T · 🟡 discrepancia cards · "
+        "_Aposta_: ⭐⭐⭐ = edge forte (prob >=68%); @ e a odd justa — so apostar se a casa paga MAIS."
+    )
+    linhas.append(
+        "_Padroes_: ⚡ ambas carregam 2T · 🟡 discrepancia cards · "
         "🎯 posse clara · 🔄 vira jogos · 🔥 a perder empurra"
     )
 
