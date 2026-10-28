@@ -45,7 +45,10 @@ $Tasks = @(
         Name = "RicardoTips_Scanner"
         Script = "scanner_live_v2.py"
         Args = "--intervalo-s 180 --telegram --ev-minimo-telegram 0.07"
-        Trigger = "Logon"
+        # LogonAndStartup: dispara ao login (user) e ao arranque do PC
+        # (antes de login). Garante que o scanner volta sozinho mesmo
+        # quando o PC reinicia sem login manual.
+        Trigger = "LogonAndStartup"
         RestartOnFailure = $true
     },
     @{
@@ -147,6 +150,12 @@ function New-RicardoTrigger {
     switch ($TaskDef.Trigger) {
         "Logon" {
             return New-ScheduledTaskTrigger -AtLogOn
+        }
+        "LogonAndStartup" {
+            # 2 triggers: dispara ao login do user E ao arranque do PC
+            $t1 = New-ScheduledTaskTrigger -AtLogOn
+            $t2 = New-ScheduledTaskTrigger -AtStartup
+            return @($t1, $t2)
         }
         "Daily" {
             return New-ScheduledTaskTrigger -Daily -At $TaskDef.Time

@@ -6,7 +6,7 @@ Como instalar as tasks que fazem o sistema correr sozinho.
 
 | Task | Quando | Envia Telegram? |
 |---|---|---|
-| **Scanner live** | Ao login do PC (reinicia se cair) | ✅ Alertas em tempo real |
+| **Scanner live** | Ao login E ao arranque do PC (reinicia se cair) | ✅ Alertas em tempo real |
 | **Resolver** (fecha jogos + grava histórico) | Cada 90 min | ❌ Silencioso |
 | **Preview do dia** (jogos de hoje) | **17:00** diário | ✅ |
 | **Preview tático fim-de-semana** | **Sex 17:00** | ✅ |
