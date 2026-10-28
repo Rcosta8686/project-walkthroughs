@@ -207,10 +207,22 @@ def gerar_preview(
 
 # ─── Formatacao Telegram ───────────────────────────────────────────
 
+# Minimos sanity-check por mercado — projeccoes abaixo disto indicam
+# ficha incompleta/vazia e geram recomendacoes falsas (ex: cantos 2.0
+# da UNDER com prob 100%). Melhor silenciar.
+_LAM_MINIMO = {
+    "golos":  1.0,   # <1 golo esperado = jogo degenerado
+    "cards":  2.0,   # <2 amarelos num jogo e improvavel
+    "cantos": 6.0,   # <6 cantos indica ficha vazia (media real ~10)
+    "sot":    5.0,   # <5 SoT indica ficha vazia
+}
+
+
 def _escolher_aposta(j: LinhaJogoPreview) -> ApostaRecomendada | None:
     """Dado um jogo com projecoes, devolve o mercado com maior edge
     vs linhas tipicas das casas. None se nenhum mercado tem edge
-    significativo (>=55% ou <=45%)."""
+    significativo (>=55% ou <=45%) ou se as projeccoes parecem
+    corrompidas por fichas vazias."""
     candidatos: list[ApostaRecomendada] = []
     projs = (
         ("golos", j.golos_esperados),
@@ -219,7 +231,10 @@ def _escolher_aposta(j: LinhaJogoPreview) -> ApostaRecomendada | None:
         ("sot", j.sot_esperados),
     )
     for mercado, lam in projs:
-        if lam is None or lam <= 0.5:
+        if lam is None:
+            continue
+        if lam < _LAM_MINIMO[mercado]:
+            # Projecao irrealisticamente baixa — ficha vazia. Ignora.
             continue
         linhas = _LINHAS_TIPICAS[mercado]
         linha = min(linhas, key=lambda l: abs(l - lam))
@@ -227,6 +242,10 @@ def _escolher_aposta(j: LinhaJogoPreview) -> ApostaRecomendada | None:
         edge = abs(prob_over - 0.5)
         direccao = "over" if prob_over >= 0.5 else "under"
         prob = prob_over if direccao == "over" else 1 - prob_over
+        # Prob >= 90% ou <= 10% nunca e credivel pre-match — rejeita.
+        # Ou e sinal de linha mal escolhida ou de projeccao corrompida.
+        if prob >= 0.9:
+            continue
         candidatos.append(ApostaRecomendada(
             mercado=mercado, linha=linha, direccao=direccao,
             projeccao=round(lam, 1), prob=round(prob, 3),

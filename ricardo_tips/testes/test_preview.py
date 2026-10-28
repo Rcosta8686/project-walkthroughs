@@ -181,6 +181,30 @@ def test_escolher_aposta_projecao_perto_da_linha_sem_recomendacao():
     assert _escolher_aposta(j) is None
 
 
+def test_escolher_aposta_ignora_projecao_corrompida_por_ficha_vazia():
+    """Cantos projectados 2.0 e irrealistico — ignora (ficha vazia)."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
+    j = LinhaJogoPreview(
+        hora="19:00", liga="Serie B", home="A", away="B",
+        event_id=1, home_id=1, away_id=2,
+        cantos_esperados=2.0,  # abaixo do minimo (6.0) — ficha vazia
+    )
+    assert _escolher_aposta(j) is None
+
+
+def test_escolher_aposta_rejeita_prob_absurda():
+    """Prob >= 90% nunca e credivel pre-match."""
+    from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
+    # Golos projectados muito acima da linha mais alta (3.5) → prob > 90%
+    j = LinhaJogoPreview(
+        hora="19:00", liga="L", home="A", away="B",
+        event_id=1, home_id=1, away_id=2,
+        golos_esperados=7.0,  # mas prob OVER 3.5 ~= 95%+
+    )
+    # So devolve se houver outro mercado com edge menor que nao atinja 90%
+    assert _escolher_aposta(j) is None
+
+
 def test_escolher_aposta_escolhe_mercado_com_maior_edge():
     """Dado varios mercados, escolhe aquele com maior |prob-0.5|."""
     from apostas.relatorios.preview import LinhaJogoPreview, _escolher_aposta
