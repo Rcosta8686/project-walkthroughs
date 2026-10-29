@@ -79,6 +79,85 @@ _projecoes_enviadas: dict[int, set[int]] = {}
 # tarde (restart ou arrancou pelo meio) — adicionamos aviso na projecao.
 _primeiro_minuto_visto: dict[int, int] = {}
 
+# Limiares do modo exigente
+_EV_MIN_EXIGENTE = 0.10
+_CONFIANCA_MEGA_MIN = 2
+_JOGOS_FICHA_MIN = 5
+
+
+def _passa_modo_exigente(s: dict) -> bool:
+    """Filtro multi-camada para o modo exigente.
+
+    Exige em simultaneo:
+      - EV >= 0.10
+      - mega-cerebro emite sintese com confianca >= 2
+      - ambas as fichas das equipas com >= 5 jogos
+
+    Devolve True se o sinal passa todos os filtros.
+    """
+    # 1. EV
+    try:
+        ev = float(s.get("ev", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if ev < _EV_MIN_EXIGENTE:
+        return False
+
+    # 2. IDs necessarios
+    home_id = s.get("home_id")
+    away_id = s.get("away_id")
+    if not home_id or not away_id:
+        return False
+
+    # 3. Fichas + mega-cerebro — reutiliza confronto + mega.sintetizar_a_partir_confronto
+    try:
+        from apostas.alertas.confronto import analisar_confronto
+        from apostas.alertas import mega_cerebro
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        _mc, _mf = str(s.get("marcador") or "0-0").split("-", 1)
+        sc_c, sc_f = int(_mc.strip()), int(_mf.strip())
+    except (ValueError, AttributeError):
+        sc_c = sc_f = 0
+    try:
+        minuto = int(s.get("minuto") or 0)
+    except (TypeError, ValueError):
+        minuto = 0
+    try:
+        res = analisar_confronto(
+            int(home_id), int(away_id),
+            minuto=minuto, score_casa=sc_c, score_fora=sc_f,
+            liga_nome=s.get("liga"),
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if res is None:
+        return False
+    # Fichas com dados minimos
+    try:
+        if (res.ficha_casa.jogos_lidos < _JOGOS_FICHA_MIN
+                or res.ficha_fora.jogos_lidos < _JOGOS_FICHA_MIN):
+            return False
+    except AttributeError:
+        return False
+
+    # Mega-cerebro
+    try:
+        sint = mega_cerebro.sintetizar_a_partir_confronto(
+            minuto=minuto, score_casa=sc_c, score_fora=sc_f,
+            sot_c=s.get("shots_on_target_c"), sot_f=s.get("shots_on_target_f"),
+            cantos_c=s.get("corners_c"), cantos_f=s.get("corners_f"),
+            cards_c=s.get("yellows_c"), cards_f=s.get("yellows_f"),
+            ficha_casa=res.ficha_casa, ficha_fora=res.ficha_fora,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if sint is None or sint.confianca < _CONFIANCA_MEGA_MIN:
+        return False
+
+    return True
+
 # Mercados cujo sinal pontual nao vai a Telegram por *default*. O filtro
 # de desempenho (M23) pode manter aqui so o que nao bateu edge consistente.
 # Dados reais (2026-10): remates e remates_a_baliza mostram ROI +25% a
@@ -1337,6 +1416,15 @@ def _correr_ciclo(args) -> None:
                 # Max 1 notificacao por jogo por ciclo
                 if jogo_key in jogos_notificados_este_ciclo:
                     continue
+                # Modo exigente: EV>=0.10 + mega-cerebro confianca>=2 +
+                # ambas as fichas com >=5 jogos
+                if args.modo_exigente:
+                    try:
+                        if not _passa_modo_exigente(s):
+                            continue
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("Filtro exigente falhou: %s", exc)
+                        continue
                 telegram_live.enviar_sugestao_live(s)
                 _marcar_enviado(event_id, mercado, lado, linha)
                 jogos_notificados_este_ciclo.add(jogo_key)
@@ -1381,6 +1469,11 @@ def main() -> None:
                              "Telegram, mesmo sem passar filtro Paulo Rebelo "
                              "(default 3). Util para ligas sem Odds API mapeado. "
                              "Pon 5 para so os de 5 estrelas; 2 para quase tudo.")
+    parser.add_argument("--modo-exigente", action="store_true",
+                        help="So manda sinais que passam o filtro combinado: "
+                             "EV>=0.10 + mega-cerebro com confianca>=2 + "
+                             "ambas as fichas com >=5 jogos. Reduz volume mas "
+                             "cada alerta tem concordancia multi-camada.")
     args = parser.parse_args()
 
     print("Scanner LIVE v2 iniciado.")

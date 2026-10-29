@@ -44,7 +44,10 @@ $Tasks = @(
     @{
         Name = "RicardoTips_Scanner"
         Script = "scanner_live_v2.py"
-        Args = "--intervalo-s 180 --telegram --ev-minimo-telegram 0.07"
+        # --modo-exigente: so manda sinais com EV>=10% + mega-cerebro
+        # com confianca>=2 + ambas as fichas com >=5 jogos. Reduz volume
+        # mas cada alerta tem concordancia multi-camada.
+        Args = "--intervalo-s 180 --telegram --ev-minimo-telegram 0.07 --modo-exigente"
         # LogonAndStartup: dispara ao login (user) e ao arranque do PC
         # (antes de login). Garante que o scanner volta sozinho mesmo
         # quando o PC reinicia sem login manual.

@@ -42,6 +42,27 @@ from apostas.utils.tempo import agora_utc  # noqa: E402
 _ESTADO_PATH = project_root() / "dados" / "health_check_estado.json"
 _HORAS_RELEMBRAR = 6
 
+# Horas (local Lisboa) em que o health check envia alertas. Fora desta
+# janela e horario sem jogos interessantes (madrugada + manha), por isso
+# qualquer alerta e silenciado. Problemas detectados sao sempre impressos
+# no stdout, apenas nao vao para Telegram.
+_HORA_ENVIO_INICIO = 16   # 16:00
+_HORA_ENVIO_FIM = 2       # 02:00 (do dia seguinte)
+
+
+def _dentro_janela_envio(agora_local=None) -> bool:
+    """True se a hora local de Lisboa esta na janela 16:00-02:00."""
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        if agora_local is None:
+            agora_local = datetime.now(ZoneInfo("Europe/Lisbon"))
+        h = agora_local.hour
+    except Exception:  # noqa: BLE001
+        return True  # na duvida, deixa enviar
+    # Janela 16:00-02:00 cruza a meia-noite: 16-23 OU 0-1
+    return (h >= _HORA_ENVIO_INICIO) or (h < _HORA_ENVIO_FIM)
+
 
 def _hash_problemas(problemas: list[str]) -> str:
     """Hash estavel dos problemas (ignora detalhes variaveis como minutos)."""
@@ -87,7 +108,11 @@ def _deve_enviar(resultado, estado: dict, forcar: bool) -> tuple[bool, str]:
     if resultado.tudo_ok:
         return False, "tudo OK (silencio)"
 
-    # Com problemas
+    # Silencio fora da janela 16:00-02:00 (horas sem jogos interessantes)
+    if not _dentro_janela_envio():
+        return False, "fora da janela 16h-02h (silencio nocturno/matinal)"
+
+    # Com problemas na janela activa
     h_atual = _hash_problemas(resultado.problemas)
     if anterior_ok or anterior_hash != h_atual:
         return True, "estado mudou"
