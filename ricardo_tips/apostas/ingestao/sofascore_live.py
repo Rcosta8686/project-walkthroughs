@@ -204,6 +204,12 @@ class EstadoLive:
     substituicoes_casa: int = 0                 # subs ja feitas
     substituicoes_fora: int = 0
 
+    # ─── Lineup pre-match (titulares iniciais, para deteccao de rotacao) ──
+    # Lista de (player_id, nome) dos 11 titulares de cada equipa. Vazia se
+    # o lineup ainda nao esta disponivel.
+    lineup_titulares_casa: list[tuple[int, str]] = field(default_factory=list)
+    lineup_titulares_fora: list[tuple[int, str]] = field(default_factory=list)
+
     # Raw payloads (debug / para análises futuras)
     _raw_event: dict = field(default_factory=dict, repr=False)
     _raw_stats: dict = field(default_factory=dict, repr=False)
@@ -827,6 +833,14 @@ def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
                 continue
             em_campo.append(p)
 
+        # Titulares (player_id, nome) para deteccao de rotacao
+        titulares = []
+        for p in em_campo:
+            player = p.get("player") or {}
+            pid = player.get("id")
+            if pid:
+                titulares.append((int(pid), player.get("name") or "?"))
+
         ratings = []
         rating_top = -1.0
         jogador_top = None
@@ -857,12 +871,14 @@ def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
             estado.rating_top_casa = rating_top if rating_top > 0 else None
             estado.jogador_chave_casa = jogador_top
             estado.rating_gr_casa = rating_gr
+            estado.lineup_titulares_casa = titulares
         else:
             estado.formacao_fora = formacao
             estado.rating_medio_fora = media
             estado.rating_top_fora = rating_top if rating_top > 0 else None
             estado.jogador_chave_fora = jogador_top
             estado.rating_gr_fora = rating_gr
+            estado.lineup_titulares_fora = titulares
 
 
 def _preencher_substituicoes(estado: EstadoLive, incidents_payload: dict) -> None:

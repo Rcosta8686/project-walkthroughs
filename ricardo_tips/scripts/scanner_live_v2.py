@@ -561,6 +561,31 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             primeiro_min = _primeiro_minuto_visto.get(event_id, minuto)
             if primeiro_min > 15:
                 extras += f"\n⚠ Jogo apanhado ao {primeiro_min}' — projecao pode subestimar ritmo inicial"
+
+            # Deteccao de rotacao (Camada 2): compara lineup actual com
+            # titulares habituais via EstatisticaJogadorJogo.
+            try:
+                from apostas.alertas import rotacao as _rotacao
+                # Camada 1 — competicao e taca?
+                if _rotacao.is_competicao_rotacao_alta(estado.liga):
+                    extras += "\n⚠ Taca — rotacao provavel: projecoes reduzidas 30%"
+                # Camada 2 — comparar lineup actual
+                for lineup, team_id, nome_eq in (
+                    (estado.lineup_titulares_casa, estado.home_id, estado.home),
+                    (estado.lineup_titulares_fora, estado.away_id, estado.away),
+                ):
+                    if not lineup or not team_id:
+                        continue
+                    ids_actuais = [pid for pid, _ in lineup]
+                    nomes_actuais = {pid: nome for pid, nome in lineup}
+                    rel = _rotacao.analisar_lineup_actual(
+                        int(team_id), nome_eq,
+                        ids_actuais, nomes_actuais,
+                    )
+                    if rel and rel.tem_rotacao(limiar=3):
+                        extras += "\n" + rel.mensagem_curta()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Rotacao check falhou: %s", exc)
             # Contexto de competicao (Fase A): peso do jogo + standings
             contexto = None
             try:

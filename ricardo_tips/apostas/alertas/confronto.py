@@ -207,10 +207,15 @@ def analisar_confronto(
     score_casa: int | None = None,
     score_fora: int | None = None,
     n_jogos_ficha: int = 20,
+    liga_nome: str | None = None,
 ) -> ResultadoConfronto | None:
     """Produz analise completa de um confronto.
 
     Devolve None se qualquer uma das 2 equipas nao tem jogos minimos (<3).
+
+    Quando `liga_nome` indica competicao com rotacao alta (Taca de
+    Portugal, FA Cup, etc.), as projecoes agregadas sao reduzidas em
+    30% e um alerta "⚠ Taça — rotacao provavel" e adicionado.
     """
     ficha_casa = gerar_ficha(team_id_casa, n_jogos=n_jogos_ficha)
     ficha_fora = gerar_ficha(team_id_fora, n_jogos=n_jogos_ficha)
@@ -221,6 +226,28 @@ def analisar_confronto(
     esperados = _esperados(ficha_casa, ficha_fora)
     padroes = _padroes_cruzados(ficha_casa, ficha_fora, minuto, score_casa, score_fora)
     alertas = _alertas(ficha_casa, ficha_fora)
+
+    # Rotacao de taca: reduz projecoes (menos cards — jogadores B podem
+    # fazer mais faltas) e sinaliza no alerta.
+    try:
+        from apostas.alertas.rotacao import (
+            factor_taca, is_competicao_rotacao_alta,
+        )
+        if is_competicao_rotacao_alta(liga_nome):
+            f = factor_taca()
+            esperados["remates"] = esperados["remates"] * f
+            esperados["sot"] = esperados["sot"] * f
+            esperados["cantos"] = esperados["cantos"] * f
+            esperados["golos"] = esperados["golos"] * f
+            # cards NAO reduzimos — jogadores menos coordenados podem
+            # ate acumular mais amarelos.
+            alertas.insert(
+                0,
+                "⚠ Taca — rotacao provavel: projecoes reduzidas 30%, "
+                "perfil habitual pode nao aplicar.",
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     return ResultadoConfronto(
         nome_casa=ficha_casa.nome,

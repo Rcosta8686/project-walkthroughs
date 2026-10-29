@@ -136,7 +136,14 @@ def _construir_linha(ev: dict, confronto_fn) -> LinhaJogoPreview | None:
         return linha
 
     try:
-        res = confronto_fn(hid, aid)
+        res = confronto_fn(hid, aid, liga_nome=liga)
+    except TypeError:
+        # Compat: confronto_fn sem liga_nome kwarg (tests antigos / stubs)
+        try:
+            res = confronto_fn(hid, aid)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("confronto preview %s-%s: %s", hid, aid, exc)
+            return linha
     except Exception as exc:  # noqa: BLE001
         log.debug("confronto preview %s-%s: %s", hid, aid, exc)
         return linha
