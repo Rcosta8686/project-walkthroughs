@@ -210,6 +210,17 @@ def enviar_sugestao_live(s: dict) -> None:
         # Treinadores: 1 linha por equipa com o que o mister quer agora
         treinadores_line = _linhas_treinador(s)
 
+        # Analise detalhada: bullets com factos concretos do jogo
+        try:
+            from apostas.alertas.analise_mensagem import (
+                seccao_analise_telegram, seccao_risco_telegram,
+            )
+        except Exception:  # noqa: BLE001
+            seccao_analise_telegram = lambda *a, **k: ""  # noqa: E731
+            seccao_risco_telegram = lambda *a, **k: ""  # noqa: E731
+        analise_section = seccao_analise_telegram(s)
+        risco_section = seccao_risco_telegram(s)
+
         # Mega-cerebro: 1 linha de sintese quando ha sinal claro
         mega_line = ""
         try:
@@ -260,17 +271,20 @@ def enviar_sugestao_live(s: dict) -> None:
             # Racional vem como lista no sinal (nao esta no CSV atual, puxa de s se existir)
             racional_str = s.get("racional_str", "")
             racional_section = f"\n{racional_str}\n" if racional_str else ""
+            analise_block = f"\n\n{analise_section}" if analise_section else ""
+            risco_block = f"\n\n{risco_section}" if risco_section else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
-                f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}\n"
-                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
+                f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}"
+                f"{analise_block}"
                 f"{historico_line}"
                 f"{treinadores_line}"
                 f"{mega_line}"
                 f"{racional_section}"
-                f"\n"
+                f"{risco_block}"
+                f"\n\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
                 f"_Procura esta odd. Se bater o alvo, mete._"
                 f"{apostei_line}"
@@ -284,17 +298,19 @@ def enviar_sugestao_live(s: dict) -> None:
             odd = s.get("odd", 0)
             url = _URLS_CASAS.get(casa, "")
             link_line = f"[Abrir casa]({url})" if url else f"Casa: {casa}"
+            analise_block = f"\n\n{analise_section}" if analise_section else ""
+            risco_block = f"\n\n{risco_section}" if risco_section else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}🎯 *EV +{ev*100:.1f}%* LIVE\n"
                 f"\n"
                 f"⚽ {home} vs {away}\n"
-                f"🏆 {liga}  ·  [{minuto}']  {marcador}\n"
-                f"📊 xG {xg_c}-{xg_f}  ·  SoT {sot_c}-{sot_f}"
+                f"🏆 {liga}  ·  [{minuto}']  {marcador}"
+                f"{analise_block}"
                 f"{historico_line}"
                 f"{treinadores_line}"
                 f"{mega_line}"
-                f"\n"
-                f"\n"
+                f"{risco_block}"
+                f"\n\n"
                 f"*Aposta:* {aposta_fmt}\n"
                 f"*Odd:* {odd}  ({casa})"
                 f"{melhor_casa_line}\n"
