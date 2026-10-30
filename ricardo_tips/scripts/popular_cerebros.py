@@ -205,6 +205,9 @@ def main() -> None:
     print(f"╚════════════════════════════════════════════════════╝")
 
     total = {"equipas": 0, "jogos_novos": 0, "eventos_processados": 0}
+    # Early-abort: se 2 ligas seguidas falham a obter a epoca, o Cloudflare
+    # bloqueou — nao vale a pena martelar as restantes a consumir cooldown.
+    falhas_consecutivas = 0
     for liga in alvos:
         try:
             s = _popular_liga(liga, args.n)
@@ -216,7 +219,17 @@ def main() -> None:
         total["equipas"] += s["equipas"]
         total["jogos_novos"] += s["jogos_novos"]
         total["eventos_processados"] += s["eventos_processados"]
-        time.sleep(1.5)  # entre ligas
+        if s["equipas"] == 0 and s["eventos_processados"] == 0:
+            falhas_consecutivas += 1
+        else:
+            falhas_consecutivas = 0
+        if falhas_consecutivas >= 2:
+            print("\n⚠ 2 ligas consecutivas sem dados — Cloudflare bloqueou o IP.")
+            print("    Esperar 1-4 horas antes de nova tentativa.")
+            print("    docker restart flaresolverr tambem pode ajudar.")
+            print("    O que ja foi gravado nao se perde (idempotente).")
+            break
+        time.sleep(4.0)  # entre ligas — folga para o Cloudflare nao desconfiar
 
     print(f"\n╔════════════════════════════════════════════════════╗")
     print(f"║ TOTAL: {total['equipas']} equipas | "
