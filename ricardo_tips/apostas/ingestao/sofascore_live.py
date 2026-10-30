@@ -480,6 +480,18 @@ def listar_jogos_live(
     except Exception as exc:  # noqa: BLE001
         log.warning("Resposta nao-JSON em events/live: %s", exc)
         return []
+    # Sofascore encapsula erros no body com HTTP 200: {"error": {"code": 403, ...}}
+    # Se nao verificarmos isto, o scanner devolve lista vazia silenciosamente
+    # e parece que "nao ha jogos".
+    if isinstance(data, dict) and "error" in data and "events" not in data:
+        err = data.get("error") or {}
+        log.warning(
+            "Sofascore events/live BLOQUEADO (body error %s) — "
+            "Cloudflare esta a devolver challenge. "
+            "Esperar 1-4h antes de nova tentativa.",
+            err,
+        )
+        return []
     eventos = data.get("events", [])
     if ids_ligas:
         ids_set = set(ids_ligas)
