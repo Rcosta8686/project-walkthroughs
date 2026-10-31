@@ -523,7 +523,18 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     if minuto < projecao_live.MINUTOS_PROJECAO[0]:
         return 0
     # Filtro 1: muito perto do fim — projeccao perde sentido
-    if minuto >= 85:
+    # Alem dos 75' faltam <15 min e a variacao do mercado e minima.
+    if minuto >= 75:
+        return 0
+    # Filtro 1b: jogo apanhado tarde demais (restart do scanner / Cloudflare).
+    # Se so comecamos a ver o jogo apos os 60', faltam dados dos primeiros
+    # 60 min e as projecoes nao sao credíveis.
+    primeiro_min_visto = _primeiro_minuto_visto.get(event_id, minuto)
+    if primeiro_min_visto > 60:
+        log.debug(
+            "Projecao %s: skip — jogo apanhado tarde (ao %d')",
+            event_id, primeiro_min_visto,
+        )
         return 0
 
     # Filtro 2: blacklist de ligas regionais / sem interesse
@@ -806,6 +817,15 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             except Exception as exc:  # noqa: BLE001
                 log.debug("ROI historico na projecao falhou: %s", exc)
             if _skip_por_roi:
+                continue
+            # Se rotacao detectada numa das equipas (taca ou lineup com
+            # >=3 habituais fora), nao enviar a projecao de todo — as
+            # projeccoes derivam das fichas que agora nao se aplicam.
+            if _rotacao_detectada:
+                log.debug(
+                    "Projecao %s %s: skip — rotacao detectada",
+                    event_id, mercado,
+                )
                 continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
