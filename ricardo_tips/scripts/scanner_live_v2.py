@@ -851,6 +851,61 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     return enviadas
 
 
+# Mercados dinamicos (SoT/remates/cantos/cards) movem-se muito ao HT:
+# bookies reajustam linhas, Odds API feed demora a actualizar. Snapshots
+# com linha pre-match + marcador live geram sinais falsos (ex: OVER 5.5
+# SoT quando ja temos 4 SoT ao HT — fair odd ~1.05, bookie real ja fechou
+# essa linha). Rejeitamos sinais na janela 40'-50' nestes mercados; golos
+# e BTTS continuam a passar (movem-se mais devagar).
+_INTERVALO_INI = 40
+_INTERVALO_FIM = 50
+_MERCADOS_SEM_INTERVALO = {"sot", "remates", "remates_a_baliza", "cantos", "cartoes"}
+
+# Margem minima entre linha e marcador actual (over). Se linha - atuais
+# e abaixo deste limiar, o mercado real ja ajustou a linha para cima e
+# aquela odd nao existe mais no bookie. Evita falsos positivos como
+# "OVER 5.5 remates a baliza com 4 SoT ao 45'" (bookie real tem 9.5).
+_MARGEM_MIN_LINHA = {
+    "golos":            0.5,
+    "cantos":           3.0,
+    "cartoes":          1.5,
+    "remates":          5.0,
+    "remates_a_baliza": 3.0,
+}
+
+
+def _linha_stale_vs_marcador(mercado: str, lado: str, linha: float | None, estado) -> bool:
+    """True se a linha OVER esta demasiado perto do marcador actual.
+
+    Significa que o mercado real ja ajustou e a odd apanhada no snapshot
+    nao existe mais. UNDER nao e afectado (mais atuais = mais perto de UNDER
+    perder, mas pode continuar valido se faltam poucos minutos).
+    """
+    if linha is None or lado != "over":
+        return False
+    margem = _MARGEM_MIN_LINHA.get(mercado)
+    if margem is None:
+        return False
+    try:
+        linha_f = float(linha)
+    except (ValueError, TypeError):
+        return False
+    atuais = None
+    if mercado == "golos":
+        atuais = estado.marcador_casa + estado.marcador_fora
+    elif mercado == "cantos":
+        atuais = (estado.corners_casa or 0) + (estado.corners_fora or 0)
+    elif mercado == "cartoes":
+        atuais = estado.yellow_cards_casa + estado.yellow_cards_fora
+    elif mercado == "remates":
+        atuais = (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0)
+    elif mercado == "remates_a_baliza":
+        atuais = (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0)
+    if atuais is None:
+        return False
+    return (linha_f - atuais) < margem
+
+
 def _linha_live(mercado: str, lado: str, linha: float | None, estado) -> bool:
     """True se a linha ainda pode ir para qualquer lado.
 
@@ -925,6 +980,24 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
     def _emit(mercado, lado, linha, casa, odd, prob):
         # NOVO: skip linhas ja decididas (Over 2.5 num 4-2 = inutil)
         if not _linha_live(mercado, lado, linha, estado):
+            return
+        # Snapshot stale: linha do feed demasiado perto do marcador actual.
+        # Mercado real ja ajustou para linha mais alta; a odd nao existe mais.
+        if _linha_stale_vs_marcador(mercado, lado, linha, estado):
+            log.debug(
+                "Skip %s %s %s %s@%s: linha stale vs marcador live "
+                "(mercado real ja ajustou)",
+                estado.event_id, mercado, lado, linha, casa,
+            )
+            return
+        # Intervalo (40-50'): mercados dinamicos movem-se muito, feed demora
+        # a actualizar. Nao enviar sinais de SoT/remates/cantos/cards ao HT.
+        if (mercado in _MERCADOS_SEM_INTERVALO
+                and _INTERVALO_INI <= (estado.minuto or 0) <= _INTERVALO_FIM):
+            log.debug(
+                "Skip %s %s %s: janela intervalo (%s') — mercado dinamico",
+                estado.event_id, mercado, lado, estado.minuto,
+            )
             return
         # §19 blend p_modelo × p_mercado (w=0.3). O EV e calculado em
         # cima da p_final, nao da p_modelo pura. Flag "verificar" quando
