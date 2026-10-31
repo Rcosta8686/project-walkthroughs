@@ -193,17 +193,20 @@ def enviar_sugestao_live(s: dict) -> None:
         # mostrar o badge no texto (nao bloqueia nada).
         dual_str = "🔗 DUAL — " if s.get("dual_sinal") else ""
 
-        # M16: historico por tipo de alerta — linha extra na mensagem
+        # M16: historico por tipo de alerta — SOMENTE para o cabecalho de
+        # categoria forte / fraca. O ROI numerico ja vai inline na seccao
+        # 🧠 Analise (via _bullet_roi_historico), nao duplicamos aqui.
         historico_line = ""
         try:
-            from apostas.alertas.historico_alertas import (
-                formatar_linha_telegram, perfil_para,
-            )
+            from apostas.alertas.historico_alertas import perfil_para
             perfis = _perfis_historicos()
             if perfis:
                 p = perfil_para(perfis, liga, mercado, lado)
                 if p is not None and p.n_alertas >= 3:
-                    historico_line = f"\n{formatar_linha_telegram(p)}"
+                    if p.categoria_forte:
+                        historico_line = "\n📊 _categoria historica forte_"
+                    elif p.stake_mult == 0.5:
+                        historico_line = "\n⚠ _categoria fraca → stake/2_"
         except Exception as exc:  # noqa: BLE001
             log.debug("Historico perfil falhou: %s", exc)
 

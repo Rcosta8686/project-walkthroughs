@@ -89,12 +89,21 @@ def _passa_modo_exigente(s: dict) -> bool:
     """Filtro multi-camada para o modo exigente.
 
     Exige em simultaneo:
+      - minuto < 88 (90'+ nao da tempo util para a aposta)
       - EV >= 0.10
       - mega-cerebro emite sintese com confianca >= 2
       - ambas as fichas das equipas com >= 5 jogos
 
     Devolve True se o sinal passa todos os filtros.
     """
+    # 0. Minuto — jogos nos descontos nao oferecem edge real
+    try:
+        minuto_sinal = int(s.get("minuto") or 0)
+    except (TypeError, ValueError):
+        minuto_sinal = 0
+    if minuto_sinal >= 88:
+        return False
+
     # 1. EV
     try:
         ev = float(s.get("ev", 0) or 0)
