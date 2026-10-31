@@ -302,6 +302,15 @@ def listar_jogos_do_dia(
             if resp.status != 200:
                 continue
             data = resp.json()
+            # Sofascore encapsula errors no body com HTTP 200
+            if isinstance(data, dict) and "error" in data and "events" not in data:
+                err = data.get("error") or {}
+                log.warning(
+                    "Scheduled %s BLOQUEADO (body error %s) — "
+                    "Cloudflare esta a devolver challenge/Forbidden.",
+                    data_iso, err,
+                )
+                continue
             evs = data.get("events") or []
             if not evs:
                 sportItem = data.get("sportItem") or {}
