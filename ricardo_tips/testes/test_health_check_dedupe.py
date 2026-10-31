@@ -9,8 +9,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+import health_check  # noqa: E402
 from health_check import _deve_enviar, _hash_problemas  # noqa: E402
 from apostas.utils.tempo import agora_utc
+
+
+@pytest.fixture(autouse=True)
+def _dentro_janela(monkeypatch):
+    """Simula estar dentro da janela 16h-02h — para o teste focar na
+    logica de dedupe, nao no horario."""
+    monkeypatch.setattr(health_check, "_dentro_janela_envio", lambda: True)
 
 
 class _Res:

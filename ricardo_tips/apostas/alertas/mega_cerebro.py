@@ -244,9 +244,17 @@ def sintetizar_a_partir_confronto(
     cards_c: int | None, cards_f: int | None,
     ficha_casa=None, ficha_fora=None,
     contexto=None,
+    rotacao_detectada: bool = False,
 ) -> Optional[SinteseMega]:
-    """Wrapper que extrai os campos relevantes das FichaEquipa."""
+    """Wrapper que extrai os campos relevantes das FichaEquipa.
+
+    `rotacao_detectada`: quando uma das equipas (ou ambas) esta visivelmente
+    rotada (lineup com >=3 habituais fora, ou jogo de taca), silencia o
+    mega-cerebro porque o perfil das fichas nao se aplica.
+    """
     if ficha_casa is None or ficha_fora is None:
+        return None
+    if rotacao_detectada:
         return None
     try:
         bc, bf = ficha_casa.baseline, ficha_fora.baseline

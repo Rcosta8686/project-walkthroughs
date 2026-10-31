@@ -535,6 +535,21 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
     if any(b in liga_lower for b in blacklist_projecao):
         return 0
 
+    # Filtro 2b: equipas B / reservas (ex: "Real Sociedad B", "Barcelona B").
+    # Essas equipas rodam totalmente e o perfil habitual nao se aplica.
+    def _e_equipa_b(nome: str) -> bool:
+        n = (nome or "").strip().lower()
+        if not n:
+            return False
+        # Ends with " b" or " ii" (equipa reserva)
+        return n.endswith(" b") or n.endswith(" ii") or " b " in n or " ii " in n
+    if _e_equipa_b(estado.home) or _e_equipa_b(estado.away):
+        log.debug(
+            "Projecao %s: skip — equipa B/reservas (%s vs %s)",
+            event_id, estado.home, estado.away,
+        )
+        return 0
+
     ja = _projecoes_enviadas.setdefault(event_id, set())
     target = projecao_live.deve_projetar(minuto, ja)
     if target is None:
@@ -608,6 +623,22 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
         # Filtro 5: skip projeccoes "sem valor" (todas as linhas em quase-certo)
         if not projecao_live.tem_valor_actionavel(proj):
             continue
+        # Filtro 6: projeccao total irrealistica para o mercado — ficha das
+        # equipas vazia produz projecoes absurdas (ex: cantos 1.5 total).
+        # Mesmos limites do _escolher_aposta do preview.
+        _MIN_PROJ_POR_MERCADO = {
+            "cantos": 6.0,   # <6 cantos no jogo todo = ficha vazia
+            "sot": 5.0,      # <5 SoT total no jogo todo = ficha vazia
+            "remates": 8.0,  # <8 remates total = ficha vazia
+        }
+        min_proj = _MIN_PROJ_POR_MERCADO.get(mercado)
+        if min_proj is not None and proj.projecao_final_total < min_proj:
+            log.debug(
+                "Projecao %s %s: skip — projecao total %.1f < min %.1f "
+                "(ficha vazia)",
+                event_id, mercado, proj.projecao_final_total, min_proj,
+            )
+            continue
 
         try:
             _gravar_projecao_db(event_id, target, estado, proj)
@@ -641,13 +672,15 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             if primeiro_min > 15:
                 extras += f"\n⚠ Jogo apanhado ao {primeiro_min}' — projecao pode subestimar ritmo inicial"
 
-            # Deteccao de rotacao (Camada 2): compara lineup actual com
-            # titulares habituais via EstatisticaJogadorJogo.
+            # Deteccao de rotacao (Camada 1 + Camada 2). Flag _rotacao_detectada
+            # usada depois para silenciar o mega-cerebro (perfis nao se aplicam).
+            _rotacao_detectada = False
             try:
                 from apostas.alertas import rotacao as _rotacao
                 # Camada 1 — competicao e taca?
                 if _rotacao.is_competicao_rotacao_alta(estado.liga):
                     extras += "\n⚠ Taca — rotacao provavel: projecoes reduzidas 30%"
+                    _rotacao_detectada = True
                 # Camada 2 — comparar lineup actual
                 for lineup, team_id, nome_eq in (
                     (estado.lineup_titulares_casa, estado.home_id, estado.home),
@@ -663,6 +696,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                     )
                     if rel and rel.tem_rotacao(limiar=3):
                         extras += "\n" + rel.mensagem_curta()
+                        _rotacao_detectada = True
             except Exception as exc:  # noqa: BLE001
                 log.debug("Rotacao check falhou: %s", exc)
             # Contexto de competicao (Fase A): peso do jogo + standings
@@ -714,6 +748,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                             ficha_casa=_res_conf.ficha_casa,
                             ficha_fora=_res_conf.ficha_fora,
                             contexto=contexto,
+                            rotacao_detectada=_rotacao_detectada,
                         )
                     if _sint is not None:
                         extras += "\n" + _sint.to_telegram()
@@ -739,7 +774,11 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
             except Exception as exc:  # noqa: BLE001
                 log.debug("Mega-cerebro na projecao falhou: %s", exc)
             # ROI historico do mercado+liga
+            # Alem de mostrar, se o ROI historico for muito negativo com
+            # volume suficiente (ex: -15% em 50+ alertas), nao envia — este
+            # mercado nessa liga esta provado como mau.
             roi_line = ""
+            _skip_por_roi = False
             try:
                 from apostas.alertas.historico_alertas import (
                     agregar_por_mercado, carregar_perfis,
@@ -756,8 +795,18 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                         if agg.clv_medio is not None:
                             s2 = "+" if agg.clv_medio >= 0 else ""
                             roi_line += f" · CLV {s2}{agg.clv_medio:.1f}%"
+                        # ROI muito negativo com volume → blacklist dinamica
+                        if agg.n_resolvidos >= 50 and agg.roi <= -15.0:
+                            log.debug(
+                                "Projecao %s %s: skip — ROI historico %.1f%% "
+                                "em %d alertas (<-15%% com volume)",
+                                event_id, mercado, agg.roi, agg.n_resolvidos,
+                            )
+                            _skip_por_roi = True
             except Exception as exc:  # noqa: BLE001
                 log.debug("ROI historico na projecao falhou: %s", exc)
+            if _skip_por_roi:
+                continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
