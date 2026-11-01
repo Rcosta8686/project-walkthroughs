@@ -251,6 +251,20 @@ def enviar_sugestao_live(s: dict) -> None:
         except Exception as exc:  # noqa: BLE001
             log.debug("Mega-cerebro na msg EV falhou: %s", exc)
 
+        # Mega-cerebro — narrativa final rica (previsao + certezas)
+        mega_narr = ""
+        try:
+            from apostas.alertas.mega_narrativa import narrativa_final
+            # Extrai a razao textual do mega_line ("🧠 Mega: X Y — razao")
+            razao = ""
+            if mega_line:
+                partes = mega_line.split("—", 1)
+                if len(partes) == 2:
+                    razao = partes[1].strip()
+            mega_narr = narrativa_final(s, sintese_razao=razao)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Mega-cerebro narrativa falhou: %s", exc)
+
         # M19: melhor casa suica (vem de filtros_mercado via scanner)
         melhor_casa_line = ""
         outras_casas_str = s.get("outras_casas") or ""
@@ -276,6 +290,7 @@ def enviar_sugestao_live(s: dict) -> None:
             racional_section = f"\n{racional_str}\n" if racional_str else ""
             analise_block = f"\n\n{analise_section}" if analise_section else ""
             risco_block = f"\n\n{risco_section}" if risco_section else ""
+            mega_narr_block = f"\n{mega_narr}" if mega_narr else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
@@ -287,6 +302,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"{mega_line}"
                 f"{racional_section}"
                 f"{risco_block}"
+                f"{mega_narr_block}"
                 f"\n\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
                 f"_Procura esta odd. Se bater o alvo, mete._"
@@ -303,6 +319,7 @@ def enviar_sugestao_live(s: dict) -> None:
             link_line = f"[Abrir casa]({url})" if url else f"Casa: {casa}"
             analise_block = f"\n\n{analise_section}" if analise_section else ""
             risco_block = f"\n\n{risco_section}" if risco_section else ""
+            mega_narr_block = f"\n{mega_narr}" if mega_narr else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}🎯 *EV +{ev*100:.1f}%* LIVE\n"
                 f"\n"
@@ -313,6 +330,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"{treinadores_line}"
                 f"{mega_line}"
                 f"{risco_block}"
+                f"{mega_narr_block}"
                 f"\n\n"
                 f"*Aposta:* {aposta_fmt}\n"
                 f"*Odd:* {odd}  ({casa})"
