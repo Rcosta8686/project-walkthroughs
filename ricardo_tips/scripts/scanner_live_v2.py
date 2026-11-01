@@ -867,6 +867,41 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 estado.marcador_casa, estado.marcador_fora,
                 extras=extras, roi_line=roi_line,
             )
+            # Narrativa final mega-cerebro (previsao + certezas) tambem
+            # nas projeccoes, igual aos sinais do analista.
+            try:
+                from apostas.alertas.mega_narrativa import narrativa_final
+                # Escolhe a linha central da projeccao como "linha de referencia"
+                linha_ref = (proj.linhas_total[len(proj.linhas_total) // 2].linha
+                             if proj.linhas_total else proj.projecao_final_total)
+                # Para projecoes, o "lado" default e over (projeccao > valor atual)
+                lado_ref = "over" if proj.projecao_final_total > proj.valor_atual_total else "under"
+                sinal_dict = {
+                    "mercado": mercado,
+                    "lado": lado_ref,
+                    "linha": linha_ref,
+                    "minuto": minuto,
+                    "marcador": f"{estado.marcador_casa}-{estado.marcador_fora}",
+                    "prob_modelo": max(lo.prob_over for lo in proj.linhas_total)
+                        if proj.linhas_total else None,
+                    "shots_on_target_c": sot_c,
+                    "shots_on_target_f": sot_f,
+                    "corners_c": can_c,
+                    "corners_f": can_f,
+                    "yellows_c": yel_c_live,
+                    "yellows_f": yel_f_live,
+                    "xg_casa": getattr(estado, "xg_casa", None),
+                    "xg_fora": getattr(estado, "xg_fora", None),
+                }
+                # Razao: usa a sintese do mega se existir
+                razao_mega = ""
+                if '_sint' in locals() and _sint is not None:
+                    razao_mega = getattr(_sint, "razao", "") or ""
+                narr = narrativa_final(sinal_dict, sintese_razao=razao_mega)
+                if narr:
+                    msg = msg + "\n" + narr
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Narrativa final na projecao falhou: %s", exc)
             try:
                 telegram_cliente().enviar(msg)
                 enviadas += 1
