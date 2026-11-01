@@ -817,11 +817,17 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                             s2 = "+" if agg.clv_medio >= 0 else ""
                             roi_line += f" · CLV {s2}{agg.clv_medio:.1f}%"
                         # ROI muito negativo com volume → blacklist dinamica
-                        if agg.n_resolvidos >= 50 and agg.roi <= -15.0:
-                            log.debug(
-                                "Projecao %s %s: skip — ROI historico %.1f%% "
-                                "em %d alertas (<-15%% com volume)",
-                                event_id, mercado, agg.roi, agg.n_resolvidos,
+                        # LIMIARES APERTADOS: 10 alertas + ROI <= -5% chega
+                        # para bloquear. Antes era 50+ e -15% — demasiado
+                        # permissivo. Ricardo recebeu alertas de 2a Bundesliga
+                        # com ROI -30% e -61% em 11-16 alertas que foram para
+                        # Telegram apesar do historico ser mau.
+                        if agg.n_resolvidos >= 10 and agg.roi <= -5.0:
+                            log.info(
+                                "Projecao %s %s/%s: skip — ROI historico %.1f%% "
+                                "em %d alertas (categoria perdedora)",
+                                event_id, estado.liga, mercado,
+                                agg.roi, agg.n_resolvidos,
                             )
                             _skip_por_roi = True
             except Exception as exc:  # noqa: BLE001
@@ -1403,7 +1409,54 @@ def _actualizar_health_sofa_live(houve_jogos: bool, enviar_telegram: bool) -> No
             log.warning("Telegram health alert falhou: %s", exc)
 
 
+# Blacklist dinamica: (liga, mercado) com ROI historico <= -5% em >= 10
+# alertas resolvidos NAO vai para Telegram. Evita queimar dinheiro em
+# categorias provadamente perdedoras (ex: 2a Bundesliga/remates = -30%).
+_BLACKLIST_ROI_LIMIAR_N = 10
+_BLACKLIST_ROI_LIMIAR_ROI = -5.0
+# cache: (liga, mercado) -> bool. Invalida a cada ciclo.
+_blacklist_cache: dict[tuple[str, str], bool] = {}
+
+
+def _resetar_blacklist_cache() -> None:
+    """Chamado no inicio de cada ciclo para refrescar com perfis actuais."""
+    _blacklist_cache.clear()
+
+
+def _blacklist_roi_bloqueia(liga: str, mercado: str) -> bool:
+    """True se (liga, mercado) tem ROI negativo com volume suficiente.
+
+    Normaliza nomes de mercado: 'sot' e 'remates_a_baliza' sao o mesmo
+    para o historico.
+    """
+    merc_key = "sot" if mercado in ("sot", "remates_a_baliza") else mercado
+    key = (liga, merc_key)
+    if key in _blacklist_cache:
+        return _blacklist_cache[key]
+    try:
+        from apostas.alertas.historico_alertas import (
+            agregar_por_mercado, carregar_perfis,
+        )
+        from apostas.utils.config import project_root
+        csv_path = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
+        perfis = carregar_perfis(csv_path)
+        if not perfis:
+            _blacklist_cache[key] = False
+            return False
+        agg = agregar_por_mercado(perfis).get((liga, merc_key))
+        if (agg and agg.n_resolvidos >= _BLACKLIST_ROI_LIMIAR_N
+                and agg.roi is not None
+                and agg.roi <= _BLACKLIST_ROI_LIMIAR_ROI):
+            _blacklist_cache[key] = True
+            return True
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Blacklist ROI check (%s, %s) falhou: %s", liga, mercado, exc)
+    _blacklist_cache[key] = False
+    return False
+
+
 def _correr_ciclo(args) -> None:
+    _resetar_blacklist_cache()
     agora = agora_utc().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
     if args.todas_ligas:
@@ -1652,6 +1705,19 @@ def _correr_ciclo(args) -> None:
                     except Exception as exc:  # noqa: BLE001
                         log.debug("Filtro exigente falhou: %s", exc)
                         continue
+                # BLACKLIST ROI historico: mesma logica das projecoes.
+                # Se a (liga, mercado) tem >= 10 alertas resolvidos e ROI
+                # <= -5%, nao envia — categoria perdedora provada.
+                try:
+                    if _blacklist_roi_bloqueia(s.get("liga", ""), mercado):
+                        log.info(
+                            "Sinal %s %s/%s: skip — ROI historico negativo "
+                            "(categoria perdedora)",
+                            event_id, s.get("liga"), mercado,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Blacklist ROI falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
                 _marcar_enviado(event_id, mercado, lado, linha)
                 jogos_notificados_este_ciclo.add(jogo_key)
