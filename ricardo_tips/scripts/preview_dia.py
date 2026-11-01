@@ -48,7 +48,10 @@ def main() -> None:
     fim = data + timedelta(days=1)
 
     ids_ligas = None if args.todas_ligas else tuple(sofascore_ids_prioritarias())
-    preview = gerar_preview(data, fim, ids_ligas=ids_ligas)
+    # Fallback automatico: tenta Sofascore primeiro, cai para Odds API events
+    # quando o scheduled-events esta bloqueado pelo Cloudflare.
+    from apostas.ingestao.fixtures_fallback import listar_com_fallback
+    preview = gerar_preview(data, fim, ids_ligas=ids_ligas, listar_fn=listar_com_fallback)
     texto = formatar_preview_telegram(preview, titulo=f"📅 Preview {data:%d/%m}")
     print(texto)
 

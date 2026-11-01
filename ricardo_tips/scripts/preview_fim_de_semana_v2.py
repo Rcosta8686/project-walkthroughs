@@ -79,7 +79,9 @@ def main() -> None:
         _, fim = _janela_fim_de_semana(agora)
 
     ids_ligas = None if args.todas_ligas else tuple(sofascore_ids_prioritarias())
-    preview = gerar_preview(inicio, fim, ids_ligas=ids_ligas)
+    # Fallback automatico: Sofascore → Odds API events quando Cloudflare bloqueia.
+    from apostas.ingestao.fixtures_fallback import listar_com_fallback
+    preview = gerar_preview(inicio, fim, ids_ligas=ids_ligas, listar_fn=listar_com_fallback)
     titulo = f"🏁 Preview Fim-de-Semana {inicio:%d/%m} → {fim:%d/%m}"
     texto = formatar_preview_telegram(preview, titulo=titulo)
     print(texto)
