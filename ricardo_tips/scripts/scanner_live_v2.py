@@ -1331,6 +1331,68 @@ def _imprimir_sugestoes(sugs) -> None:
         )
 
 
+# Health do Sofascore live: contagem de ciclos consecutivos sem jogos
+# dentro da janela de jogos (16h-02h PT). Depois de N ciclos sem jogos,
+# envia alerta UMA vez por dia. Reset quando volta a ter jogos.
+_SOFA_LIVE_HEALTH_LIMIAR_CICLOS = 4   # ~20 min a 5min por ciclo
+_SOFA_LIVE_HEALTH_HORA_INI = 16       # Europa/Lisboa (jogos finais da tarde)
+_SOFA_LIVE_HEALTH_HORA_FIM = 2        # pode varar meia-noite
+_sofa_live_ciclos_zero = 0
+_sofa_live_alerta_enviado_dia: str | None = None
+
+
+def _em_janela_jogos_pt() -> bool:
+    """True se hora Europa/Lisboa esta entre 16h-02h (janela de jogos)."""
+    try:
+        from zoneinfo import ZoneInfo
+        h = datetime.now(ZoneInfo("Europe/Lisbon")).hour
+    except Exception:  # noqa: BLE001
+        h = agora_utc().hour  # fallback UTC
+    if _SOFA_LIVE_HEALTH_HORA_INI <= _SOFA_LIVE_HEALTH_HORA_FIM:
+        return _SOFA_LIVE_HEALTH_HORA_INI <= h <= _SOFA_LIVE_HEALTH_HORA_FIM
+    # Janela que vara meia-noite (ex: 16h-02h)
+    return h >= _SOFA_LIVE_HEALTH_HORA_INI or h <= _SOFA_LIVE_HEALTH_HORA_FIM
+
+
+def _actualizar_health_sofa_live(houve_jogos: bool, enviar_telegram: bool) -> None:
+    """Rastreia ciclos consecutivos sem jogos; alerta uma vez quando passa limiar.
+
+    - Reset conta a cada ciclo com jogos.
+    - Alerta UMA vez por dia (dia local PT), e so se estiver em janela.
+    - Idempotente: processo pode ser reiniciado sem causar dupla notificacao
+      (via `_sofa_live_alerta_enviado_dia`).
+    """
+    global _sofa_live_ciclos_zero, _sofa_live_alerta_enviado_dia
+    if houve_jogos:
+        _sofa_live_ciclos_zero = 0
+        return
+    if not _em_janela_jogos_pt():
+        # Fora da janela, zero jogos e normal
+        return
+    _sofa_live_ciclos_zero += 1
+    if _sofa_live_ciclos_zero < _SOFA_LIVE_HEALTH_LIMIAR_CICLOS:
+        return
+    hoje = agora_utc().strftime("%Y-%m-%d")
+    if _sofa_live_alerta_enviado_dia == hoje:
+        return
+    _sofa_live_alerta_enviado_dia = hoje
+    msg = (
+        "⚠ *Sofascore live cego*\n"
+        f"{_sofa_live_ciclos_zero} ciclos consecutivos sem jogos na janela "
+        "16h-02h. Scanner live sem dados ao vivo hoje.\n\n"
+        "• Preview das 17h continua a funcionar (fallback Odds API)\n"
+        "• Sinais pre-match continuam a sair\n"
+        "• Scanner volta sozinho quando Cloudflare libertar"
+    )
+    log.warning("Sofa live health: %s", msg.replace("\n", " | "))
+    print("\n" + msg)
+    if enviar_telegram:
+        try:
+            telegram_cliente().enviar(msg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Telegram health alert falhou: %s", exc)
+
+
 def _correr_ciclo(args) -> None:
     agora = agora_utc().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
@@ -1341,6 +1403,7 @@ def _correr_ciclo(args) -> None:
             ligas_filter=tuple(args.ligas) if args.ligas else None,
             ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
         )
+    _actualizar_health_sofa_live(bool(jogos), args.telegram)
     if not jogos:
         print("    (sem jogos live nas ligas que seguimos)")
         return
