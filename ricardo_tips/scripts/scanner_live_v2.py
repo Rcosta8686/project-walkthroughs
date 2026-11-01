@@ -1712,20 +1712,52 @@ def _correr_ciclo(args) -> None:
                         n_estrelas = 0
                     if n_estrelas < args.analista_tele_estrelas:
                         continue
+                    # EDGE MINIMO: analista sem Odds API usa odd_valor fair.
+                    # Se odd fair < 1.40 E prob < 0.82, a aposta tem margem
+                    # fina — 1 unidade abaixo da linha significa perda certa.
+                    # Caso real Lecce-Genoa Over 30.5 remates (prob 79%,
+                    # odd alvo 1.33) perdeu por 1 remate. Elimina lotarias.
+                    try:
+                        prob_val = float(s.get("prob_modelo", 0))
+                        odd_val = float(s.get("odd", 0))
+                    except (ValueError, TypeError):
+                        prob_val = odd_val = 0.0
+                    if (odd_val > 0 and odd_val < 1.40
+                            and prob_val < 0.82):
+                        log.info(
+                            "Analista %s %s/%s: skip — edge fino "
+                            "(odd %.2f, prob %.0f%%)",
+                            s.get("event_id"), s.get("mercado"),
+                            s.get("lado"), odd_val, prob_val * 100,
+                        )
+                        continue
                     notificar.append(s)
                 else:
                     # Sugestao com EV real (Odds API)
                     try:
                         ev_val = float(s.get("ev", 0))
                         n_estrelas = int(s.get("estrelas", 0))
+                        odd_val = float(s.get("odd", 0))
                     except (ValueError, TypeError):
                         continue
                     # HARD FLOOR 3 estrelas tambem aqui — mesmo com EV alto,
                     # 1-2 estrelas significa historicamente ROI fraco
                     if n_estrelas < args.analista_tele_estrelas:
                         continue
-                    if ev_val >= ev_min_telegram:
-                        notificar.append(s)
+                    if ev_val < ev_min_telegram:
+                        continue
+                    # EDGE FINO: EV >= 7% mas odd < 1.40 significa que a
+                    # probabilidade implicita e >= 71% — margem para erro
+                    # minima. 1 unidade de desvio na projeccao destroi o EV.
+                    if odd_val > 0 and odd_val < 1.40 and ev_val < 0.12:
+                        log.info(
+                            "EV %s %s/%s: skip — edge fino "
+                            "(odd %.2f, EV %.1f%%)",
+                            s.get("event_id"), s.get("mercado"),
+                            s.get("lado"), odd_val, ev_val * 100,
+                        )
+                        continue
+                    notificar.append(s)
             # M17: carimba `dual_sinal=True` quando historico forte confirma
             # o edge. Nao filtra — so marca para o telegram_live mostrar o
             # badge e para o ranking rebocar primeiro.
