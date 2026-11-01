@@ -66,10 +66,15 @@ from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive 
 log = get_logger(__name__)
 
 # Dedup entre ciclos para notificacoes Telegram.
-# chave = (event_id, mercado, lado, linha) → datetime do ultimo envio.
+# chave = (event_id, mercado, lado) → datetime do ultimo envio.
+# NOTA: a linha NAO entra na chave. Caso contrario, OVER 6.5 remates e
+# OVER 8.5 remates do mesmo jogo seriam contadas como alertas distintos
+# — o utilizador recebia 3-4 alertas do mesmo mercado em 10 min a medida
+# que o modelo re-projecta. Agora: 1 alerta por (jogo, mercado, lado)
+# dentro da janela de cooldown.
 # Impede re-notificar o mesmo sinal dentro de COOLDOWN_MIN minutos.
 _cooldown: dict[tuple, datetime] = {}
-COOLDOWN_MIN = 15
+COOLDOWN_MIN = 30
 
 # Projeccoes ja enviadas: event_id -> set(minutos_target: {40, 55, 70})
 # Impede enviar duas vezes a projeccao do mesmo target no mesmo jogo.
@@ -185,17 +190,22 @@ def _purgar_cooldown() -> None:
         _cooldown.pop(k, None)
 
 
-def _em_cooldown(event_id, mercado, lado, linha) -> bool:
-    """True se ja mandamos este sinal nos ultimos COOLDOWN_MIN minutos."""
-    key = (str(event_id), mercado, lado, str(linha))
+def _em_cooldown(event_id, mercado, lado, linha=None) -> bool:
+    """True se ja mandamos sinal do mesmo (jogo, mercado, lado) recente.
+
+    A linha e ignorada: OVER 6.5 e OVER 8.5 do mesmo jogo+mercado+lado
+    sao o mesmo "sinal" para o utilizador — nao enviar outra vez por 30 min.
+    """
+    key = (str(event_id), mercado, lado)
     ts = _cooldown.get(key)
     if ts is None:
         return False
     return (agora_utc() - ts).total_seconds() < COOLDOWN_MIN * 60
 
 
-def _marcar_enviado(event_id, mercado, lado, linha) -> None:
-    key = (str(event_id), mercado, lado, str(linha))
+def _marcar_enviado(event_id, mercado, lado, linha=None) -> None:
+    """Guarda o envio por (event_id, mercado, lado) — linha ignorada."""
+    key = (str(event_id), mercado, lado)
     _cooldown[key] = agora_utc()
 
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
