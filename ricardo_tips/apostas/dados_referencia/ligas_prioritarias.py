@@ -65,3 +65,34 @@ def todas_ligas() -> list[LigaPrioritaria]:
 def sofascore_ids_prioritarias() -> list[int]:
     """So os IDs Sofascore (util para filtros do scanner)."""
     return [l.sofascore_id for l in LIGAS_PRIORITARIAS]
+
+
+_SUBSTRINGS_PRIORIDADE_1 = tuple(
+    l.nome.lower() for l in LIGAS_PRIORITARIAS if l.prioridade == 1
+) + (
+    "premier league", "la liga", "serie a", "bundesliga 1",
+    "primeira liga", "ligue 1", "eredivisie",
+)
+
+
+def nome_e_prioridade_1(liga_nome: str) -> bool:
+    """True se o nome da liga bate numa das 7 ligas top (prioridade 1).
+
+    Faz match case-insensitive por substring para funcionar com variantes
+    de nome ("Serie A" vs "Serie A (ITA)" vs "Serie A - Italia"). Nao bate
+    com '2. Bundesliga', 'Serie B', 'LaLiga 2', 'Championship' etc.
+    """
+    if not liga_nome:
+        return False
+    n = liga_nome.lower().strip()
+    # Exclusoes explicitas (2a divisao): se contiver estes markers, nao e p1
+    for marker in ("2.", " 2", "2 ", " ii", "segunda", "championship",
+                   "serie b", "ligue 2", "liga portugal 2", "eerste",
+                   "women", "feminin", "sub-", "u16", "u17", "u18",
+                   "u19", "u20", "u21", "u23", "youth", "reserve"):
+        if marker in n:
+            return False
+    for sub in _SUBSTRINGS_PRIORIDADE_1:
+        if sub in n:
+            return True
+    return False

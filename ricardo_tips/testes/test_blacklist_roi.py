@@ -20,8 +20,10 @@ import scanner_live_v2 as scn  # noqa: E402
 @pytest.fixture(autouse=True)
 def _reset_cache():
     scn._blacklist_cache.clear()
+    scn._perfis_cache = None
     yield
     scn._blacklist_cache.clear()
+    scn._perfis_cache = None
 
 
 def _agg(n_resolvidos, roi):
@@ -118,7 +120,7 @@ def test_resetar_cache_apaga(monkeypatch):
         ("X", "golos"): _agg(20, -10.0),
     })
     assert scn._blacklist_roi_bloqueia("X", "golos") is True
-    assert ("X", "golos") in scn._blacklist_cache
+    assert ("X", "golos", None) in scn._blacklist_cache
     scn._resetar_blacklist_cache()
     assert scn._blacklist_cache == {}
 

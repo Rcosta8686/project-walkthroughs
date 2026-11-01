@@ -1409,49 +1409,121 @@ def _actualizar_health_sofa_live(houve_jogos: bool, enviar_telegram: bool) -> No
             log.warning("Telegram health alert falhou: %s", exc)
 
 
-# Blacklist dinamica: (liga, mercado) com ROI historico <= -5% em >= 10
-# alertas resolvidos NAO vai para Telegram. Evita queimar dinheiro em
-# categorias provadamente perdedoras (ex: 2a Bundesliga/remates = -30%).
+# Blacklist dinamica por (liga, mercado) OU (liga, mercado, lado) com ROI
+# historico <= -5% em >= 10 alertas resolvidos NAO vai para Telegram.
+# Granularidade do lado permite bloquear so OVER (que perde) sem matar
+# UNDER (que ganha), ou vice-versa.
 _BLACKLIST_ROI_LIMIAR_N = 10
 _BLACKLIST_ROI_LIMIAR_ROI = -5.0
-# cache: (liga, mercado) -> bool. Invalida a cada ciclo.
-_blacklist_cache: dict[tuple[str, str], bool] = {}
+# cache: chave -> bool. Invalida a cada ciclo.
+_blacklist_cache: dict[tuple, bool] = {}
+# Cache dos perfis carregados (poupa IO entre chamadas no mesmo ciclo).
+_perfis_cache: tuple[dict, dict] | None = None  # (perfis_lado, agg_mercado)
 
 
 def _resetar_blacklist_cache() -> None:
     """Chamado no inicio de cada ciclo para refrescar com perfis actuais."""
+    global _perfis_cache
     _blacklist_cache.clear()
+    _perfis_cache = None
 
 
-def _blacklist_roi_bloqueia(liga: str, mercado: str) -> bool:
-    """True se (liga, mercado) tem ROI negativo com volume suficiente.
+# Quarentena: ligas obscuras (nao-top) precisam de >= N alertas resolvidos
+# nessa (liga, mercado) para que confiemos em enviar. Senao, nao sabemos
+# se o modelo e bom aqui.
+_QUARENTENA_MIN_RESOLVIDOS = 5
 
-    Normaliza nomes de mercado: 'sot' e 'remates_a_baliza' sao o mesmo
-    para o historico.
+
+def _liga_top_ou_com_historico(liga: str, mercado: str) -> bool:
+    """True se:
+      - Liga esta nas 7 top (prioridade 1) → sempre OK, confiamos em
+        mini-cerebros densos.
+      - OU liga nao-top mas (liga, mercado) tem >= 5 alertas resolvidos
+        → ja temos amostra para julgar.
+    False (bloqueia) se nao-top sem historico suficiente.
     """
+    try:
+        from apostas.dados_referencia.ligas_prioritarias import (
+            nome_e_prioridade_1,
+        )
+    except Exception:  # noqa: BLE001
+        return True  # falha segura
+    if nome_e_prioridade_1(liga):
+        return True
     merc_key = "sot" if mercado in ("sot", "remates_a_baliza") else mercado
-    key = (liga, merc_key)
-    if key in _blacklist_cache:
-        return _blacklist_cache[key]
+    _, agg = _carregar_perfis_cached()
+    if not agg:
+        return False  # nenhum historico → bloqueia liga obscura
+    a = agg.get((liga, merc_key))
+    if a is None or a.n_resolvidos < _QUARENTENA_MIN_RESOLVIDOS:
+        return False
+    return True
+
+
+def _carregar_perfis_cached():
+    """Carrega perfis (liga, mercado, lado) + agregado por (liga, mercado).
+
+    Devolve ({}, {}) se nao ha historico. Chama sempre agregar_por_mercado
+    (mesmo com perfis vazio) para que os testes possam monkeypatchar cada
+    um independentemente.
+    """
+    global _perfis_cache
+    if _perfis_cache is not None:
+        return _perfis_cache
     try:
         from apostas.alertas.historico_alertas import (
             agregar_por_mercado, carregar_perfis,
         )
         from apostas.utils.config import project_root
         csv_path = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
-        perfis = carregar_perfis(csv_path)
-        if not perfis:
-            _blacklist_cache[key] = False
-            return False
-        agg = agregar_por_mercado(perfis).get((liga, merc_key))
-        if (agg and agg.n_resolvidos >= _BLACKLIST_ROI_LIMIAR_N
-                and agg.roi is not None
-                and agg.roi <= _BLACKLIST_ROI_LIMIAR_ROI):
-            _blacklist_cache[key] = True
-            return True
+        perfis = carregar_perfis(csv_path) or {}
+        agg = agregar_por_mercado(perfis) or {}
+        _perfis_cache = (perfis, agg)
+        return _perfis_cache
     except Exception as exc:  # noqa: BLE001
-        log.debug("Blacklist ROI check (%s, %s) falhou: %s", liga, mercado, exc)
-    _blacklist_cache[key] = False
+        log.debug("Carregar perfis falhou: %s", exc)
+        _perfis_cache = ({}, {})
+        return _perfis_cache
+
+
+def _blacklist_roi_bloqueia(liga: str, mercado: str,
+                            lado: str | None = None) -> bool:
+    """True se tem ROI negativo com volume suficiente.
+
+    Prioriza granularidade: se `lado` dado, tenta (liga, mercado, lado) PRIMEIRO.
+    Se o perfil especifico ao lado tem volume + ROI mau, bloqueia. Caso contrario
+    cai para (liga, mercado) agregado.
+
+    Normaliza 'sot' e 'remates_a_baliza' para a mesma chave.
+    """
+    merc_key = "sot" if mercado in ("sot", "remates_a_baliza") else mercado
+    lado_key = (lado or "").strip().lower() or None
+    cache_key = (liga, merc_key, lado_key)
+    if cache_key in _blacklist_cache:
+        return _blacklist_cache[cache_key]
+    perfis, agg = _carregar_perfis_cached()
+    if not perfis and not agg:
+        _blacklist_cache[cache_key] = False
+        return False
+    # 1. Checa perfil por lado (granularidade maxima). Se o perfil especifico
+    # tem volume suficiente, decide SO por ele — dados granulares sao mais
+    # fiaveis que o agregado (ex: UNDER +10% enquanto OVER -30%).
+    if lado_key and perfis:
+        from apostas.alertas.historico_alertas import perfil_para
+        p = perfil_para(perfis, liga, merc_key, lado_key)
+        if p and p.n_resolvidos >= _BLACKLIST_ROI_LIMIAR_N:
+            bloqueia = (p.roi is not None
+                        and p.roi <= _BLACKLIST_ROI_LIMIAR_ROI)
+            _blacklist_cache[cache_key] = bloqueia
+            return bloqueia
+    # 2. Fallback agregado por mercado (sem lado, ou lado sem volume)
+    a = agg.get((liga, merc_key))
+    if (a and a.n_resolvidos >= _BLACKLIST_ROI_LIMIAR_N
+            and a.roi is not None
+            and a.roi <= _BLACKLIST_ROI_LIMIAR_ROI):
+        _blacklist_cache[cache_key] = True
+        return True
+    _blacklist_cache[cache_key] = False
     return False
 
 
@@ -1705,19 +1777,37 @@ def _correr_ciclo(args) -> None:
                     except Exception as exc:  # noqa: BLE001
                         log.debug("Filtro exigente falhou: %s", exc)
                         continue
-                # BLACKLIST ROI historico: mesma logica das projecoes.
-                # Se a (liga, mercado) tem >= 10 alertas resolvidos e ROI
-                # <= -5%, nao envia — categoria perdedora provada.
+                # BLACKLIST ROI historico (granularidade por lado):
+                # Prioriza (liga, mercado, lado); cai para (liga, mercado)
+                # se nao ha volume no lado. 10 alertas + ROI <= -5% bloqueia.
                 try:
-                    if _blacklist_roi_bloqueia(s.get("liga", ""), mercado):
+                    if _blacklist_roi_bloqueia(
+                        s.get("liga", ""), mercado, lado,
+                    ):
                         log.info(
-                            "Sinal %s %s/%s: skip — ROI historico negativo "
-                            "(categoria perdedora)",
-                            event_id, s.get("liga"), mercado,
+                            "Sinal %s %s/%s/%s: skip — ROI historico "
+                            "negativo (categoria perdedora)",
+                            event_id, s.get("liga"), mercado, lado,
                         )
                         continue
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Blacklist ROI falhou: %s", exc)
+                # QUARENTENA PARA LIGAS OBSCURAS: se nao e liga top (p1) E
+                # nao temos pelo menos 5 alertas resolvidos nesta (liga,
+                # mercado) para julgar, nao enviamos — nao sabemos se o
+                # modelo funciona nessa combinacao.
+                try:
+                    if not _liga_top_ou_com_historico(
+                        s.get("liga", ""), mercado,
+                    ):
+                        log.info(
+                            "Sinal %s %s/%s: skip — liga nao-top sem "
+                            "historico suficiente (quarentena)",
+                            event_id, s.get("liga"), mercado,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Quarentena liga falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
                 _marcar_enviado(event_id, mercado, lado, linha)
                 jogos_notificados_este_ciclo.add(jogo_key)
