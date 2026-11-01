@@ -514,7 +514,8 @@ def _gravar_projecao_db(
         ))
 
 
-def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
+def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
+                           min_estrelas: int = 4) -> int:
     """Se minuto >= target (40/55/70) e ainda nao enviado para este jogo,
     envia projeccao de SOT + cantos ao Telegram e grava na DB.
 
@@ -834,6 +835,15 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool) -> int:
                 log.debug(
                     "Projecao %s %s: skip — rotacao detectada",
                     event_id, mercado,
+                )
+                continue
+            # HARD FLOOR: so projeccoes com >= min_estrelas vao para Telegram.
+            # Projeccoes de 1-3 estrelas sao palpites fracos — nao enviar.
+            n_estrelas = projecao_live._estrelas_projecao(proj)
+            if n_estrelas < min_estrelas:
+                log.debug(
+                    "Projecao %s %s: skip — %d estrelas (min %d)",
+                    event_id, mercado, n_estrelas, min_estrelas,
                 )
                 continue
             msg = projecao_live.formatar_telegram(
@@ -1444,7 +1454,10 @@ def _correr_ciclo(args) -> None:
         # remates/SOT/cantos. Mostram projeccao final + odd justa por linha,
         # para o user comparar com o que a casa paga.
         try:
-            n_proj = _enviar_projecoes_jogo(estado, prev, args.telegram)
+            n_proj = _enviar_projecoes_jogo(
+                estado, prev, args.telegram,
+                min_estrelas=args.projecao_tele_estrelas,
+            )
             if n_proj:
                 print(f"    📊 {n_proj} projeccao(oes) enviadas ao Telegram.")
         except Exception as exc:  # noqa: BLE001
@@ -1678,11 +1691,15 @@ def main() -> None:
     parser.add_argument("--max-notif-por-ciclo", type=int, default=3,
                         help="Max notificacoes Telegram por ciclo (default 3). "
                              "Ranking: top edge × √racionais × forca.")
-    parser.add_argument("--analista-tele-estrelas", type=int, default=3,
+    parser.add_argument("--analista-tele-estrelas", type=int, default=4,
                         help="Sinais do ANALISTA com >= N estrelas vao sempre para "
                              "Telegram, mesmo sem passar filtro Paulo Rebelo "
-                             "(default 3). Util para ligas sem Odds API mapeado. "
-                             "Pon 5 para so os de 5 estrelas; 2 para quase tudo.")
+                             "(default 4). Pon 5 para so os de 5 estrelas; "
+                             "2 para quase tudo.")
+    parser.add_argument("--projecao-tele-estrelas", type=int, default=4,
+                        help="Projeccoes (40'/55'/70') so vao para Telegram com "
+                             ">= N estrelas (default 4). 1-3 estrelas ficam so "
+                             "no log — nao poluem o Telegram.")
     parser.add_argument("--modo-exigente", action="store_true",
                         help="So manda sinais que passam o filtro combinado: "
                              "EV>=0.10 + mega-cerebro com confianca>=2 + "

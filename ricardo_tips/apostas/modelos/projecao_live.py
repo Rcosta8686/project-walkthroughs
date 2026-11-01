@@ -285,17 +285,29 @@ _EMOJI_MERCADO = {
 
 
 def _estrelas_projecao(proj: ProjecaoResumo) -> int:
-    """Numero de estrelas (1-3) baseado em quantas linhas sao accionaveis.
+    """Numero de estrelas (1-5) baseado em accionabilidade + confianca.
 
-    Uma linha e "accionavel" se a probabilidade over cai dentro de uma
-    zona onde a casa provavelmente estica a odd em algum sentido
-    (0.25 - 0.75). 3 linhas accionaveis = 3 estrelas. 1 linha = 1 estrela.
+    Base (0-3): numero de linhas em zona accionavel (0.25-0.75).
+    Bonus (+1): linha central cai no "doce" (0.45-0.65) → modelo
+      claramente diferente da linha, nao e so edge marginal.
+    Bonus (+1): projeccao total >= 1.5x o valor_actual_total — jogo
+      com ritmo claro, nao e extrapolacao de 1 ou 2 observacoes.
+
     Minimo 1 (a projeccao em si ja passou o filtro tem_valor_actionavel).
     """
     if not proj.linhas_total:
         return 1
-    n = sum(1 for lo in proj.linhas_total if 0.25 <= lo.prob_over <= 0.75)
-    return max(1, min(3, n))
+    base = sum(1 for lo in proj.linhas_total if 0.25 <= lo.prob_over <= 0.75)
+    bonus = 0
+    # Doce: linha central (segunda das 3) com prob entre 0.45-0.65
+    if len(proj.linhas_total) >= 2:
+        lo_centro = proj.linhas_total[len(proj.linhas_total) // 2]
+        if 0.45 <= lo_centro.prob_over <= 0.65:
+            bonus += 1
+    # Ritmo claro: projeccao >= 1.5x valor_actual
+    if proj.valor_atual_total > 0 and proj.projecao_final_total >= 1.5 * proj.valor_atual_total:
+        bonus += 1
+    return max(1, min(5, base + bonus))
 
 
 def formatar_telegram(
