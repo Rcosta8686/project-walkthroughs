@@ -586,6 +586,20 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
     if target is None:
         return 0
 
+    # Fichas fracas (<5 jogos): nao projetamos. O modelo nao tem base
+    # suficiente — projecao e lotaria. Caso real: 61% das equipas na BD
+    # tem <5 jogos. Isto apanha-as antes de usar atencao do utilizador.
+    if not _ambas_fichas_fortes(estado.home_id, estado.away_id):
+        log.info(
+            "Projecao %s %s vs %s: skip — fichas fracas "
+            "(home=%d jogos, away=%d jogos, min %d)",
+            event_id, estado.home, estado.away,
+            _n_jogos_ficha(estado.home_id or 0),
+            _n_jogos_ficha(estado.away_id or 0),
+            _MIN_JOGOS_FICHA,
+        )
+        return 0
+
     # Atributos correctos do EstadoLive: shots_on_target_casa, corners_casa
     sot_c = int(getattr(estado, "shots_on_target_casa", 0) or 0)
     sot_f = int(getattr(estado, "shots_on_target_fora", 0) or 0)
@@ -1471,12 +1485,45 @@ def _resetar_blacklist_cache() -> None:
     global _perfis_cache
     _blacklist_cache.clear()
     _perfis_cache = None
+    _cache_n_jogos_ficha.clear()
 
 
 # Quarentena: ligas obscuras (nao-top) precisam de >= N alertas resolvidos
 # nessa (liga, mercado) para que confiemos em enviar. Senao, nao sabemos
 # se o modelo e bom aqui.
 _QUARENTENA_MIN_RESOLVIDOS = 5
+
+# Fichas fracas: equipas com < N jogos no historico nao sao suficientes
+# para o modelo projetar. Caso real: 61% das equipas na BD tem <5 jogos
+# (equipas de 2as divisoes, taças, amigaveis que o scanner apanha).
+_MIN_JOGOS_FICHA = 5
+# cache: team_id -> n_jogos. Invalida a cada ciclo.
+_cache_n_jogos_ficha: dict[int, int] = {}
+
+
+def _n_jogos_ficha(team_id: int) -> int:
+    """Devolve numero de jogos de ficha. 0 se nao da para calcular."""
+    if not team_id:
+        return 0
+    if team_id in _cache_n_jogos_ficha:
+        return _cache_n_jogos_ficha[team_id]
+    try:
+        from apostas.relatorios.ficha_equipa import gerar_ficha
+        f = gerar_ficha(int(team_id), n_jogos=20)
+        n = f.n_jogos if f else 0
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Ficha n_jogos team=%s falhou: %s", team_id, exc)
+        n = 0
+    _cache_n_jogos_ficha[team_id] = n
+    return n
+
+
+def _ambas_fichas_fortes(home_id, away_id) -> bool:
+    """True se ambas as equipas tem >= _MIN_JOGOS_FICHA jogos de ficha."""
+    if not home_id or not away_id:
+        return False
+    return (_n_jogos_ficha(home_id) >= _MIN_JOGOS_FICHA
+            and _n_jogos_ficha(away_id) >= _MIN_JOGOS_FICHA)
 
 
 def _liga_top_ou_com_historico(liga: str, mercado: str) -> bool:
@@ -1885,6 +1932,24 @@ def _correr_ciclo(args) -> None:
                         continue
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Quarentena liga falhou: %s", exc)
+                # FICHAS FRACAS: ambas as equipas precisam de >= 5 jogos
+                # na ficha. Sem isso, modelo projeta por extrapolacao
+                # vazia. Caso real do /saude: 61% das equipas tem <5 jogos.
+                try:
+                    if not _ambas_fichas_fortes(
+                        s.get("home_id"), s.get("away_id"),
+                    ):
+                        n_h = _n_jogos_ficha(s.get("home_id") or 0)
+                        n_a = _n_jogos_ficha(s.get("away_id") or 0)
+                        log.info(
+                            "Sinal %s %s vs %s: skip — fichas fracas "
+                            "(home=%d, away=%d, min %d)",
+                            event_id, s.get("home"), s.get("away"),
+                            n_h, n_a, _MIN_JOGOS_FICHA,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Fichas fortes check falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
                 _marcar_enviado(event_id, mercado, lado, linha)
                 jogos_notificados_este_ciclo.add(jogo_key)
