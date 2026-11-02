@@ -1641,6 +1641,27 @@ def _correr_ciclo(args) -> None:
         event_id = ev.get("id")
         if not event_id:
             continue
+        # PRE-FILTRO: salta cedo jogos de ligas nao-top sem historico
+        # suficiente, antes de gastar 6 pedidos Sofascore por jogo.
+        # Isto evita o scanner encravar quando ha muitos jogos obscuros
+        # (2as divisoes, taças, amigaveis) no feed.
+        try:
+            liga_nome = (ev.get("tournament") or {}).get("name") or ""
+            if liga_nome:
+                home_id_ev = (ev.get("homeTeam") or {}).get("id") or 0
+                away_id_ev = (ev.get("awayTeam") or {}).get("id") or 0
+                from apostas.dados_referencia.ligas_prioritarias import (
+                    nome_e_prioridade_1,
+                )
+                if (not nome_e_prioridade_1(liga_nome)
+                        and not _ambas_fichas_fortes(home_id_ev, away_id_ev)):
+                    log.debug(
+                        "Pre-filtro: skip %s (liga %s nao top + fichas fracas)",
+                        event_id, liga_nome,
+                    )
+                    continue
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Pre-filtro falhou: %s", exc)
         try:
             estado = sofascore_live.obter_estado_live(event_id)
         except _flaresolverr.FlaresolverrIndisponivel as exc:
@@ -2003,11 +2024,24 @@ def main() -> None:
                              "EV>=0.10 + mega-cerebro com confianca>=2 + "
                              "ambas as fichas com >=5 jogos. Reduz volume mas "
                              "cada alerta tem concordancia multi-camada.")
+    parser.add_argument("--rapido", action="store_true",
+                        help="Salta endpoints Sofascore opcionais (graph + "
+                             "comments) para reduzir carga por jogo. Util "
+                             "quando o scanner esta a encravar com muitos "
+                             "jogos no feed. Perde xG momentum e narrativa "
+                             "do commentary mas poupa 2 chamadas por jogo.")
     args = parser.parse_args()
+
+    # Activa modo rapido (menos chamadas Sofascore) via env que a ingestao le.
+    import os as _os_main
+    if args.rapido:
+        _os_main.environ["SOFA_LIVE_RAPIDO"] = "1"
 
     print("Scanner LIVE v2 iniciado.")
     print(f"  Intervalo: {args.intervalo_s}s  EV min: {args.ev_minimo*100:.0f} por cento")
     print(f"  Flaresolverr: {_flaresolverr._url_flaresolverr()}")
+    if args.rapido:
+        print("  Modo rapido ON (sem graph/comments)")
     print("Sai com Ctrl+C.\n")
 
     try:

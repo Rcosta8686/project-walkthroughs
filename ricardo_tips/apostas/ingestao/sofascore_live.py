@@ -570,12 +570,19 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     if incidents_json:
         _preencher_cartoes(estado, incidents_json)
 
-    # Graph (xG momentum)
-    graph_json = _get_json(f"/event/{event_id}/graph")
-    if graph_json:
-        _preencher_xg_recent(estado, graph_json)
+    # Modo rapido: salta endpoints opcionais (graph + comments) para
+    # reduzir carga quando ha muitos jogos e o scanner esta a encravar.
+    # Env SOFA_LIVE_RAPIDO=1 activa.
+    import os as _os_rapido
+    rapido = _os_rapido.environ.get("SOFA_LIVE_RAPIDO") == "1"
 
-    # Lineups (formacao + ratings) — adiciona a camada "jogador em campo"
+    # Graph (xG momentum) — opcional (saltavel em modo rapido)
+    if not rapido:
+        graph_json = _get_json(f"/event/{event_id}/graph")
+        if graph_json:
+            _preencher_xg_recent(estado, graph_json)
+
+    # Lineups (formacao + ratings) — essencial para rotacao detection
     lineups_json = _get_json(f"/event/{event_id}/lineups")
     if lineups_json:
         _preencher_lineups(estado, lineups_json)
@@ -584,10 +591,11 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     if incidents_json:
         _preencher_substituicoes(estado, incidents_json)
 
-    # Commentary: narrativa do jogo (o que esta a acontecer no campo)
-    comments_json = _get_json(f"/event/{event_id}/comments")
-    if comments_json:
-        _preencher_narrativa(estado, comments_json)
+    # Commentary: narrativa do jogo — opcional (saltavel em modo rapido)
+    if not rapido:
+        comments_json = _get_json(f"/event/{event_id}/comments")
+        if comments_json:
+            _preencher_narrativa(estado, comments_json)
 
     # Contexto pre-jogo (H2H, forma, AI insights) — cache 24h, so UMA chamada
     # por jogo porque nao muda durante os 90min.
