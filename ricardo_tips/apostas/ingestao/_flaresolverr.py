@@ -36,7 +36,7 @@ from apostas.utils.logger import get_logger
 log = get_logger(__name__)
 
 _DEFAULT_URL = "http://localhost:8191/v1"
-_DEFAULT_TIMEOUT_MS = 60_000
+_DEFAULT_TIMEOUT_MS = 15_000  # 15s por pedido (era 60s, acumulava em caso de trava)
 _SESSION_NAME = "ricardo_tips_sofascore"
 
 # Rate limit prudente: 1 pedido / 1.5s para nao sobrecarregar

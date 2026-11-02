@@ -2048,6 +2048,7 @@ def main() -> None:
         ciclo = 0
         while True:
             ciclo += 1
+            inicio_ciclo = agora_utc()
             try:
                 _correr_ciclo(args)
             except KeyboardInterrupt:
@@ -2055,6 +2056,14 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 log.exception("Erro ciclo %d", ciclo)
                 print(f"    ERRO ciclo {ciclo}: {exc}")
+            duracao = (agora_utc() - inicio_ciclo).total_seconds()
+            if duracao > 300:  # 5 min
+                log.warning(
+                    "Ciclo %d demorou %.0fs (lento) — possivel trava Sofascore. "
+                    "Considera activar --rapido ou aumentar --intervalo-s.",
+                    ciclo, duracao,
+                )
+                print(f"    ⚠ Ciclo {ciclo} demorou {duracao:.0f}s")
             if args.ciclos and ciclo >= args.ciclos:
                 break
             time.sleep(args.intervalo_s)

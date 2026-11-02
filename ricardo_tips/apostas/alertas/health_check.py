@@ -109,19 +109,51 @@ def _check_fichas_desactualizadas(min_jogos: int = 5) -> tuple[bool, str, dict]:
     except Exception as exc:  # noqa: BLE001
         return True, "", {"fichas_check": f"nao disponivel: {exc}"}
 
+    # So contamos equipas das LIGAS PRIORITARIAS (13 ligas que o populator
+    # cobre). Equipas de ligas obscuras entram na BD acidentalmente via
+    # scanner live mas nao sao supostos ter ficha completa aqui.
+    try:
+        from apostas.dados_referencia.ligas_prioritarias import LIGAS_PRIORITARIAS
+        nomes_prioritarios = {l.nome.lower() for l in LIGAS_PRIORITARIAS}
+        # Aliases comuns para match flexivel com Sofascore live names
+        aliases_extra = {
+            "premier league", "la liga", "serie a", "bundesliga",
+            "ligue 1", "liga portugal", "primeira liga",
+            "liga portugal betclic", "eredivisie", "vriendenloterij eredivisie",
+            "championship", "laliga 2", "serie b", "2. bundesliga",
+            "bundesliga 2", "ligue 2", "liga portugal 2", "eerste divisie",
+            "laliga", "serie a (ita)", "ligue 1 (fra)",
+            "premier league (eng)", "serie b (ita)", "championship (eng)",
+            "laliga 2 (hypermotion)",
+        }
+        nomes_prioritarios |= aliases_extra
+    except Exception:  # noqa: BLE001
+        nomes_prioritarios = set()
+
     try:
         with abrir_sessao() as sess:
             total_jogos = sess.execute(
                 select(func.count(EstatisticaEquipaJogo.id))
             ).scalar_one() or 0
-            # Equipas com pelo menos min_jogos de historico
-            team_counts = sess.execute(
+            # Equipas com pelo menos min_jogos de historico — FILTRA por liga prioritaria
+            rows = sess.execute(
                 select(EstatisticaEquipaJogo.sofascore_team_id,
+                       EstatisticaEquipaJogo.liga,
                        func.count(EstatisticaEquipaJogo.id).label("n"))
-                .group_by(EstatisticaEquipaJogo.sofascore_team_id)
+                .group_by(EstatisticaEquipaJogo.sofascore_team_id,
+                          EstatisticaEquipaJogo.liga)
             ).all()
-            fracas = sum(1 for _, n in team_counts if n < min_jogos)
-            total_equipas = len(team_counts)
+            # Agrega por team_id, somando jogos APENAS das ligas prioritarias
+            team_jogos_prio: dict[int, int] = {}
+            for team_id, liga_nome, n in rows:
+                if not team_id:
+                    continue
+                liga_lower = (liga_nome or "").strip().lower()
+                if nomes_prioritarios and liga_lower not in nomes_prioritarios:
+                    continue
+                team_jogos_prio[team_id] = team_jogos_prio.get(team_id, 0) + n
+            fracas = sum(1 for n in team_jogos_prio.values() if n < min_jogos)
+            total_equipas = len(team_jogos_prio)
     except Exception as exc:  # noqa: BLE001
         return True, "", {"fichas_check": f"query falhou: {exc}"}
 
@@ -129,6 +161,7 @@ def _check_fichas_desactualizadas(min_jogos: int = 5) -> tuple[bool, str, dict]:
         "fichas_total_jogos": total_jogos,
         "fichas_total_equipas": total_equipas,
         "fichas_fracas": fracas,
+        "fichas_scope": "ligas prioritarias apenas",
     }
     if total_equipas == 0:
         return False, "fichas vazias — popular_cerebros nunca correu", det
@@ -138,7 +171,7 @@ def _check_fichas_desactualizadas(min_jogos: int = 5) -> tuple[bool, str, dict]:
         return (
             False,
             f"fichas desactualizadas — {int(pct_fracas*100)}% das equipas "
-            f"com <{min_jogos} jogos",
+            f"prioritarias com <{min_jogos} jogos",
             det,
         )
     return True, "", det

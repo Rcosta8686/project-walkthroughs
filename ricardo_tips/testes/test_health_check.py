@@ -114,12 +114,14 @@ def test_fichas_check_pct_fracas_detectado(tmp_path, monkeypatch):
     from apostas.utils.db import abrir_sessao
     with abrir_sessao() as sess:
         # 2 equipas com so 2 jogos cada, 1 equipa com 6 jogos
+        # Todas em liga prioritaria (Premier League) para o filtro novo.
         for eid in (1, 2):
             for i in range(2):
                 sess.add(EstatisticaEquipaJogo(
                     sofascore_event_id=100 + eid*10 + i,
                     sofascore_team_id=eid,
                     nome_equipa=f"E{eid}", era_casa=True,
+                    liga="Premier League",
                     data_jogo=datetime(2026, 1, 1),
                     resultado="W",
                 ))
@@ -128,6 +130,7 @@ def test_fichas_check_pct_fracas_detectado(tmp_path, monkeypatch):
                 sofascore_event_id=200 + i,
                 sofascore_team_id=99,
                 nome_equipa="E99", era_casa=True,
+                liga="Premier League",
                 data_jogo=datetime(2026, 1, 1),
                 resultado="W",
             ))
@@ -151,13 +154,14 @@ def test_fichas_check_ok_quando_maioria_tem_dados(tmp_path, monkeypatch):
     from apostas.utils.schema import EstatisticaEquipaJogo
     from apostas.utils.db import abrir_sessao
     with abrir_sessao() as sess:
-        # 3 equipas com 10 jogos cada
+        # 3 equipas com 10 jogos cada, todas em liga prioritaria.
         for eid in (1, 2, 3):
             for i in range(10):
                 sess.add(EstatisticaEquipaJogo(
                     sofascore_event_id=eid*100 + i,
                     sofascore_team_id=eid,
                     nome_equipa=f"E{eid}", era_casa=True,
+                    liga="LaLiga",
                     data_jogo=datetime(2026, 1, 1),
                     resultado="W",
                 ))
@@ -165,5 +169,49 @@ def test_fichas_check_ok_quando_maioria_tem_dados(tmp_path, monkeypatch):
     ok, erro, det = _check_fichas_desactualizadas()
     assert ok is True
     assert erro == ""
+
+
+def test_fichas_check_ignora_ligas_obscuras(tmp_path, monkeypatch):
+    """Equipas de ligas nao-prioritarias nao devem inflar a conta.
+
+    Caso real: scanner apanha equipas de ligas obscuras no feed Sofascore
+    e grava snapshots. Essas equipas ficam na BD com <5 jogos para sempre,
+    mas nao sao problema real — nao sao supostos ser cobertas pelo populator.
+    """
+    from datetime import datetime
+    from apostas.utils import config as config_mod, db as db_mod
+    monkeypatch.setattr(config_mod, "db_path", lambda: tmp_path / "test.db")
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+    db_mod.criar_schema()
+    from apostas.utils.schema import EstatisticaEquipaJogo
+    from apostas.utils.db import abrir_sessao
+    with abrir_sessao() as sess:
+        # 1 equipa em liga prioritaria com 10 jogos (OK)
+        for i in range(10):
+            sess.add(EstatisticaEquipaJogo(
+                sofascore_event_id=100 + i,
+                sofascore_team_id=1,
+                nome_equipa="E1", era_casa=True,
+                liga="Serie A",
+                data_jogo=datetime(2026, 1, 1),
+                resultado="W",
+            ))
+        # 5 equipas em ligas obscuras com 1 jogo cada (deviam ser ignoradas)
+        for eid in range(10, 15):
+            sess.add(EstatisticaEquipaJogo(
+                sofascore_event_id=500 + eid,
+                sofascore_team_id=eid,
+                nome_equipa=f"Obscura{eid}", era_casa=True,
+                liga="Niké Liga",
+                data_jogo=datetime(2026, 1, 1),
+                resultado="L",
+            ))
+    from apostas.alertas.health_check import _check_fichas_desactualizadas
+    ok, erro, det = _check_fichas_desactualizadas()
+    # 1 equipa prioritaria com 10 jogos → OK. As 5 obscuras foram ignoradas.
+    assert ok is True
+    assert det["fichas_total_equipas"] == 1
+    assert det["fichas_fracas"] == 0
     db_mod._engine = None
     db_mod._SessionLocal = None
