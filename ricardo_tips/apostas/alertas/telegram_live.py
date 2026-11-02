@@ -265,6 +265,48 @@ def enviar_sugestao_live(s: dict) -> None:
         except Exception as exc:  # noqa: BLE001
             log.debug("Mega-cerebro narrativa falhou: %s", exc)
 
+        # Especialista em cartoes (mercado preferido do Ricardo)
+        especialista_cards = ""
+        if mercado in ("cards", "cartoes"):
+            try:
+                from apostas.modelos.cards_specialist import (
+                    narrativa_para_telegram, projetar_cartoes,
+                )
+                _mc, _mf = str(s.get("marcador") or "0-0").split("-", 1)
+                sc_c = int(_mc.strip()); sc_f = int(_mf.strip())
+                yel_c = int(s.get("yellows_c") or 0)
+                yel_f = int(s.get("yellows_f") or 0)
+                # Baseline das 2 equipas: pega da sugestao se existir,
+                # senao usa media (4.3/90). Nao-letal se falhar.
+                baseline = 4.3
+                try:
+                    from apostas.alertas.confronto import analisar_confronto
+                    hid = s.get("home_id"); aid = s.get("away_id")
+                    if hid and aid:
+                        res = analisar_confronto(int(hid), int(aid))
+                        if res and res.cards_am_esperados:
+                            baseline = float(res.cards_am_esperados)
+                except Exception:  # noqa: BLE001
+                    pass
+                p = projetar_cartoes(
+                    cards_actual_casa=yel_c, cards_actual_fora=yel_f,
+                    minuto=int(minuto) if str(minuto).isdigit() else 0,
+                    marcador_casa=sc_c, marcador_fora=sc_f,
+                    baseline_cards_por_90=baseline,
+                    nome_arbitro=s.get("arbitro") or None,
+                    nome_casa=s.get("home", ""),
+                    nome_fora=s.get("away", ""),
+                )
+                try:
+                    linha_f = float(s.get("linha")) if s.get("linha") else None
+                except (ValueError, TypeError):
+                    linha_f = None
+                especialista_cards = narrativa_para_telegram(
+                    p, linha_alvo=linha_f, lado=lado,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Especialista cards falhou: %s", exc)
+
         # M19: melhor casa suica (vem de filtros_mercado via scanner)
         melhor_casa_line = ""
         outras_casas_str = s.get("outras_casas") or ""
@@ -291,6 +333,7 @@ def enviar_sugestao_live(s: dict) -> None:
             analise_block = f"\n\n{analise_section}" if analise_section else ""
             risco_block = f"\n\n{risco_section}" if risco_section else ""
             mega_narr_block = f"\n{mega_narr}" if mega_narr else ""
+            cards_block = f"\n\n{especialista_cards}" if especialista_cards else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}{_emoji_mercado(mercado)} *{aposta_fmt}*  ·  {prob*100:.0f}%\n"
                 f"\n"
@@ -303,6 +346,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"{racional_section}"
                 f"{risco_block}"
                 f"{mega_narr_block}"
+                f"{cards_block}"
                 f"\n\n"
                 f"🎯 Odd alvo *{odd_desejada}* (min {odd_be})\n"
                 f"_Procura esta odd. Se bater o alvo, mete._"
@@ -320,6 +364,7 @@ def enviar_sugestao_live(s: dict) -> None:
             analise_block = f"\n\n{analise_section}" if analise_section else ""
             risco_block = f"\n\n{risco_section}" if risco_section else ""
             mega_narr_block = f"\n{mega_narr}" if mega_narr else ""
+            cards_block = f"\n\n{especialista_cards}" if especialista_cards else ""
             texto = (
                 f"{estrelas_str}  {dual_str}{verificar_str}🎯 *EV +{ev*100:.1f}%* LIVE\n"
                 f"\n"
@@ -331,6 +376,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"{mega_line}"
                 f"{risco_block}"
                 f"{mega_narr_block}"
+                f"{cards_block}"
                 f"\n\n"
                 f"*Aposta:* {aposta_fmt}\n"
                 f"*Odd:* {odd}  ({casa})"
