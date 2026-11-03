@@ -1623,13 +1623,20 @@ def _correr_ciclo(args) -> None:
     _resetar_blacklist_cache()
     agora = agora_utc().strftime("%H:%M:%S")
     print(f"\n[{agora}] A listar jogos live...")
-    if args.todas_ligas:
-        jogos = sofascore_live.listar_jogos_live()  # tudo
-    else:
-        jogos = sofascore_live.listar_jogos_live(
-            ligas_filter=tuple(args.ligas) if args.ligas else None,
-            ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
-        )
+    try:
+        if args.todas_ligas:
+            jogos = sofascore_live.listar_jogos_live()  # tudo
+        else:
+            jogos = sofascore_live.listar_jogos_live(
+                ligas_filter=tuple(args.ligas) if args.ligas else None,
+                ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
+            )
+    except Exception as exc:  # noqa: BLE001
+        # HTTP 500 do flaresolverr, timeout, etc. Nao crashamos o ciclo —
+        # tratamos como "0 jogos" (circuit breaker ja tomou nota).
+        log.warning("listar_jogos_live falhou: %s. Ciclo salta.", exc)
+        print(f"    [ERRO Sofascore] {type(exc).__name__}: {exc}")
+        jogos = []
     _actualizar_health_sofa_live(bool(jogos), args.telegram)
     if not jogos:
         print("    (sem jogos live nas ligas que seguimos)")

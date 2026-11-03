@@ -476,18 +476,33 @@ def listar_jogos_live(
                     "Premier League" de outros paises.
     Se ambos vazios, devolve todos os jogos.
     """
-    resp = _flaresolverr.get(
-        f"{_BASE}/sport/football/events/live",
-        headers=_HEADERS_API,
-        warmup_url=_WARMUP,
-    )
+    # Circuit breaker: se Sofascore esta a falhar em cascata, nao vale a
+    # pena tentar. Scanner continua o ciclo e tenta de novo depois.
+    if not _circuit_pode_pedir():
+        return []
+    try:
+        resp = _flaresolverr.get(
+            f"{_BASE}/sport/football/events/live",
+            headers=_HEADERS_API,
+            warmup_url=_WARMUP,
+        )
+    except _flaresolverr.FlaresolverrIndisponivel:
+        _circuit_registar(sucesso=False)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Inclui HTTP 500 do flaresolverr (requests.HTTPError via raise_for_status)
+        log.warning("Sofascore live events ERRO: %s", exc)
+        _circuit_registar(sucesso=False)
+        return []
     if resp.status != 200:
         log.warning("Sofascore live events: HTTP %d", resp.status)
+        _circuit_registar(sucesso=False)
         return []
     try:
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
         log.warning("Resposta nao-JSON em events/live: %s", exc)
+        _circuit_registar(sucesso=False)
         return []
     # Sofascore encapsula erros no body com HTTP 200: {"error": {"code": 403, ...}}
     # Se nao verificarmos isto, o scanner devolve lista vazia silenciosamente
@@ -500,7 +515,9 @@ def listar_jogos_live(
             "Esperar 1-4h antes de nova tentativa.",
             err,
         )
+        _circuit_registar(sucesso=False)
         return []
+    _circuit_registar(sucesso=True)
     eventos = data.get("events", [])
     if ids_ligas:
         ids_set = set(ids_ligas)
