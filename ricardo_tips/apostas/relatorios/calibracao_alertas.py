@@ -80,20 +80,24 @@ def carregar_resolvidos(csv_path: Path, desde: datetime | None = None) -> list[d
             prob = _float(row.get("prob_modelo"))
             if prob is None or not 0.0 < prob < 1.0:
                 continue
+            ts_str = (row.get("ts_scan") or "")[:19]
             if desde is not None:
                 try:
-                    ts = datetime.fromisoformat((row.get("ts_scan") or "")[:19])
+                    ts = datetime.fromisoformat(ts_str)
                 except ValueError:
                     continue
                 if ts < desde:
                     continue
             mercado = (row.get("mercado") or "").strip().lower()
+            casa = (row.get("casa") or "").strip().upper()
             out.append({
                 "mercado": _MERCADO_CANONICO.get(mercado, mercado),
                 "lado": (row.get("lado") or "").strip().lower(),
                 "prob": prob,
                 "ganhou": res == "W",
                 "lucro": _float(row.get("lucro")),
+                "fonte": "analista" if casa == "ANALISTA" else "odds",
+                "ts": ts_str,
             })
     return out
 
@@ -182,5 +186,21 @@ def formatar_relatorio(rows: list[dict], min_n_mercado: int = 10) -> str:
                   else "  Confiar: nenhum mercado ainda com prova estatistica")
     if cortar:
         linhas.append(f"  Cortar: {', '.join(cortar)}")
+
+    from apostas.modelos.calibrador_mercado import avaliar_fora_da_amostra
+    av = avaliar_fora_da_amostra(rows)
+    if av is not None:
+        linhas += [
+            "",
+            f"*Correccao automatica* (testada em {av['n_teste']} alertas recentes "
+            "que o calibrador nao viu):",
+            f"  Brier {av['brier_bruto']:.3f} → *{av['brier_cal']:.3f}*",
+        ]
+        for g in av["por_grupo"][:8]:
+            nome = f"{_NOME_MERCADO.get(g['mercado'], g['mercado'])} {g['lado']}"
+            linhas.append(
+                f"  {nome}: prometia {g['prob_bruta']*100:.0f}% → corrigido "
+                f"{g['prob_cal']*100:.0f}% · real {g['taxa_real']*100:.0f}% (n={g['n']})")
+
     linhas.append("_✓ calibrado · ✓+ acerta acima do prometido · ✗ sobrestima · · poucos dados_")
     return "\n".join(linhas)

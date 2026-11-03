@@ -62,6 +62,7 @@ from apostas.utils.config import get_env, project_root  # noqa: E402
 from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
+from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -298,7 +299,9 @@ def _gravar_novas(sugestoes_dicts, f: Path) -> int:
                 continue
             s["alert_id"] = proximo_id
             proximo_id += 1
-            writer.writerow(s)
+            # No CSV vai a prob bruta: e dela que o calibrador aprende. Em
+            # memoria (Telegram, filtros) fica a calibrada.
+            writer.writerow({**s, "prob_modelo": s["prob_bruta"]} if "prob_bruta" in s else s)
             adicionadas += 1
     return adicionadas
 
@@ -1079,6 +1082,8 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
         # cima da p_final, nao da p_modelo pura. Flag "verificar" quando
         # discrepancia >10pp OU EV_puro >15% (sinal de problema de dados).
         from apostas.modelos.blend_mercado import aplicar_blend
+        prob_bruta = prob
+        prob = _calibrador_live().calibrar(prob, mercado, lado, "odds")
         blend_data = aplicar_blend(prob, odd)
         ev = blend_data["ev"]
         if ev < ev_min:
@@ -1097,6 +1102,7 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
             "casa": casa,
             "odd": round(odd, 2),
             "prob_modelo": round(prob, 4),
+            "prob_bruta": round(prob_bruta, 4),
             "p_mercado": blend_data["p_mercado"],
             "p_final": blend_data["p_final"],
             "verificar": blend_data["verificar"],
@@ -1357,6 +1363,48 @@ def _nome_aposta(mercado: str, lado: str, linha: float | None) -> str:
     if mercado == "remates_a_baliza":
         return f"{lado.upper()}{linha_str} remates a baliza"
     return f"{mercado} {lado}{linha_str}"
+
+
+# Calibrador por (mercado, lado) treinado nos alertas resolvidos do CSV.
+# Retreina a cada 6h para a correccao acompanhar os resultados novos.
+_CALIBRADOR_TTL_S = 6 * 3600
+_calibrador_cache: tuple[float, Calibrador] | None = None
+
+
+def _calibrador_live() -> Calibrador:
+    global _calibrador_cache
+    agora = time.time()
+    if _calibrador_cache is not None and agora - _calibrador_cache[0] < _CALIBRADOR_TTL_S:
+        return _calibrador_cache[1]
+    try:
+        from apostas.relatorios.calibracao_alertas import carregar_resolvidos
+        rows = carregar_resolvidos(_ficheiro_csv())
+        cal = treinar(rows)
+        log.info("Calibrador por mercado: %d alertas, %d curvas", len(rows), len(cal.curvas))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Calibrador por mercado falhou (%s), sem correccao", exc)
+        cal = Calibrador()
+    _calibrador_cache = (agora, cal)
+    return cal
+
+
+def _calibrar_sinal(estado, sinal):
+    """Devolve (sinal com prob/odds/estrelas calibradas, prob bruta).
+
+    Sinais que a calibracao poe abaixo de 55% ou com odd alvo < 1.15 ficam
+    com 1 estrela: continuam a ir para o CSV (dados para recalibrar) mas
+    nunca chegam ao Telegram.
+    """
+    import dataclasses
+    bruta = sinal.prob_modelo
+    cal = _calibrador_live().calibrar(bruta, sinal.mercado, sinal.lado, "analista")
+    odd_be, odd_val = analista._odds_minimas(cal)
+    estrelas = analista.calcular_estrelas(sinal.mercado, estado.liga, cal)
+    if cal < 0.55 or odd_val < 1.15:
+        estrelas = 1
+    return dataclasses.replace(
+        sinal, prob_modelo=cal, odd_minima=odd_be, odd_valor=odd_val, estrelas=estrelas,
+    ), bruta
 
 
 def _sinal_para_sugestao(estado, sinal) -> dict:
@@ -1746,7 +1794,9 @@ def _correr_ciclo(args) -> None:
             # Telegram (via marker _alta_conviccao). Os outros aparecem
             # no terminal para analise mas nao notificam.
             for sinal in sinais:
+                sinal, prob_bruta = _calibrar_sinal(estado, sinal)
                 sug = _sinal_para_sugestao(estado, sinal)
+                sug["prob_bruta"] = round(prob_bruta, 4)
                 # Marca se o analista apostaria aqui o seu proprio dinheiro
                 sug["_alta_conviccao"] = analista._conviccao_alta(sinal, estado)
                 todas_sugestoes.append(sug)
