@@ -658,7 +658,50 @@ def _preencher_contexto_pre(estado: EstadoLive) -> None:
 # ───────────────────────── Helpers de parsing ─────────────────────────
 
 
+# Circuit breaker: se Sofascore respondeu lento/falhou muito, salta pedidos
+# por N segundos. Evita scanner ficar preso em cascata de timeouts quando
+# o Cloudflare esta a bloquear ou flaresolverr esta sobrecarregado.
+_CIRCUIT_FAILURE_THRESHOLD = 5   # falhas consecutivas antes de abrir
+_CIRCUIT_OPEN_SECS = 120         # 2 min de pausa quando aberto
+_circuit_falhas_consecutivas = 0
+_circuit_aberto_ate: float = 0.0  # unix timestamp
+
+
+def _circuit_pode_pedir() -> bool:
+    """True se podemos fazer pedido (circuit fechado ou meio-aberto)."""
+    import time as _time
+    agora = _time.time()
+    if agora >= _circuit_aberto_ate:
+        return True
+    return False
+
+
+def _circuit_registar(sucesso: bool) -> None:
+    """Actualiza o circuit breaker depois de cada pedido."""
+    global _circuit_falhas_consecutivas, _circuit_aberto_ate
+    import time as _time
+    if sucesso:
+        if _circuit_falhas_consecutivas > 0:
+            log.info("Sofascore circuit: fechado apos %d falhas",
+                     _circuit_falhas_consecutivas)
+        _circuit_falhas_consecutivas = 0
+        _circuit_aberto_ate = 0.0
+    else:
+        _circuit_falhas_consecutivas += 1
+        if _circuit_falhas_consecutivas >= _CIRCUIT_FAILURE_THRESHOLD:
+            _circuit_aberto_ate = _time.time() + _CIRCUIT_OPEN_SECS
+            log.warning(
+                "Sofascore circuit ABERTO (%d falhas consecutivas) — "
+                "a saltar pedidos durante %ds",
+                _circuit_falhas_consecutivas, _CIRCUIT_OPEN_SECS,
+            )
+            _circuit_falhas_consecutivas = 0  # reset para proximo ciclo
+
+
 def _get_json(path: str) -> dict | None:
+    # Circuit breaker: se Sofascore esta inatingivel, nao perder mais tempo.
+    if not _circuit_pode_pedir():
+        return None
     try:
         resp = _flaresolverr.get(
             f"{_BASE}{path}",
@@ -666,19 +709,26 @@ def _get_json(path: str) -> dict | None:
             warmup_url=_WARMUP,
         )
     except _flaresolverr.FlaresolverrIndisponivel:
+        _circuit_registar(sucesso=False)
         raise
     except Exception as exc:  # noqa: BLE001
         log.warning("Sofascore %s erro: %s", path, exc)
+        _circuit_registar(sucesso=False)
         return None
     if resp.status == 404:
+        # 404 e benigno (ligas sem stats detalhadas), nao conta como falha
+        # para o circuit breaker.
+        _circuit_registar(sucesso=True)
         return None
     if resp.status != 200:
         log.debug("Sofascore %s HTTP %d", path, resp.status)
+        _circuit_registar(sucesso=False)
         return None
     try:
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
         log.debug("Sofascore %s nao-JSON: %s", path, exc)
+        _circuit_registar(sucesso=False)
         return None
     # Sofascore encapsula erros no body com status 200: {"error": {"code": 403, ...}}
     # 404 e benigno (ligas sem stats detalhadas), nao polui o terminal.
@@ -687,9 +737,13 @@ def _get_json(path: str) -> dict | None:
         code = err.get("code")
         if code == 404:
             log.debug("Sofascore %s body 404 (stats indisponiveis)", path)
+            _circuit_registar(sucesso=True)
         else:
             log.warning("Sofascore %s body error: %s", path, err)
+            # 403 Cloudflare body = falha real
+            _circuit_registar(sucesso=False)
         return None
+    _circuit_registar(sucesso=True)
     return data
 
 
