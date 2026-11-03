@@ -1406,13 +1406,14 @@ def _imprimir_sugestoes(sugs) -> None:
         )
 
 
-# Health do Sofascore live: contagem de ciclos consecutivos sem jogos
-# dentro da janela de jogos (16h-02h PT). Depois de N ciclos sem jogos,
-# envia alerta UMA vez por dia. Reset quando volta a ter jogos.
-_SOFA_LIVE_HEALTH_LIMIAR_CICLOS = 4   # ~20 min a 5min por ciclo
+# Health do Sofascore live: contagem de ciclos consecutivos em que o pedido
+# FALHOU (erro, bloqueio Cloudflare, circuit aberto) dentro da janela de jogos
+# (16h-02h PT). "0 jogos" com resposta valida NAO conta: depois das 23h nao ha
+# jogos nas ligas que seguimos e isso e normal. Alerta UMA vez por dia.
+_SOFA_LIVE_HEALTH_LIMIAR_CICLOS = 4   # ~12 min a 3 min por ciclo
 _SOFA_LIVE_HEALTH_HORA_INI = 16       # Europa/Lisboa (jogos finais da tarde)
 _SOFA_LIVE_HEALTH_HORA_FIM = 2        # pode varar meia-noite
-_sofa_live_ciclos_zero = 0
+_sofa_live_ciclos_falha = 0
 _sofa_live_alerta_enviado_dia: str | None = None
 
 
@@ -1429,23 +1430,21 @@ def _em_janela_jogos_pt() -> bool:
     return h >= _SOFA_LIVE_HEALTH_HORA_INI or h <= _SOFA_LIVE_HEALTH_HORA_FIM
 
 
-def _actualizar_health_sofa_live(houve_jogos: bool, enviar_telegram: bool) -> None:
-    """Rastreia ciclos consecutivos sem jogos; alerta uma vez quando passa limiar.
+def _actualizar_health_sofa_live(sofa_ok: bool, enviar_telegram: bool) -> None:
+    """Rastreia ciclos consecutivos com o Sofascore a falhar; alerta 1x/dia.
 
-    - Reset conta a cada ciclo com jogos.
+    sofa_ok: o pedido de jogos live teve resposta valida (mesmo com 0 jogos).
+    - Reset da conta a cada ciclo com resposta valida.
     - Alerta UMA vez por dia (dia local PT), e so se estiver em janela.
-    - Idempotente: processo pode ser reiniciado sem causar dupla notificacao
-      (via `_sofa_live_alerta_enviado_dia`).
     """
-    global _sofa_live_ciclos_zero, _sofa_live_alerta_enviado_dia
-    if houve_jogos:
-        _sofa_live_ciclos_zero = 0
+    global _sofa_live_ciclos_falha, _sofa_live_alerta_enviado_dia
+    if sofa_ok:
+        _sofa_live_ciclos_falha = 0
         return
     if not _em_janela_jogos_pt():
-        # Fora da janela, zero jogos e normal
         return
-    _sofa_live_ciclos_zero += 1
-    if _sofa_live_ciclos_zero < _SOFA_LIVE_HEALTH_LIMIAR_CICLOS:
+    _sofa_live_ciclos_falha += 1
+    if _sofa_live_ciclos_falha < _SOFA_LIVE_HEALTH_LIMIAR_CICLOS:
         return
     hoje = agora_utc().strftime("%Y-%m-%d")
     if _sofa_live_alerta_enviado_dia == hoje:
@@ -1453,8 +1452,8 @@ def _actualizar_health_sofa_live(houve_jogos: bool, enviar_telegram: bool) -> No
     _sofa_live_alerta_enviado_dia = hoje
     msg = (
         "⚠ *Sofascore live cego*\n"
-        f"{_sofa_live_ciclos_zero} ciclos consecutivos sem jogos na janela "
-        "16h-02h. Scanner live sem dados ao vivo hoje.\n\n"
+        f"{_sofa_live_ciclos_falha} ciclos consecutivos com o Sofascore a falhar "
+        "(erro ou bloqueio). Scanner live sem dados ao vivo.\n\n"
         "• Preview das 17h continua a funcionar (fallback Odds API)\n"
         "• Sinais pre-match continuam a sair\n"
         "• Scanner volta sozinho quando Cloudflare libertar"
@@ -1638,16 +1637,22 @@ def _correr_ciclo(args) -> None:
                 ligas_filter=tuple(args.ligas) if args.ligas else None,
                 ids_ligas=IDS_LIGAS_DEFAULT if not args.ligas else None,
             )
+        sofa_ok = sofascore_live.ultima_listagem_live_ok
     except Exception as exc:  # noqa: BLE001
         # HTTP 500 do flaresolverr, timeout, etc. Nao crashamos o ciclo —
         # tratamos como "0 jogos" (circuit breaker ja tomou nota).
         log.warning("listar_jogos_live falhou: %s. Ciclo salta.", exc)
         print(f"    [ERRO Sofascore] {type(exc).__name__}: {exc}")
         jogos = []
-    _actualizar_health_sofa_live(bool(jogos), args.telegram)
+        sofa_ok = False
+    _actualizar_health_sofa_live(sofa_ok, args.telegram)
     if not jogos:
-        log.info("Ciclo: 0 jogos live (nada para analisar)")
-        print("    (sem jogos live nas ligas que seguimos)")
+        if sofa_ok:
+            log.info("Ciclo: 0 jogos live (nada para analisar)")
+            print("    (sem jogos live nas ligas que seguimos)")
+        else:
+            log.info("Ciclo: Sofascore falhou (erro/bloqueio), ciclo salta")
+            print("    (Sofascore falhou neste ciclo)")
         return
     log.info("Ciclo: %d jogos live encontrados", len(jogos))
     print(f"    {len(jogos)} jogos encontrados.")

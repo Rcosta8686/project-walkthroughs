@@ -459,6 +459,9 @@ def listar_jogos_do_dia(
     return eventos_filtrados_status
 
 
+ultima_listagem_live_ok = True
+
+
 def listar_jogos_live(
     ligas_filter: tuple[str, ...] | None = None,
     ids_ligas: tuple[int, ...] | None = None,
@@ -476,6 +479,10 @@ def listar_jogos_live(
                     "Premier League" de outros paises.
     Se ambos vazios, devolve todos os jogos.
     """
+    # Fica False em todos os caminhos de erro; so o caminho de sucesso o poe
+    # True. Permite ao scanner distinguir "Sofascore falhou" de "0 jogos agora".
+    global ultima_listagem_live_ok
+    ultima_listagem_live_ok = False
     # Circuit breaker: se Sofascore esta a falhar em cascata, nao vale a
     # pena tentar. Scanner continua o ciclo e tenta de novo depois.
     if not _circuit_pode_pedir():
@@ -518,6 +525,7 @@ def listar_jogos_live(
         _circuit_registar(sucesso=False)
         return []
     _circuit_registar(sucesso=True)
+    ultima_listagem_live_ok = True
     eventos = data.get("events", [])
     if ids_ligas:
         ids_set = set(ids_ligas)
