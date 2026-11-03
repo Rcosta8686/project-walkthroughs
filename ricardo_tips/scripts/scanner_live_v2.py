@@ -2048,6 +2048,13 @@ def main() -> None:
                              "do commentary mas poupa 2 chamadas por jogo.")
     args = parser.parse_args()
 
+    # Mata scanners antigos (orfaos de restarts) antes de arrancar: 2 scanners
+    # na mesma sessao flaresolverr dao HTTP 500 e alertas em duplicado.
+    from apostas.utils.instancia_unica import garantir_instancia_unica
+    mortos = garantir_instancia_unica("scanner_live_v2.py")
+    if mortos:
+        print(f"  Terminados {len(mortos)} scanner(s) antigo(s): {mortos}")
+
     # Activa modo rapido (menos chamadas Sofascore) via env que a ingestao le.
     import os as _os_main
     if args.rapido:
