@@ -1622,6 +1622,9 @@ def _blacklist_roi_bloqueia(liga: str, mercado: str,
 def _correr_ciclo(args) -> None:
     _resetar_blacklist_cache()
     agora = agora_utc().strftime("%H:%M:%S")
+    # Heartbeat no LOG (nao so no console) para o watchdog nao achar
+    # que o scanner esta encravado quando so esta a esperar jogos.
+    log.info("Ciclo scanner: a listar jogos live")
     print(f"\n[{agora}] A listar jogos live...")
     try:
         if args.todas_ligas:
@@ -1639,8 +1642,10 @@ def _correr_ciclo(args) -> None:
         jogos = []
     _actualizar_health_sofa_live(bool(jogos), args.telegram)
     if not jogos:
+        log.info("Ciclo: 0 jogos live (nada para analisar)")
         print("    (sem jogos live nas ligas que seguimos)")
         return
+    log.info("Ciclo: %d jogos live encontrados", len(jogos))
     print(f"    {len(jogos)} jogos encontrados.")
 
     todas_sugestoes = []
