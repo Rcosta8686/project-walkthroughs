@@ -641,24 +641,31 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
 
     enviadas = 0
     for mercado, lam_c, lam_f, val_c, val_f in mercados_para_projetar:
-        try:
+        def _proj(mult: float, mercado=mercado, lam_c=lam_c, lam_f=lam_f,
+                  val_c=val_c, val_f=val_f):
             # aplicar_contexto=False: o live_predictor ja aplica fator_m +
             # fator_chasing + +15% losing. NAO duplicar os ajustes aqui.
             # Fadiga NAO depende do predictor, por isso continua a ser
             # aplicada (quando houver dias_descanso).
-            proj = projecao_live.projetar(
+            return projecao_live.projetar(
                 mercado=mercado,
                 minuto=minuto,
                 score_casa=estado.marcador_casa,
                 score_fora=estado.marcador_fora,
                 valor_atual_casa=float(val_c),
                 valor_atual_fora=float(val_f),
-                lam_rest_casa=float(lam_c),
-                lam_rest_fora=float(lam_f),
+                lam_rest_casa=float(lam_c) * mult,
+                lam_rest_fora=float(lam_f) * mult,
                 nome_casa=estado.home,
                 nome_fora=estado.away,
                 aplicar_contexto=False,
             )
+        try:
+            # Bruta vai para a BD (e dela que a correccao aprende); a
+            # corrigida pelo historico projectado-vs-real e a que se usa.
+            proj_bruta = _proj(1.0)
+            mult = _mult_projecao(mercado, target)
+            proj = _proj(mult) if mult != 1.0 else proj_bruta
         except Exception as exc:  # noqa: BLE001
             log.warning("Projecao %s falhou %s: %s", mercado, event_id, exc)
             continue
@@ -689,7 +696,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
             continue
 
         try:
-            _gravar_projecao_db(event_id, target, estado, proj)
+            _gravar_projecao_db(event_id, target, estado, proj_bruta)
         except Exception as exc:  # noqa: BLE001
             log.warning("Gravar projecao %s falhou: %s", mercado, exc)
 
@@ -1386,6 +1393,28 @@ def _calibrador_live() -> Calibrador:
         cal = Calibrador()
     _calibrador_cache = (agora, cal)
     return cal
+
+
+_correcoes_proj_cache: tuple[float, dict] | None = None
+
+
+def _mult_projecao(mercado: str, janela: int) -> float:
+    """Multiplicador do ritmo restante aprendido com projeccoes vs final real."""
+    global _correcoes_proj_cache
+    agora = time.time()
+    if _correcoes_proj_cache is None or agora - _correcoes_proj_cache[0] >= _CALIBRADOR_TTL_S:
+        from apostas.modelos.correcao_projecoes import pares_projecao_real, treinar_correcoes
+        try:
+            with abrir_sessao() as sess:
+                correcoes = treinar_correcoes(pares_projecao_real(sess))
+            log.info("Correccao projeccoes: %s", {
+                f"{m}/{j}": c.mult for (m, j), c in correcoes.items() if j is not None})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Correccao projeccoes falhou (%s), sem correccao", exc)
+            correcoes = {}
+        _correcoes_proj_cache = (agora, correcoes)
+    from apostas.modelos.correcao_projecoes import multiplicador
+    return multiplicador(_correcoes_proj_cache[1], mercado, janela)
 
 
 def _calibrar_sinal(estado, sinal):

@@ -44,6 +44,15 @@ def main() -> None:
 
     texto = formatar_relatorio(carregar_resolvidos(csv_path, desde=desde),
                                min_n_mercado=args.min_n)
+    try:
+        from apostas.modelos.correcao_projecoes import (
+            formatar_resumo, pares_projecao_real, treinar_correcoes,
+        )
+        from apostas.utils.db import abrir_sessao
+        with abrir_sessao() as sess:
+            texto += "\n\n" + formatar_resumo(treinar_correcoes(pares_projecao_real(sess)))
+    except Exception as exc:  # noqa: BLE001
+        texto += f"\n\n(projeccoes: nao consegui ler a BD — {exc})"
     print(texto)
 
     if args.telegram:

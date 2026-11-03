@@ -10,10 +10,15 @@ taxa real), encolhida para a identidade quando ha poucos dados:
     p_cal = w * iso(p) + (1 - w) * p,   w = n / (n + K)
 Grupos com menos de MIN_N alertas caem para (mercado, lado) sem fonte, e
 depois para a identidade.
+
+Alertas recentes pesam mais (meia-vida de 14 dias): o sistema muda (filtros
+novos) e o teste fora da amostra mostrou mercados cujo acerto recente difere
+do antigo (ex: golos under, cartoes over). n no encolhimento e o n efectivo.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import numpy as np
 
@@ -23,6 +28,7 @@ log = get_logger(__name__)
 
 MIN_N = 100
 K_ENCOLHIMENTO = 200
+MEIA_VIDA_DIAS = 14.0
 _P_MIN, _P_MAX = 0.02, 0.98
 _MERCADO_CANONICO = {"cards": "cartoes", "sot": "remates_a_baliza"}
 
@@ -31,7 +37,7 @@ _MERCADO_CANONICO = {"cards": "cartoes", "sot": "remates_a_baliza"}
 class _Curva:
     xs: np.ndarray
     ys: np.ndarray
-    n: int
+    n: float  # efectivo (soma dos pesos)
 
     def aplicar(self, p: float) -> float:
         iso = float(np.interp(p, self.xs, self.ys))
@@ -53,29 +59,50 @@ class Calibrador:
         return min(_P_MAX, max(_P_MIN, curva.aplicar(prob)))
 
 
-def _ajustar_curva(probs: list[float], ganhou: list[bool]) -> _Curva | None:
+def _ajustar_curva(probs: list[float], ganhou: list[bool],
+                   pesos: list[float]) -> _Curva | None:
     try:
         from sklearn.isotonic import IsotonicRegression
     except ImportError:
         log.warning("Calibrador: scikit-learn indisponivel, sem calibracao por mercado")
         return None
     iso = IsotonicRegression(y_min=_P_MIN, y_max=_P_MAX, out_of_bounds="clip")
-    iso.fit(np.asarray(probs), np.asarray(ganhou, dtype=float))
-    return _Curva(xs=iso.X_thresholds_, ys=iso.y_thresholds_, n=len(probs))
+    iso.fit(np.asarray(probs), np.asarray(ganhou, dtype=float),
+            sample_weight=np.asarray(pesos))
+    return _Curva(xs=iso.X_thresholds_, ys=iso.y_thresholds_, n=float(sum(pesos)))
+
+
+def _data(r: dict) -> datetime | None:
+    try:
+        return datetime.fromisoformat((r.get("ts") or "")[:19])
+    except ValueError:
+        return None
+
+
+def _pesos_recencia(rows: list[dict]) -> list[float]:
+    datas = [_data(r) for r in rows]
+    validas = [d for d in datas if d is not None]
+    if not validas:
+        return [1.0] * len(rows)
+    ref = max(validas)
+    return [1.0 if d is None
+            else 0.5 ** (((ref - d).total_seconds() / 86400) / MEIA_VIDA_DIAS)
+            for d in datas]
 
 
 def treinar(rows: list[dict]) -> Calibrador:
-    """rows: dicts com prob, ganhou, mercado, lado e (opcional) fonte."""
-    grupos: dict[tuple, list[dict]] = {}
-    for r in rows:
+    """rows: dicts com prob, ganhou, mercado, lado e (opcional) fonte e ts."""
+    grupos: dict[tuple, list[tuple[dict, float]]] = {}
+    for r, w in zip(rows, _pesos_recencia(rows)):
         m = _MERCADO_CANONICO.get(r["mercado"], r["mercado"])
-        grupos.setdefault((r.get("fonte"), m, r["lado"]), []).append(r)
-        grupos.setdefault((None, m, r["lado"]), []).append(r)
+        grupos.setdefault((r.get("fonte"), m, r["lado"]), []).append((r, w))
+        grupos.setdefault((None, m, r["lado"]), []).append((r, w))
     cal = Calibrador()
     for chave, g in grupos.items():
         if len(g) < MIN_N:
             continue
-        curva = _ajustar_curva([r["prob"] for r in g], [r["ganhou"] for r in g])
+        curva = _ajustar_curva([r["prob"] for r, _ in g], [r["ganhou"] for r, _ in g],
+                               [w for _, w in g])
         if curva is not None:
             cal.curvas[chave] = curva
     return cal

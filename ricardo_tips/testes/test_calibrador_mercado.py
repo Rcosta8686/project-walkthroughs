@@ -91,6 +91,25 @@ def test_avaliacao_fora_da_amostra_melhora_o_brier():
     assert av["n_teste"] == 600
 
 
+def _com_data(rows, dia):
+    return [{**r, "ts": f"2026-{dia}T12:00:00"} for r in rows]
+
+
+def test_alertas_recentes_pesam_mais():
+    """Golos under: antes acertava 55%, nas ultimas semanas 75%."""
+    antigos = _com_data(_grupo("golos", "under", 0.76, 0.55, 1500, seed=8), "08-01")
+    recentes = _com_data(_grupo("golos", "under", 0.76, 0.75, 400, seed=9), "11-01")
+    cal = treinar(antigos + recentes)
+    p = cal.calibrar(0.76, "golos", "under", "analista")
+    # sem pesos a media seria ~59%; com meia-vida de 14 dias fica perto dos 75%
+    assert p > 0.68
+
+
+def test_sem_datas_validas_pesos_iguais():
+    rows = _grupo("cartoes", "under", 0.78, 0.59, 800)  # ts invalidos
+    assert 0.58 < _media_cal(treinar(rows), rows) < 0.68
+
+
 def test_avaliacao_sem_dados_suficientes():
     assert avaliar_fora_da_amostra(_grupo("golos", "over", 0.7, 0.7, 100)) is None
 
