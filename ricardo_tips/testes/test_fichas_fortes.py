@@ -40,7 +40,7 @@ def test_usa_cache_apos_primeira_chamada(monkeypatch):
 
     def fake_gerar(team_id, n_jogos=20):
         chamadas.append(team_id)
-        return SimpleNamespace(n_jogos=12)
+        return SimpleNamespace(jogos_lidos=12)
 
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha", fake_gerar,
@@ -79,14 +79,14 @@ def test_ambas_sem_id_e_fraco():
 def test_ambas_com_mais_de_5_jogos_e_forte(monkeypatch):
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=10),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=10),
     )
     assert scn._ambas_fichas_fortes(100, 200) is True
 
 
 def test_uma_com_poucos_jogos_e_fraco(monkeypatch):
     def fake(team_id, n_jogos=20):
-        return SimpleNamespace(n_jogos=10 if team_id == 100 else 2)
+        return SimpleNamespace(jogos_lidos=10 if team_id == 100 else 2)
 
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha", fake,
@@ -101,7 +101,7 @@ def test_exactamente_5_jogos_passa(monkeypatch):
     """5 >= 5 — limite inclusivo."""
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=5),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=5),
     )
     assert scn._ambas_fichas_fortes(100, 200) is True
 
@@ -109,7 +109,7 @@ def test_exactamente_5_jogos_passa(monkeypatch):
 def test_4_jogos_falha(monkeypatch):
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=4),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=4),
     )
     assert scn._ambas_fichas_fortes(100, 200) is False
 
@@ -117,9 +117,21 @@ def test_4_jogos_falha(monkeypatch):
 def test_reset_do_cache_apaga(monkeypatch):
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=15),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=15),
     )
     scn._n_jogos_ficha(42)
     assert 42 in scn._cache_n_jogos_ficha
     scn._resetar_blacklist_cache()
     assert 42 not in scn._cache_n_jogos_ficha
+
+
+def test_atributo_correto_e_jogos_lidos_nao_n_jogos():
+    """Sanity check: a dataclass FichaEquipa usa `jogos_lidos`, NAO `n_jogos`.
+    Bug critico de 2026-11-03: usava f.n_jogos → AttributeError silencioso
+    → sempre 0 → todas equipas marcadas fracas → scanner bloqueou 99% sinais.
+    """
+    from apostas.relatorios.ficha_equipa import FichaEquipa
+    import dataclasses
+    campos = {f.name for f in dataclasses.fields(FichaEquipa)}
+    assert "jogos_lidos" in campos
+    assert "n_jogos" not in campos

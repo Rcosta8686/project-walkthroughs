@@ -1510,9 +1510,13 @@ def _n_jogos_ficha(team_id: int) -> int:
     try:
         from apostas.relatorios.ficha_equipa import gerar_ficha
         f = gerar_ficha(int(team_id), n_jogos=20)
-        n = f.n_jogos if f else 0
+        # FichaEquipa tem atributo `jogos_lidos` (NAO `n_jogos`).
+        # Bug critico corrigido: `f.n_jogos` levantava AttributeError
+        # silenciosamente, resultado era sempre 0 → todas as equipas
+        # marcadas como "fichas fracas" → 99% dos sinais bloqueados.
+        n = f.jogos_lidos if f else 0
     except Exception as exc:  # noqa: BLE001
-        log.debug("Ficha n_jogos team=%s falhou: %s", team_id, exc)
+        log.warning("Ficha n_jogos team=%s falhou: %s", team_id, exc)
         n = 0
     _cache_n_jogos_ficha[team_id] = n
     return n

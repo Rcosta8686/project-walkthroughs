@@ -81,14 +81,14 @@ def test_sem_rapido_mantem_graph_e_comments(monkeypatch):
 def _mock_ficha_fraca(monkeypatch):
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=2),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=2),
     )
 
 
 def _mock_ficha_forte(monkeypatch):
     monkeypatch.setattr(
         "apostas.relatorios.ficha_equipa.gerar_ficha",
-        lambda team_id, n_jogos=20: SimpleNamespace(n_jogos=15),
+        lambda team_id, n_jogos=20: SimpleNamespace(jogos_lidos=15),
     )
 
 
