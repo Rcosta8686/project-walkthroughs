@@ -237,7 +237,8 @@ def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
         if actual < linha:
             riscos.append(f"so {min_restante} min para fechar {int(linha + 0.5 - actual)} {unidade} — pouca folga")
 
-    if mercado in ("cards", "cartoes") and yel_c is not None and yel_f is not None:
+    if (mercado in ("cards", "cartoes") and yel_c is not None and yel_f is not None
+            and linha is not None):
         yel_tot = yel_c + yel_f
         if lado == "over" and yel_tot >= linha - 1 and min_restante <= 15:
             certezas.append(f"ja {yel_tot} amarelos, 1 so para OVER — final tenso costuma dar")

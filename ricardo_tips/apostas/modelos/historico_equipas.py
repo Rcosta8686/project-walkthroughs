@@ -117,12 +117,12 @@ class _StatsEquipa:
     fouls_1t: float | None = None
     fouls_2t: float | None = None
     # Nivel 3: stats avancadas
-    passes_longos_total: int | None = None
+    passes_longos_total: float | None = None
     passes_longos_pct: float | None = None
     duels_won_pct: float | None = None
-    interceptions: int | None = None
-    tackles_total: int | None = None
-    offsides: int | None = None
+    interceptions: float | None = None
+    tackles_total: float | None = None
+    offsides: float | None = None
     pass_accuracy_final_third: float | None = None
 
 

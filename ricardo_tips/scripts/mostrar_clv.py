@@ -121,6 +121,8 @@ def main() -> None:
 
     print(f"\n{'─' * 78}")
     media_total = _mean(totais_clv)
+    pct_pos_total = 0.0
+    veredicto = ""
     if media_total is not None:
         pct_pos_total = sum(1 for c in totais_clv if c > 0) / len(totais_clv) * 100
         veredicto = ("✅ scanner com edge" if media_total > 0.01

@@ -139,7 +139,7 @@ def _classificar_peso(liga_nome: str, fase: str | None = None) -> tuple[str, str
 def _fetch_standings(tournament_id: int, season_id: int) -> list[dict]:
     """Puxa standings e devolve lista {team_id, posicao, pontos, jogos}."""
     try:
-        from apostas.ingestao import flaresolverr as _flaresolverr
+        from apostas.ingestao import _flaresolverr
     except Exception:  # noqa: BLE001
         return []
 

@@ -115,7 +115,7 @@ def gravar_snapshot_hoje() -> int:
             ja_existe.apostas_abertas_num = estado.apostas_abertas_num
             ja_existe.apostas_abertas_stake = estado.apostas_abertas_stake
             ja_existe.lucro_dia = -estado.perda_dia if estado.perda_dia else 0.0
-            ja_existe.stop_loss_atingido = 0 if estado.pode_apostar else 1
+            ja_existe.stop_loss_atingido = not estado.pode_apostar
             s.commit()
             return ja_existe.id
         novo = BancaRegisto(
@@ -124,7 +124,7 @@ def gravar_snapshot_hoje() -> int:
             apostas_abertas_num=estado.apostas_abertas_num,
             apostas_abertas_stake=estado.apostas_abertas_stake,
             lucro_dia=-estado.perda_dia if estado.perda_dia else 0.0,
-            stop_loss_atingido=0 if estado.pode_apostar else 1,
+            stop_loss_atingido=not estado.pode_apostar,
         )
         s.add(novo)
         s.commit()

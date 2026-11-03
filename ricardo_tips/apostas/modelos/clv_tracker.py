@@ -71,7 +71,7 @@ def calcular_clv_sinal(
             q = q.where(OddsSnapshotPrelive.linha == linha)
         if casa_preferida:
             q = q.where(OddsSnapshotPrelive.casa == casa_preferida)
-        snaps_lado = s.scalars(q).all()
+        snaps_lado = list(s.scalars(q).all())
         if not snaps_lado:
             return None
 

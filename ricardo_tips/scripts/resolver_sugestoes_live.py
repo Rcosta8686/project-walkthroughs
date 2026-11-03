@@ -206,7 +206,7 @@ def main() -> None:
     with CSV_PATH.open(encoding="utf-8") as fp:
         reader = csv.DictReader(fp)
         linhas = list(reader)
-        colunas = reader.fieldnames or []
+        colunas = list(reader.fieldnames or [])
 
     # Garante que as colunas resultado/lucro/resolvido_em existem
     for extra in ("resultado", "lucro", "resolvido_em"):

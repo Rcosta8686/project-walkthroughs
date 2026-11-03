@@ -148,7 +148,7 @@ def calcular_ajustes(
             # A perder + perfil "a perder dispara"
             # O texto do padrao diz qual equipa — procuramos "casa" / "fora"
             # mas e mais pratico: aplica em ambas (chasing symmetric)
-            if "nome_casa" in padrao or score_casa is not None and score_fora is not None:
+            if score_casa is not None and score_fora is not None:
                 if score_casa < score_fora:
                     aj.lam_shots_casa_mult *= 1.08
                 elif score_fora < score_casa:

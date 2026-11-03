@@ -765,6 +765,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
             # Mega-cerebro: 1 linha de sintese (silencio se sinal fraco)
             # Alem da linha, grava o sinal no ledger (Fase D) para o resolver
             # poder avaliar depois.
+            _sint = None
             try:
                 from apostas.alertas import mega_cerebro
                 if estado.home_id and estado.away_id:
@@ -909,7 +910,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 }
                 # Razao: usa a sintese do mega se existir
                 razao_mega = ""
-                if '_sint' in locals() and _sint is not None:
+                if _sint is not None:
                     razao_mega = getattr(_sint, "razao", "") or ""
                 narr = narrativa_final(sinal_dict, sintese_razao=razao_mega)
                 if narr:
