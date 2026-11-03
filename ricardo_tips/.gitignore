@@ -57,3 +57,7 @@ env/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Configuracao do verificador de codigo (versionada)
+!pyrightconfig.json
+!testes/pyright_baseline.json

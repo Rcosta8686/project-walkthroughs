@@ -1,0 +1,9 @@
+{
+  "include": ["apostas", "scripts"],
+  "exclude": ["venv", "**/__pycache__"],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "warning",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none"
+}
