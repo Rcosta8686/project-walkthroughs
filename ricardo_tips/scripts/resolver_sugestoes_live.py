@@ -17,17 +17,24 @@ Fluxo:
        - Lucro: W → (odd-1)*stake_implicito=1 ; L → -1 ; empate push → 0
   4. Grava o CSV actualizado (atomico: temp file + rename).
 
+Tambem grava as estatisticas finais (EstatisticaEquipaJogo) dos jogos com
+projeccao 40'/55'/70' ou dica enviada que ainda nao as tenham: sao elas que
+resolvem as projeccoes e ensinam a correccao do ritmo.
+
 Uso:
     python scripts/resolver_sugestoes_live.py
+    python scripts/resolver_sugestoes_live.py --hoje            # so alertas de hoje (rapido)
+    python scripts/resolver_sugestoes_live.py --desde 2026-11-01
 
 Idempotente: linhas ja com resultado nao sao re-resolvidas.
 Dependencias: flaresolverr a correr (necessario para a Sofascore).
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -198,9 +205,82 @@ def _resolver_apostas_reais_live(alert_ids: list[int], wl_por_alerta: dict,
     return atualizadas
 
 
+def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> int:
+    """Grava as estatisticas finais dos jogos com projeccao/dica enviada que nao as tem.
+
+    Sem `desde` ve os ultimos 3 dias. Devolve o numero de jogos gravados.
+    """
+    from sqlalchemy import func
+
+    from apostas.relatorios import alertas_enviados
+    from apostas.utils.schema import EstatisticaEquipaJogo, ProjecaoLive
+
+    limite = desde or (agora_utc() - timedelta(days=3))
+    ids: set[int] = {
+        eid for r in alertas_enviados.carregar()
+        if r["tipo"] == "projeccao" and r["ts"] >= limite
+        and (eid := alertas_enviados._int(r.get("event_id"))) is not None
+    }
+    with abrir_sessao() as s:
+        ids |= set(s.scalars(select(ProjecaoLive.sofascore_event_id)
+                             .where(ProjecaoLive.data_envio >= limite)).all())
+        ids -= ja_feitos
+        if not ids:
+            return 0
+        com_stats = set(s.scalars(
+            select(EstatisticaEquipaJogo.sofascore_event_id)
+            .where(EstatisticaEquipaJogo.sofascore_event_id.in_(ids))
+            .group_by(EstatisticaEquipaJogo.sofascore_event_id)
+            .having(func.count() >= 2)).all())
+    faltam = sorted(ids - com_stats)
+    if not faltam:
+        return 0
+    print(f"\nEstatisticas finais em falta para {len(faltam)} jogos com projeccao...")
+    gravados = 0
+    for eid in faltam:
+        try:
+            n = historico_equipas.gravar_jogo_terminado(int(eid))
+        except FlaresolverrIndisponivel as exc:
+            print(f"⚠ Flaresolverr: {exc}")
+            break
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Historico event %s falhou: %s", eid, exc)
+            continue
+        if n:
+            gravados += 1
+            print(f"  [OK]  event {eid}: +{n} linhas de estatisticas")
+    return gravados
+
+
+def _stats_seguro(desde: datetime | None, ja_feitos: set[int]) -> None:
+    try:
+        _stats_jogos_com_projeccao(desde, ja_feitos)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Estatisticas dos jogos com projeccao falharam: %s", exc)
+
+
+def _args(argv: list[str] | None = None) -> datetime | None:
+    parser = argparse.ArgumentParser(description="Resolve os alertas live pendentes.")
+    parser.add_argument("--hoje", action="store_true", help="So alertas de hoje (UTC)")
+    parser.add_argument("--desde", default=None, help="So alertas desde YYYY-MM-DD")
+    args = parser.parse_args(argv)
+    if args.desde:
+        return datetime.strptime(args.desde, "%Y-%m-%d")
+    if args.hoje:
+        hoje = agora_utc()
+        return datetime(hoje.year, hoje.month, hoje.day)
+    return None
+
+
 def main() -> None:
+    resolver(_args())
+
+
+def resolver(desde: datetime | None = None) -> None:
+    """Resolve alertas pendentes (todos, ou so desde `desde`) e grava estatisticas."""
     if not CSV_PATH.exists():
         print(f"Sem CSV live em {CSV_PATH}")
+        _stats_seguro(desde, set())
         return
 
     with CSV_PATH.open(encoding="utf-8") as fp:
@@ -214,8 +294,13 @@ def main() -> None:
             colunas.append(extra)
 
     pendentes = [l for l in linhas if not l.get("resultado")]
-    print(f"Total linhas: {len(linhas)}. Pendentes: {len(pendentes)}.")
+    if desde is not None:
+        dia = desde.date().isoformat()
+        pendentes = [l for l in pendentes if (l.get("ts_scan") or "")[:10] >= dia]
+    print(f"Total linhas: {len(linhas)}. Pendentes"
+          f"{f' desde {desde:%d/%m}' if desde else ''}: {len(pendentes)}.")
     if not pendentes:
+        _stats_seguro(desde, set())
         return
 
     # Agrupa por event_id para 1 chamada Sofascore por jogo
@@ -230,6 +315,7 @@ def main() -> None:
     resolvidos_jogos = 0
     resolvidos_mercados = 0
     wl_por_alerta: dict[int, str] = {}
+    jogos_terminados: set[int] = set()
     for eid, linhas_grupo in por_evento.items():
         try:
             res = _puxar_resultado_final(int(eid))
@@ -240,6 +326,7 @@ def main() -> None:
         if res is None:
             print(f"  [skip] event {eid}: ainda nao acabou (ou nao encontrado)")
             continue
+        jogos_terminados.add(int(eid))
         h = linhas_grupo[0].get("home", "?")
         a = linhas_grupo[0].get("away", "?")
         print(f"  [OK]  event {eid}: {h} {res['golos_casa']}-{res['golos_fora']} {a}  "
@@ -317,6 +404,7 @@ def main() -> None:
             log.warning("Fecho ApostaRealLive falhou: %s", exc)
 
     print(f"\n{resolvidos_jogos} jogos resolvidos → {resolvidos_mercados} linhas W/L marcadas.")
+    _stats_seguro(desde, jogos_terminados)
 
 
 if __name__ == "__main__":

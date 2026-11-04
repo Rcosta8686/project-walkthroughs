@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from apostas.utils.config import project_root
+from apostas.utils.tempo import agora_utc
 
 CAMPOS = ["alert_id", "ts_envio", "tipo", "event_id", "mercado", "lado", "linha", "odd"]
 _NOME_MERCADO = {
@@ -45,7 +46,7 @@ def registar(alert_id=None, ts: datetime | None = None, path: Path | None = None
         w = csv.writer(fp)
         if novo:
             w.writerow(CAMPOS)
-        w.writerow([alert_id or "", (ts or datetime.now()).isoformat(timespec="seconds"),
+        w.writerow([alert_id or "", (ts or agora_utc()).isoformat(timespec="seconds"),
                     tipo, event_id or "", mercado, lado,
                     "" if linha is None else linha,
                     "" if odd is None else round(float(odd), 3)])
@@ -154,16 +155,36 @@ def _resultado_projeccao(r: dict, totais: dict) -> tuple[str, float | None]:
     return ("W", odd - 1.0) if ganhou else ("L", -1.0)
 
 
-def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
-            csv_enviados: Path | None = None,
-            totais_proj: dict[tuple[int, str], float] | None = None) -> ResumoEnviados:
-    enviados = carregar(csv_enviados)
-    rel = ResumoEnviados(inicio=inicio, fim=fim,
-                         registo_desde=min(r["ts"] for r in enviados) if enviados else None)
-    no_mes = [r for r in enviados if inicio <= r["ts"] < fim]
+@dataclass
+class DicaEnviada:
+    ts: datetime
+    tipo: str               # "alerta" | "projeccao"
+    event_id: int | None
+    mercado: str            # nome com icone, ex "🚩 cantos"
+    lado: str
+    linha: str
+    odd: float | None
+    resultado: str          # W | L | push | pendente
+    lucro: float | None
+    home: str = ""
+    away: str = ""
+
+    @property
+    def grupo(self) -> str:
+        return f"{self.mercado} {self.lado}" + (" (projecção)" if self.tipo == "projeccao" else "")
+
+
+def listar(inicio: datetime, fim: datetime, csv_sugestoes: Path,
+           csv_enviados: Path | None = None,
+           totais_proj: dict[tuple[int, str], float] | None = None,
+           enviados: list[dict] | None = None) -> list[DicaEnviada]:
+    """Cada dica enviada em [inicio, fim) com o seu resultado, por ordem de hora."""
+    if enviados is None:
+        enviados = carregar(csv_enviados)
+    no_periodo = [r for r in enviados if inicio <= r["ts"] < fim]
 
     # Alertas: resultado do CSV de sugestoes (1 linha por alert_id)
-    ids = {(r.get("alert_id") or "").strip() for r in no_mes if r["tipo"] == "alerta"}
+    ids = {(r.get("alert_id") or "").strip() for r in no_periodo if r["tipo"] == "alerta"}
     ids.discard("")
     linhas_csv: dict[str, dict] = {}
     if ids and csv_sugestoes.exists():
@@ -173,46 +194,92 @@ def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
                 if aid in ids and aid not in linhas_csv:
                     linhas_csv[aid] = row
 
-    itens: list[tuple[str, str, float | None]] = []  # (nome, resultado, lucro)
-    for aid in ids:
-        row = linhas_csv.get(aid)
-        if row is None:
-            itens.append(("?", "pendente", None))
-            continue
-        m = (row.get("mercado") or "?").strip().lower()
-        nome = f"{_NOME_MERCADO.get(m, m)} {(row.get('lado') or '').strip().lower()}"
-        itens.append((nome, (row.get("resultado") or "").strip() or "pendente",
-                      _float(row.get("lucro"))))
-    for r in no_mes:
-        if r["tipo"] != "projeccao":
-            continue
-        rel.n_projeccoes += 1
-        m = (r.get("mercado") or "?").lower()
-        res, lucro = _resultado_projeccao(r, totais_proj or {})
-        itens.append((f"{_NOME_MERCADO.get(m, m)} {r.get('lado', '')} (projecção)", res, lucro))
+    dicas: list[DicaEnviada] = []
+    vistos: set[str] = set()
+    for r in no_periodo:
+        if r["tipo"] == "alerta":
+            aid = (r.get("alert_id") or "").strip()
+            if not aid or aid in vistos:
+                continue
+            vistos.add(aid)
+            row = linhas_csv.get(aid)
+            if row is None:
+                dicas.append(DicaEnviada(ts=r["ts"], tipo="alerta", event_id=None, mercado="?",
+                                         lado="", linha="", odd=None, resultado="pendente",
+                                         lucro=None))
+                continue
+            m = (row.get("mercado") or "?").strip().lower()
+            dicas.append(DicaEnviada(
+                ts=r["ts"], tipo="alerta", event_id=_int(row.get("event_id")),
+                mercado=_NOME_MERCADO.get(m, m), lado=(row.get("lado") or "").strip().lower(),
+                linha=(row.get("linha") or "").strip(), odd=_float(row.get("odd")),
+                resultado=(row.get("resultado") or "").strip() or "pendente",
+                lucro=_float(row.get("lucro")),
+                home=row.get("home") or "", away=row.get("away") or ""))
+        elif r["tipo"] == "projeccao":
+            m = (r.get("mercado") or "?").lower()
+            res, lucro = _resultado_projeccao(r, totais_proj or {})
+            dicas.append(DicaEnviada(
+                ts=r["ts"], tipo="projeccao", event_id=_int(r.get("event_id")),
+                mercado=_NOME_MERCADO.get(m, m), lado=(r.get("lado") or "").lower(),
+                linha=(r.get("linha") or "").strip(), odd=_float(r.get("odd")),
+                resultado=res, lucro=lucro))
+    dicas.sort(key=lambda d: d.ts)
+    return dicas
 
+
+def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
+            csv_enviados: Path | None = None,
+            totais_proj: dict[tuple[int, str], float] | None = None) -> ResumoEnviados:
+    enviados = carregar(csv_enviados)
+    rel = ResumoEnviados(inicio=inicio, fim=fim,
+                         registo_desde=min(r["ts"] for r in enviados) if enviados else None)
     mercados: dict[str, LinhaMercado] = {}
-    for nome, res, lucro in itens:
+    for d in listar(inicio, fim, csv_sugestoes, totais_proj=totais_proj, enviados=enviados):
         rel.n += 1
-        lm = mercados.setdefault(nome.strip(), LinhaMercado(nome=nome.strip()))
-        if res == "W":
+        if d.tipo == "projeccao":
+            rel.n_projeccoes += 1
+        lm = mercados.setdefault(d.grupo, LinhaMercado(nome=d.grupo))
+        if d.resultado == "W":
             rel.vitorias += 1
             lm.vitorias += 1
-        elif res == "L":
+        elif d.resultado == "L":
             rel.derrotas += 1
             lm.derrotas += 1
-        elif res == "push":
+        elif d.resultado == "push":
             rel.push += 1
         else:
             rel.pendentes += 1
             continue
-        if lucro is not None:
-            rel.lucro += lucro
+        if d.lucro is not None:
+            rel.lucro += d.lucro
             rel.n_com_lucro += 1
-            lm.lucro += lucro
+            lm.lucro += d.lucro
     rel.por_mercado = sorted(mercados.values(),
                              key=lambda l: (-(l.vitorias + l.derrotas), l.nome))
     return rel
+
+
+_ICONE_RESULTADO = {"W": "✅", "L": "❌", "push": "↩", "pendente": "⏳"}
+
+
+def formatar_lista(dicas: list[DicaEnviada],
+                   nomes: dict[int, tuple[str, str]] | None = None) -> str:
+    """Uma linha por dica: hora, jogo, aposta, resultado."""
+    linhas = []
+    for d in dicas:
+        home, away = d.home, d.away
+        if (not home or not away) and nomes and d.event_id in nomes:
+            home, away = nomes[d.event_id]
+        jogo = f"{home} - {away}" if home and away else f"jogo {d.event_id or '?'}"
+        aposta = f"{d.mercado} {d.lado.upper()} {d.linha}".strip()
+        if d.odd:
+            aposta += f" @{d.odd:.2f}"
+        if d.tipo == "projeccao":
+            aposta += " (proj.)"
+        fim = f" → {d.lucro:+.2f}" if d.lucro is not None and d.resultado != "pendente" else ""
+        linhas.append(f"{_ICONE_RESULTADO.get(d.resultado, '⏳')} {d.ts:%H:%M} {jogo} · {aposta}{fim}")
+    return "\n".join(linhas)
 
 
 def formatar(rel: ResumoEnviados) -> str:
@@ -222,7 +289,7 @@ def formatar(rel: ResumoEnviados) -> str:
             linhas.append("  _O registo das dicas enviadas começou agora; "
                           "o próximo relatório já as conta._")
         else:
-            linhas.append("  Nenhuma dica enviada neste mês.")
+            linhas.append("  Nenhuma dica enviada neste período.")
         return "\n".join(linhas)
     if rel.registo_desde and rel.registo_desde > rel.inicio:
         linhas.append(f"  _(registo desde {rel.registo_desde:%d/%m %H:%M})_")
