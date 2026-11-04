@@ -63,7 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
-from apostas.relatorios import alertas_enviados  # noqa: E402
+from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -217,17 +217,8 @@ _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 # Para ver os IDs ou adicionar mais ligas, le o LIGAS_SOFASCORE_IDS.
 IDS_LIGAS_DEFAULT = tuple(sofascore_live.LIGAS_SOFASCORE_IDS.values()) if hasattr(sofascore_live, "LIGAS_SOFASCORE_IDS") else ()
 
-CSV_COLUNAS = [
-    "alert_id",
-    "ts_scan", "event_id", "liga", "home", "away", "minuto", "marcador",
-    "mercado", "lado", "linha", "casa", "odd",
-    "prob_modelo", "p_mercado", "p_final", "verificar",
-    "ev", "estrelas", "xg_casa", "xg_fora",
-    "shots_on_target_c", "shots_on_target_f",
-    "corners_c", "corners_f", "yellows_c", "yellows_f",
-    # Preenchidos por resolver_sugestoes_live.py:
-    "resultado", "lucro", "resolvido_em",
-]
+# Formato actual (e historico) do CSV: apostas/relatorios/csv_live.py.
+CSV_COLUNAS = csv_live.COLUNAS_ACTUAIS
 
 
 def _ficheiro_csv() -> Path:
@@ -2170,6 +2161,19 @@ def main() -> None:
     mortos = garantir_instancia_unica("scanner_live_v2.py")
     if mortos:
         print(f"  Terminados {len(mortos)} scanner(s) antigo(s): {mortos}")
+    # Que versao do codigo esta a correr: um scanner que nao foi reiniciado
+    # depois do git pull continua com o codigo antigo em memoria.
+    from apostas.utils.versao import versao_codigo
+    log.info("Scanner live v2 arrancou — versao %s", versao_codigo())
+    # Cabecalho antigo no CSV desalinha as linhas novas (alert_id a repetir,
+    # resolver a ignora-las). Repara antes de escrever mais.
+    try:
+        diag = csv_live.realinhar(_ficheiro_csv(),
+                                  registo_enviados=alertas_enviados.caminho())
+        if diag.reparado or diag.recusado:
+            log.warning("CSV live: %s", diag.texto().replace("\n", " | "))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Verificacao do CSV live falhou: %s", exc)
 
     # Activa modo rapido (menos chamadas Sofascore) via env que a ingestao le.
     import os as _os_main
