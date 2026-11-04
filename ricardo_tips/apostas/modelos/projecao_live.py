@@ -319,6 +319,7 @@ def formatar_telegram(
     *,
     extras: str = "",
     roi_line: str = "",
+    referencia: str = "",
 ) -> str:
     """Mensagem Telegram compacta.
 
@@ -347,6 +348,8 @@ def formatar_telegram(
             f"{nome_fora}: {proj.valor_atual_fora:.0f}→"
             f"{proj.projecao_final_fora:.1f}"
         )
+    if referencia:
+        linhas.append(referencia)
     if roi_line:
         linhas.append(roi_line)
     if proj.aviso_fadiga:
@@ -358,6 +361,51 @@ def formatar_telegram(
     msg += "\n_So aposta se a casa paga MAIS do que a odd justa._"
     msg += f"\nAnalista Projecao · {emoji}"
     return msg
+
+
+# ─────────── Aposta de referencia da projeccao ───────────────────────────
+
+# Acima disto a odd justa fica < 1.18: a casa nunca paga o suficiente.
+_PROB_MAX_REFERENCIA = 0.85
+
+
+@dataclass
+class ReferenciaProjecao:
+    """A aposta que a conclusao do mega-cerebro recomenda."""
+    linha: float
+    lado: str          # "over" | "under"
+    prob: float        # ja calibrada, se foi dado um calibrador
+    odd_justa: float
+
+
+def escolher_referencia(proj: ProjecaoResumo, calibrar=None) -> ReferenciaProjecao | None:
+    """Entre as linhas da projeccao (over e under), a mais provavel que ainda paga.
+
+    Antes a conclusao usava a linha central (~50%) com a probabilidade da
+    linha mais baixa (~85%): dizia "muito confiante" numa moeda ao ar.
+
+    `calibrar(prob, lado) -> prob` aplica a correccao aprendida com os
+    resultados reais (os UNDER prometiam mais do que acertavam).
+    """
+    candidatos: list[ReferenciaProjecao] = []
+    for lo in proj.linhas_total:
+        if lo.linha <= proj.valor_atual_total:  # over ja batido, under ja perdido
+            continue
+        for lado, p in (("over", lo.prob_over), ("under", 1.0 - lo.prob_over)):
+            if calibrar is not None:
+                p = calibrar(p, lado)
+            if 0.0 < p <= _PROB_MAX_REFERENCIA:
+                candidatos.append(ReferenciaProjecao(
+                    linha=lo.linha, lado=lado, prob=round(p, 3), odd_justa=_odd_justa(p)))
+    if not candidatos:
+        return None
+    return max(candidatos, key=lambda c: (c.prob, c.lado == "over"))
+
+
+def formatar_referencia(ref: ReferenciaProjecao, margem: float = 0.05) -> str:
+    odd_min = round(ref.odd_justa * (1 + margem), 2)
+    return (f"🎯 *Aposta de referência: {ref.lado.upper()} {ref.linha}* · modelo {ref.prob * 100:.0f}%"
+            f" · odd justa {ref.odd_justa:.2f} → só se a casa pagar *≥ {odd_min:.2f}*")
 
 
 # ─────────── Filtro: projeccao e informativa? ─────────────────────────────

@@ -63,6 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
+from apostas.relatorios import alertas_enviados  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -527,6 +528,11 @@ def _gravar_projecao_db(
         ))
 
 
+# Projeccao so vai ao Telegram se a aposta de referencia tiver pelo menos
+# isto (odd justa <= 1.67). Abaixo e quase moeda ao ar: nao e dica forte.
+_PROB_MIN_REFERENCIA_PROJ = 0.60
+
+
 def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                            min_estrelas: int = 4) -> int:
     """Se minuto >= target (40/55/70) e ainda nao enviado para este jogo,
@@ -887,28 +893,42 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                     event_id, mercado, n_estrelas, min_estrelas,
                 )
                 continue
+            # Aposta de referencia: a linha/lado mais provavel que ainda paga.
+            # Se o ritmo ja foi corrigido com o historico das projeccoes
+            # (mult != 1) nao se calibra outra vez (contaria o vies 2x);
+            # sem essa correccao usa-se o calibrador dos alertas.
+            calibrar = None
+            if mult == 1.0:
+                cal = _calibrador_live()
+                calibrar = (lambda p, lado, _m=mercado, _cal=cal:
+                            _cal.calibrar(p, _m, lado, "analista"))
+            ref = projecao_live.escolher_referencia(proj, calibrar=calibrar)
+            if ref is None or ref.prob < _PROB_MIN_REFERENCIA_PROJ:
+                log.info(
+                    "Projecao %s %s: skip — sem aposta forte (%s)",
+                    event_id, mercado,
+                    "nenhuma linha" if ref is None
+                    else f"{ref.lado} {ref.linha} so {ref.prob:.0%}",
+                )
+                continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
                 extras=extras, roi_line=roi_line,
+                referencia=projecao_live.formatar_referencia(ref),
             )
             # Narrativa final mega-cerebro (previsao + certezas) tambem
             # nas projeccoes, igual aos sinais do analista.
             try:
                 from apostas.alertas.mega_narrativa import narrativa_final
-                # Escolhe a linha central da projeccao como "linha de referencia"
-                linha_ref = (proj.linhas_total[len(proj.linhas_total) // 2].linha
-                             if proj.linhas_total else proj.projecao_final_total)
-                # Para projecoes, o "lado" default e over (projeccao > valor atual)
-                lado_ref = "over" if proj.projecao_final_total > proj.valor_atual_total else "under"
                 sinal_dict = {
                     "mercado": mercado,
-                    "lado": lado_ref,
-                    "linha": linha_ref,
+                    "lado": ref.lado,
+                    "linha": ref.linha,
                     "minuto": minuto,
                     "marcador": f"{estado.marcador_casa}-{estado.marcador_fora}",
-                    "prob_modelo": max(lo.prob_over for lo in proj.linhas_total)
-                        if proj.linhas_total else None,
+                    "prob_modelo": ref.prob,
+                    "projecao_total": proj.projecao_final_total,
                     "shots_on_target_c": sot_c,
                     "shots_on_target_f": sot_f,
                     "corners_c": can_c,
@@ -932,6 +952,13 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 enviadas += 1
             except Exception as exc:  # noqa: BLE001
                 log.warning("Telegram projecao erro: %s", exc)
+                continue
+            try:
+                alertas_enviados.registar(
+                    tipo="projeccao", event_id=event_id, mercado=mercado,
+                    lado=ref.lado, linha=ref.linha, odd=ref.odd_justa)
+            except OSError as exc:
+                log.warning("Registo de projeccao enviada falhou: %s", exc)
 
     ja.add(target)
     return enviadas
@@ -2073,6 +2100,10 @@ def _correr_ciclo(args) -> None:
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Fichas fortes check falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
+                try:
+                    alertas_enviados.registar(s.get("alert_id"))
+                except OSError as exc:
+                    log.warning("Registo de alerta enviado falhou: %s", exc)
                 _marcar_enviado(event_id, mercado, lado, linha)
                 jogos_notificados_este_ciclo.add(jogo_key)
                 enviadas += 1

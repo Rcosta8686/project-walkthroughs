@@ -5,8 +5,14 @@ mostra lucro, ROI, win-rate, streak, dias verdes/vermelhos, crescimento
 vs mes anterior. Banca (BancaRegisto) e opcional — mostra crescimento %
 se o user tiver vindo a gravar o saldo diario.
 
+Inclui tambem as dicas que foram de facto enviadas ao Telegram (alertas e
+projeccoes), com o resultado real a 1 unidade — mesmo sem apostas registadas.
+
+Sem --mes: nos primeiros 7 dias do mes mostra o mes que acabou (a tarefa
+agendada corre no dia 1 as 07:00); depois disso, o mes em curso.
+
 Uso:
-    python scripts/relatorio_mensal.py                     # mes atual
+    python scripts/relatorio_mensal.py                     # ver acima
     python scripts/relatorio_mensal.py --mes 10 --ano 2026 # mes especifico
     python scripts/relatorio_mensal.py --telegram          # envia
 """
@@ -82,13 +88,43 @@ def _saldo_na_data(data: datetime) -> float | None:
         return reg.saldo_chf if reg else None
 
 
+def mes_por_defeito(agora: datetime) -> tuple[int, int]:
+    """(mes, ano) a reportar quando nao se passa --mes."""
+    if agora.day <= 7:
+        return (12, agora.year - 1) if agora.month == 1 else (agora.month - 1, agora.year)
+    return agora.month, agora.year
+
+
+def _secao_dicas_enviadas(inicio: datetime, fim: datetime) -> str:
+    from apostas.relatorios import alertas_enviados
+    from apostas.utils.config import project_root
+    try:
+        chaves = alertas_enviados.projeccoes_no_periodo(inicio, fim)
+        totais = {}
+        if chaves:
+            with abrir_sessao() as s:
+                totais = alertas_enviados.totais_finais_bd(s, chaves)
+        rel = alertas_enviados.resumir(
+            inicio, fim,
+            project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv",
+            totais_proj=totais)
+        return alertas_enviados.formatar(rel)
+    except Exception as exc:  # noqa: BLE001
+        return f"(dicas enviadas: nao consegui calcular — {exc})"
+
+
 def main() -> None:
     agora = agora_utc()
     parser = argparse.ArgumentParser(description="Relatorio mensal M22.")
-    parser.add_argument("--mes", type=int, default=agora.month)
-    parser.add_argument("--ano", type=int, default=agora.year)
+    parser.add_argument("--mes", type=int, default=None)
+    parser.add_argument("--ano", type=int, default=None)
     parser.add_argument("--telegram", action="store_true")
     args = parser.parse_args()
+    mes_def, ano_def = mes_por_defeito(agora)
+    if args.mes is None:
+        args.mes = mes_def
+    if args.ano is None:
+        args.ano = ano_def if args.mes == mes_def else agora.year
 
     inicio = datetime(args.ano, args.mes, 1)
     fim = datetime(args.ano + 1, 1, 1) if args.mes == 12 else datetime(args.ano, args.mes + 1, 1)
@@ -112,6 +148,7 @@ def main() -> None:
         saldo_fim_mes=saldo_fim,
     )
     texto = formatar_relatorio_mensal_telegram(rel)
+    texto += "\n\n" + _secao_dicas_enviadas(inicio, fim)
     print(texto)
 
     if args.telegram:

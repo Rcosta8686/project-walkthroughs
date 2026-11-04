@@ -79,6 +79,15 @@ def _unidade(mercado: str) -> str:
     }.get(mercado, "unidades")
 
 
+def _total_projectado(s: dict, actual: int, minuto: int, min_restante: int) -> float:
+    """Projeccao do modelo se veio no sinal (a mesma do topo da mensagem);
+    senao, extrapola o ritmo observado."""
+    proj = _parse_float(s.get("projecao_total"))
+    if proj is not None:
+        return proj
+    return actual + _ritmo_por_90(actual, minuto) * (min_restante / 90.0)
+
+
 def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
     """Devolve a seccao mega-cerebro final para colar no fim do alerta.
 
@@ -156,7 +165,22 @@ def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
 
     # ───── 2. Previsao concreta ──────────────────────────────────────────
     previsao = ""
-    if actual is not None and linha is not None and min_restante > 0:
+    proj_modelo = _parse_float(s.get("projecao_total"))
+    if (proj_modelo is not None and actual is not None and linha is not None
+            and min_restante > 0 and linha > actual):
+        # Projeccao: a linha ja foi escolhida pela probabilidade; diz-se em
+        # concreto o que tem de acontecer para ganhar.
+        if lado == "over":
+            k = int(linha - actual) + 1
+            condicao = f"precisa de pelo menos {k} {unidade}"
+        else:
+            k = int(linha - actual)
+            condicao = f"aguenta no maximo {k} {unidade}"
+        previsao = (f"projeccao {proj_modelo:.1f} {unidade}; {lado.upper()} {linha} "
+                    f"{condicao} nos {min_restante} min que faltam")
+        if prob is not None:
+            previsao += f" — modelo {prob * 100:.0f}%"
+    elif actual is not None and linha is not None and min_restante > 0:
         faltam = linha + 0.5 - actual if lado == "over" else actual - (linha - 0.5)
         # Para OVER, faltam X unidades para bater; para UNDER, nao devem passar Y
         if lado == "over":
@@ -164,8 +188,7 @@ def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
             if unidades_necessarias <= 0:
                 previsao = f"a linha ja esta batida ({actual} vs {linha}) — procura outra."
             else:
-                ritmo_restante = _ritmo_por_90(actual, minuto) * (min_restante / 90.0)
-                total_projeccao = actual + ritmo_restante
+                total_projeccao = _total_projectado(s, actual, minuto, min_restante)
                 margem = total_projeccao - linha
                 if margem >= 2:
                     previsao = (
@@ -184,8 +207,7 @@ def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
                         f"OVER arriscado, so se o jogo abrir"
                     )
         else:  # under
-            ritmo_restante = _ritmo_por_90(actual, minuto) * (min_restante / 90.0)
-            total_projeccao = actual + ritmo_restante
+            total_projeccao = _total_projectado(s, actual, minuto, min_restante)
             folga = linha - total_projeccao
             if folga >= 1.5:
                 previsao = (
