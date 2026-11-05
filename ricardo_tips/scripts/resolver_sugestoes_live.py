@@ -252,6 +252,20 @@ def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> i
     return gravados
 
 
+def _garantir_tabelas() -> None:
+    """Cria as tabelas que faltem na BD (ex: sinais_mega_cerebro numa BD antiga).
+    Idempotente: nao mexe nas que ja existem."""
+    try:
+        from apostas.utils.db import criar_schema
+        criar_schema()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Verificacao das tabelas falhou: %s", _primeira_linha(exc))
+
+
+def _primeira_linha(exc: Exception) -> str:
+    return (str(exc).splitlines() or [type(exc).__name__])[0][:200]
+
+
 def _stats_seguro(desde: datetime | None, ja_feitos: set[int]) -> None:
     try:
         _stats_jogos_com_projeccao(desde, ja_feitos)
@@ -278,6 +292,7 @@ def main() -> None:
 
 def resolver(desde: datetime | None = None) -> None:
     """Resolve alertas pendentes (todos, ou so desde `desde`) e grava estatisticas."""
+    _garantir_tabelas()
     if not CSV_PATH.exists():
         print(f"Sem CSV live em {CSV_PATH}")
         _stats_seguro(desde, set())
@@ -359,7 +374,7 @@ def resolver(desde: datetime | None = None) -> None:
                 if n_mega:
                     print(f"        → sinais mega-cerebro: {n_mega} resolvidos")
         except Exception as exc:  # noqa: BLE001
-            log.warning("Resolver mega event %s falhou: %s", eid, exc)
+            log.warning("Resolver mega event %s falhou: %s", eid, _primeira_linha(exc))
 
         agora = agora_utc().isoformat(timespec="seconds")
         for row in linhas_grupo:

@@ -124,3 +124,23 @@ def test_texto_do_dia(bd, tmp_path, monkeypatch):
     assert "Resultados de 04/11/2026" in txt
     assert "0✅ 1❌" in txt
     assert "❌ 21:00 Lecce - Genoa · 🚩 cantos OVER 8.5 @1.50 (proj.) → -1.00" in txt
+
+
+def test_resolver_cria_tabelas_em_falta(tmp_path, monkeypatch):
+    """BD antiga sem sinais_mega_cerebro: o resolver cria-a antes de comecar."""
+    import resolver_sugestoes_live as rsl
+    from sqlalchemy import inspect
+    from apostas.utils import config as config_mod, db as db_mod
+    from apostas.utils.schema import SinalMegaCerebro
+    monkeypatch.setattr(config_mod, "db_path", lambda: tmp_path / "antiga.db")
+    db_mod._engine = None
+    db_mod._SessionLocal = None
+    db_mod.criar_schema()
+    SinalMegaCerebro.__table__.drop(db_mod.get_engine())
+    assert "sinais_mega_cerebro" not in inspect(db_mod.get_engine()).get_table_names()
+    monkeypatch.setattr(rsl, "CSV_PATH", tmp_path / "nao_existe.csv")
+    monkeypatch.setattr(rsl, "_stats_seguro", lambda *a: None)
+    rsl.resolver()
+    assert "sinais_mega_cerebro" in inspect(db_mod.get_engine()).get_table_names()
+    db_mod._engine = None
+    db_mod._SessionLocal = None

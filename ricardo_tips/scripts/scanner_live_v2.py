@@ -2165,6 +2165,13 @@ def main() -> None:
     # depois do git pull continua com o codigo antigo em memoria.
     from apostas.utils.versao import versao_codigo
     log.info("Scanner live v2 arrancou — versao %s", versao_codigo())
+    # Tabelas novas (ex: sinais_mega_cerebro) numa BD antiga: sem isto o
+    # mega-cerebro nunca guarda as previsoes e nunca aprende quais acertam.
+    try:
+        from apostas.utils.db import criar_schema
+        criar_schema()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Verificacao das tabelas falhou: %s", exc)
     # Cabecalho antigo no CSV desalinha as linhas novas (alert_id a repetir,
     # resolver a ignora-las). Repara antes de escrever mais.
     try:
