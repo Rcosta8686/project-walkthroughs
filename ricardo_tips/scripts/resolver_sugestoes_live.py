@@ -252,6 +252,57 @@ def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> i
     return gravados
 
 
+_GRAVAR_A_CADA = 20  # jogos resolvidos entre gravacoes do CSV
+_COLUNAS_CHAVE = ("ts_scan", "event_id", "mercado", "lado", "linha", "casa", "minuto")
+
+
+def _chave_linha(row: dict) -> tuple:
+    aid = (row.get("alert_id") or "").strip()
+    return ("id", aid) if aid else tuple(row.get(c, "") for c in _COLUNAS_CHAVE)
+
+
+def _gravar_resultados(atualizacoes: dict[tuple, dict]) -> int:
+    """Aplica os resultados ao CSV TAL COMO ESTA AGORA e grava.
+
+    O scanner continua a acrescentar linhas enquanto o resolver corre (uma
+    corrida pode demorar horas): reescrever com a copia lida no inicio
+    apagava essas linhas. Aqui rele-se o ficheiro, poe-se resultado/lucro
+    nas linhas por resolver que batem certo e grava-se de forma atomica.
+    """
+    if not atualizacoes or not CSV_PATH.exists():
+        return 0
+    with CSV_PATH.open(encoding="utf-8") as fp:
+        reader = csv.DictReader(fp)
+        linhas = list(reader)
+        colunas = list(reader.fieldnames or [])
+    for extra in ("resultado", "lucro", "resolvido_em"):
+        if extra not in colunas:
+            colunas.append(extra)
+    n = 0
+    for row in linhas:
+        if row.get("resultado"):
+            continue
+        upd = atualizacoes.get(_chave_linha(row))
+        if upd:
+            row.update(upd)
+            n += 1
+    tmp = CSV_PATH.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=colunas, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(linhas)
+    import time
+    for tentativa in range(5):  # Windows: o scanner pode ter o ficheiro aberto
+        try:
+            tmp.replace(CSV_PATH)
+            break
+        except PermissionError:
+            if tentativa == 4:
+                raise
+            time.sleep(0.5)
+    return n
+
+
 def _garantir_tabelas() -> None:
     """Cria as tabelas que faltem na BD (ex: sinais_mega_cerebro numa BD antiga).
     Idempotente: nao mexe nas que ja existem."""
@@ -299,14 +350,7 @@ def resolver(desde: datetime | None = None) -> None:
         return
 
     with CSV_PATH.open(encoding="utf-8") as fp:
-        reader = csv.DictReader(fp)
-        linhas = list(reader)
-        colunas = list(reader.fieldnames or [])
-
-    # Garante que as colunas resultado/lucro/resolvido_em existem
-    for extra in ("resultado", "lucro", "resolvido_em"):
-        if extra not in colunas:
-            colunas.append(extra)
+        linhas = list(csv.DictReader(fp))
 
     pendentes = [l for l in linhas if not l.get("resultado")]
     if desde is not None:
@@ -331,7 +375,12 @@ def resolver(desde: datetime | None = None) -> None:
     resolvidos_mercados = 0
     wl_por_alerta: dict[int, str] = {}
     jogos_terminados: set[int] = set()
+    atualizacoes: dict[tuple, dict] = {}
     for eid, linhas_grupo in por_evento.items():
+        # Grava o progresso de tempos a tempos: uma corrida longa (centenas de
+        # jogos) interrompida nao perde tudo.
+        if atualizacoes and resolvidos_jogos and resolvidos_jogos % _GRAVAR_A_CADA == 0:
+            _gravar_resultados(atualizacoes)
         try:
             res = _puxar_resultado_final(int(eid))
         except FlaresolverrIndisponivel as exc:
@@ -388,6 +437,8 @@ def resolver(desde: datetime | None = None) -> None:
                 odd = 0.0
             row["lucro"] = str(_lucro(wl, odd))
             row["resolvido_em"] = agora
+            atualizacoes[_chave_linha(row)] = {
+                c: row[c] for c in ("resultado", "lucro", "resolvido_em")}
             resolvidos_mercados += 1
             # Memoriza wl por alert_id (para fechar ApostaRealLive abaixo)
             try:
@@ -398,13 +449,7 @@ def resolver(desde: datetime | None = None) -> None:
                 pass
         resolvidos_jogos += 1
 
-    # Grava atomicamente
-    tmp = CSV_PATH.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=colunas, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(linhas)
-    tmp.replace(CSV_PATH)
+    _gravar_resultados(atualizacoes)
 
     # Fecha as apostas reais live correspondentes (idempotente — so toca
     # linhas em estado 'pendente'). Calcula CLV = odd_executada / odd_rec - 1.

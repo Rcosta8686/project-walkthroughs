@@ -144,3 +144,61 @@ def test_resolver_cria_tabelas_em_falta(tmp_path, monkeypatch):
     assert "sinais_mega_cerebro" in inspect(db_mod.get_engine()).get_table_names()
     db_mod._engine = None
     db_mod._SessionLocal = None
+
+
+def test_resolver_nao_apaga_linhas_que_o_scanner_escreve_entretanto(tmp_path, monkeypatch):
+    """Uma corrida longa: o scanner acrescenta alertas a meio. Nao se podem perder."""
+    import resolver_sugestoes_live as rsl
+    f = tmp_path / "sug.csv"
+    _escrever_csv(f, [
+        {"alert_id": "1", "ts_scan": "2026-11-04T19:00:00", "event_id": "200",
+         "mercado": "golos", "lado": "over", "linha": "2.5", "odd": "1.9"},
+    ])
+    monkeypatch.setattr(rsl, "CSV_PATH", f)
+    monkeypatch.setattr(rsl, "_stats_seguro", lambda *a: None)
+    monkeypatch.setattr(rsl, "_garantir_tabelas", lambda: None)
+    monkeypatch.setattr(rsl.historico_equipas, "gravar_jogo_terminado", lambda eid: 0)
+    monkeypatch.setattr(rsl.historico_jogadores, "gravar_jogadores_terminado", lambda eid: 0)
+
+    def resultado_e_scanner_escreve(eid):
+        with f.open("a", encoding="utf-8", newline="") as fp:   # o scanner, a meio
+            csv.writer(fp).writerow(["2", "2026-11-05T01:00:00", "300", "X", "Y", "golos",
+                                     "under", "3.5", "1.5", "", "", ""])
+        return {"golos_total": 3, "golos_casa": 2, "golos_fora": 1, "btts": True,
+                "cantos_total": 9, "cards_amarelos_total": 4, "cards_vermelhos_total": 0,
+                "shots_total": 20, "shots_on_target_total": 7}
+    monkeypatch.setattr(rsl, "_puxar_resultado_final", resultado_e_scanner_escreve)
+    rsl.resolver(desde=DIA)
+    with f.open(encoding="utf-8") as fp:
+        rows = {r["alert_id"]: r for r in csv.DictReader(fp)}
+    assert rows["1"]["resultado"] == "W" and rows["1"]["lucro"]
+    assert "2" in rows and rows["2"]["resultado"] == ""
+
+
+def test_resolver_grava_progresso_a_meio(tmp_path, monkeypatch):
+    import resolver_sugestoes_live as rsl
+    f = tmp_path / "sug.csv"
+    _escrever_csv(f, [
+        {"alert_id": str(i), "ts_scan": "2026-11-04T19:00:00", "event_id": str(100 + i),
+         "mercado": "golos", "lado": "over", "linha": "2.5", "odd": "1.9"} for i in range(1, 6)])
+    monkeypatch.setattr(rsl, "CSV_PATH", f)
+    monkeypatch.setattr(rsl, "_GRAVAR_A_CADA", 2)
+    monkeypatch.setattr(rsl, "_stats_seguro", lambda *a: None)
+    monkeypatch.setattr(rsl, "_garantir_tabelas", lambda: None)
+    monkeypatch.setattr(rsl.historico_equipas, "gravar_jogo_terminado", lambda eid: 0)
+    monkeypatch.setattr(rsl.historico_jogadores, "gravar_jogadores_terminado", lambda eid: 0)
+    chamadas = []
+
+    def res(eid):
+        chamadas.append(eid)
+        if len(chamadas) == 4:
+            raise KeyboardInterrupt  # o utilizador fecha a janela a meio
+        return {"golos_total": 3, "golos_casa": 2, "golos_fora": 1, "btts": True,
+                "cantos_total": 9, "cards_amarelos_total": 4, "cards_vermelhos_total": 0,
+                "shots_total": 20, "shots_on_target_total": 7}
+    monkeypatch.setattr(rsl, "_puxar_resultado_final", res)
+    with pytest.raises(KeyboardInterrupt):
+        rsl.resolver(desde=DIA)
+    with f.open(encoding="utf-8") as fp:
+        feitos = [r for r in csv.DictReader(fp) if r["resultado"]]
+    assert len(feitos) == 2   # gravados antes da interrupcao
