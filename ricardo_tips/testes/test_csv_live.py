@@ -166,3 +166,46 @@ def test_resolver_volta_a_ver_as_linhas_reparadas(tmp_path, monkeypatch):
     cl.realinhar(f)
     rsl.resolver(desde=datetime(2026, 11, 4))
     assert vistos == [16391603]
+
+
+def _linha_csv(valores: list[str]) -> str:
+    import io
+    buf = io.StringIO()
+    csv.writer(buf).writerow(valores)
+    return buf.getvalue()
+
+
+def test_escritas_misturadas_de_dois_scanners_ficam_de_parte(tmp_path):
+    """Dois scanners a escrever ao mesmo tempo: linhas coladas e cortadas a meio."""
+    f = tmp_path / "sug.csv"
+    boas = [_valores(V5, _sinal(alert_id=str(i), minuto=str(i)))[:29] for i in range(1, 41)]
+    texto = _linha_csv(V4) + "".join(_linha_csv(v) for v in boas)
+    a = _linha_csv(_valores(V5, _sinal(minuto="88")))
+    b = _linha_csv(_valores(V5, _sinal(minuto="89")))
+    corte = len(a) // 2
+    texto += a[:corte] + b + a[corte:]       # linha colada + resto cortado
+    f.write_text(texto, encoding="utf-8")
+
+    diag = cl.realinhar(f)
+    assert diag.irreconheciveis == 2 and diag.reparado
+    assert diag.ficheiro_irreconheciveis is not None
+    assert len(_ler(f)) == 40
+    with diag.ficheiro_irreconheciveis.open(encoding="utf-8") as fp:
+        assert len(list(csv.reader(fp))) == 3   # cabecalho + 2 linhas postas de parte
+    txt = diag.texto()
+    assert "irreconheciveis: 2 (4.8%)" in txt and "ex: " in txt and "campos" in txt
+
+
+def test_um_campo_estranho_e_tolerado(tmp_path):
+    f = tmp_path / "sug.csv"
+    _escrever(f, V4, [_valores(V5, _sinal(estrelas="7"))[:29]])
+    diag = cl.realinhar(f)
+    assert diag.irreconheciveis == 0
+    assert _ler(f)[0]["estrelas"] == "7" and _ler(f)[0]["mercado"] == "remates"
+
+
+def test_mercado_desconhecido_em_minusculas_e_aceite(tmp_path):
+    f = tmp_path / "sug.csv"
+    _escrever(f, V4, [_valores(V5, _sinal(mercado="golos_casa", lado="over"))[:29]])
+    diag = cl.realinhar(f)
+    assert diag.irreconheciveis == 0 and _ler(f)[0]["mercado"] == "golos_casa"

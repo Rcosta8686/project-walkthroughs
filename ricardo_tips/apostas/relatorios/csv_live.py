@@ -60,7 +60,16 @@ _LADOS = {"over", "under", "casa", "fora", "empate", "sim", "nao", "1", "x", "2"
           "home", "away", "draw",
           "1x", "x2", "12", "yes", "no"}
 _RE_MARCADOR = re.compile(r"^\d{1,2}-\d{1,2}$")
-_LIMIAR_IRRECONHECIVEIS = 0.02  # acima disto nao se mexe no ficheiro
+# Mercado/lado sao identificadores em minusculas ("remates_a_baliza", "over"):
+# nomes de equipas/ligas, linhas ("2.5"), marcadores ("1-0") e casas ("ANALISTA")
+# nunca passam, e e isso que separa os formatos.
+_RE_IDENT = re.compile(r"^[a-z0-9][a-z0-9_]{0,30}$")
+# Linhas que nao encaixam em nenhum formato (tipicamente duas escritas
+# misturadas quando havia varios scanners ao mesmo tempo) ficam num ficheiro a
+# parte. Acima disto suspeita-se de um formato desconhecido: nao se mexe.
+_LIMIAR_IRRECONHECIVEIS = 0.05
+_ESSENCIAIS = {"ts_scan", "minuto", "marcador", "mercado", "lado"}
+_MAX_FALHAS = 1  # campos nao essenciais estranhos tolerados por linha
 
 
 def _ts(v: str) -> bool:
@@ -92,8 +101,8 @@ _VALIDADORES: dict[str, tuple[bool, Callable[[str], bool]]] = {  # coluna: (acei
     "event_id": (True, _inteiro),
     "minuto": (False, lambda v: _inteiro(v, 150)),
     "marcador": (False, lambda v: bool(_RE_MARCADOR.match(v))),
-    "mercado": (False, lambda v: v.lower() in _MERCADOS),
-    "lado": (False, lambda v: v.lower() in _LADOS),
+    "mercado": (False, lambda v: v in _MERCADOS or bool(_RE_IDENT.match(v))),
+    "lado": (False, lambda v: v in _LADOS or bool(_RE_IDENT.match(v))),
     "odd": (True, lambda v: _num(v, 0.0, 1000.0)),
     "prob_modelo": (True, lambda v: _num(v, 0.0, 1.0)),
     "p_mercado": (True, lambda v: _num(v, 0.0, 1.0)),
@@ -115,38 +124,47 @@ _VALIDADORES: dict[str, tuple[bool, Callable[[str], bool]]] = {  # coluna: (acei
 }
 
 
-def _pontuar(formato: list[str], valores: list[str]) -> int | None:
-    """Campos preenchidos e validos se a linha foi escrita neste formato;
-    None se algum campo contradiz o formato."""
-    pontos = 0
+def _avaliar(formato: list[str], valores: list[str]) -> tuple[int, int] | None:
+    """(falhas, pontos) se a linha pode ter sido escrita neste formato, senao None.
+
+    pontos = campos preenchidos que batem certo; falhas = campos nao essenciais
+    com um valor estranho (tolera-se _MAX_FALHAS). Um essencial errado ou
+    valores a mais (duas linhas coladas) excluem o formato.
+    """
+    if any(x.strip() for x in valores[len(formato):]):
+        return None
+    falhas = pontos = 0
     for i, col in enumerate(formato):
         regra = _VALIDADORES.get(col)
         if regra is None:
             continue
         aceita_vazio, teste = regra
         v = valores[i].strip() if i < len(valores) else ""
-        if not v:
-            if not aceita_vazio:
+        ok = aceita_vazio if not v else teste(v)
+        if not ok:
+            if col in _ESSENCIAIS:
                 return None
-            continue
-        if not teste(v):
-            return None
-        pontos += 1
-    # valores a mais do que o formato tem colunas: tem de ser lixo vazio
-    if any(x.strip() for x in valores[len(formato):]):
-        return None
-    return pontos
+            falhas += 1
+            if falhas > _MAX_FALHAS:
+                return None
+        elif v:
+            pontos += 1
+    return falhas, pontos
 
 
 def detectar_formato(valores: list[str], cabecalho: list[str]) -> list[str] | None:
-    """Formato em que a linha foi escrita. Em empate ganha o cabecalho do ficheiro
-    (o resolver escreve resultado/lucro pelas posicoes do cabecalho)."""
+    """Formato em que a linha foi escrita: o de menos falhas e, entre esses, o
+    que explica mais campos. Em empate ganha o cabecalho do ficheiro (o
+    resolver escreve resultado/lucro pelas posicoes do cabecalho)."""
     candidatos = [cabecalho] + [f for f in FORMATOS.values() if f != cabecalho]
-    melhor, melhor_pts = None, -1
+    melhor, melhor_chave = None, None
     for f in candidatos:
-        pts = _pontuar(f, valores)
-        if pts is not None and pts > melhor_pts:
-            melhor, melhor_pts = f, pts
+        r = _avaliar(f, valores)
+        if r is None:
+            continue
+        chave = (-r[0], r[1])
+        if melhor_chave is None or chave > melhor_chave:
+            melhor, melhor_chave = f, chave
     return melhor
 
 
@@ -161,6 +179,7 @@ def _nome_formato(f: list[str]) -> str:
 class Diagnostico:
     cabecalho_actual: bool
     n_linhas: int = 0
+    n_colunas_cabecalho: int = 0
     por_formato: Counter = field(default_factory=Counter)
     irreconheciveis: int = 0
     desalinhadas: int = 0          # linhas cujo formato != cabecalho do ficheiro
@@ -169,6 +188,9 @@ class Diagnostico:
     reparado: bool = False
     recusado: bool = False
     backup: Path | None = None
+    campos_irreconheciveis: Counter = field(default_factory=Counter)  # n campos -> linhas
+    exemplos: list[str] = field(default_factory=list)
+    ficheiro_irreconheciveis: Path | None = None
 
     @property
     def precisa_reparar(self) -> bool:
@@ -181,13 +203,22 @@ class Diagnostico:
         for nome, n in sorted(self.por_formato.items()):
             linhas.append(f"  {nome}: {n}")
         if self.irreconheciveis:
-            linhas.append(f"  irreconheciveis: {self.irreconheciveis}")
+            linhas.append(f"  irreconheciveis: {self.irreconheciveis}"
+                          f" ({self.irreconheciveis / max(1, self.n_linhas):.1%})")
+            campos = ", ".join(f"{n} campos: {c}" for n, c in
+                               sorted(self.campos_irreconheciveis.items(), key=lambda x: -x[1])[:6])
+            linhas.append(f"    (cabecalho tem {self.n_colunas_cabecalho} campos) {campos}")
+            for ex in self.exemplos:
+                linhas.append(f"    ex: {ex}")
         linhas.append(f"Desalinhadas: {self.desalinhadas} · duplicadas: {self.duplicadas}"
                       f" · alert_id repetidos: {self.ids_repetidos}")
         if self.recusado:
-            linhas.append("NAO reparado: demasiadas linhas irreconheciveis (nada foi alterado).")
+            linhas.append(f"NAO reparado: mais de {_LIMIAR_IRRECONHECIVEIS:.0%} de linhas"
+                          " irreconheciveis (nada foi alterado).")
         elif self.reparado:
             linhas.append(f"REPARADO. Copia de seguranca: {self.backup}")
+            if self.ficheiro_irreconheciveis:
+                linhas.append(f"Linhas irreconheciveis guardadas em: {self.ficheiro_irreconheciveis}")
         elif not self.precisa_reparar:
             linhas.append("Ficheiro em ordem, nada a fazer.")
         return "\n".join(linhas)
@@ -209,7 +240,8 @@ def realinhar(path: Path, aplicar: bool = True,
               registo_enviados: Path | None = None) -> Diagnostico:
     """Diagnostica e (se `aplicar`) reescreve o CSV no formato actual.
 
-    Nunca altera nada se mais de 2% das linhas forem irreconheciveis. Antes
+    Nunca altera nada se mais de 5% das linhas forem irreconheciveis (essas
+    vao para um ficheiro a parte quando se repara). Antes
     de escrever copia o ficheiro para `<nome>.backup-AAAAMMDD-HHMMSS.csv`.
     Os alert_id sao renumerados 1..N (os antigos repetiam-se); por isso os
     alertas no registo de enviados deixam de ser fiaveis e saem dele (as
@@ -218,7 +250,8 @@ def realinhar(path: Path, aplicar: bool = True,
     if not path.exists():
         return Diagnostico(cabecalho_actual=True)
     cabecalho, linhas = _ler(path)
-    diag = Diagnostico(cabecalho_actual=cabecalho == COLUNAS_ACTUAIS, n_linhas=len(linhas))
+    diag = Diagnostico(cabecalho_actual=cabecalho == COLUNAS_ACTUAIS, n_linhas=len(linhas),
+                       n_colunas_cabecalho=len(cabecalho))
 
     convertidas: dict[tuple, dict] = {}
     irreconheciveis: list[list[str]] = []
@@ -227,6 +260,9 @@ def realinhar(path: Path, aplicar: bool = True,
         formato = detectar_formato(valores, cabecalho)
         if formato is None:
             diag.irreconheciveis += 1
+            diag.campos_irreconheciveis[len(valores)] += 1
+            if len(diag.exemplos) < 3:
+                diag.exemplos.append(",".join(valores)[:160])
             irreconheciveis.append(valores)
             continue
         diag.por_formato[_nome_formato(formato)] += 1
@@ -254,8 +290,9 @@ def realinhar(path: Path, aplicar: bool = True,
     diag.backup = path.with_name(f"{path.stem}.backup-{carimbo}{path.suffix}")
     shutil.copy2(path, diag.backup)
     if irreconheciveis:
-        with path.with_name(f"{path.stem}.irreconheciveis-{carimbo}{path.suffix}").open(
-                "w", encoding="utf-8", newline="") as fp:
+        diag.ficheiro_irreconheciveis = path.with_name(
+            f"{path.stem}.irreconheciveis-{carimbo}{path.suffix}")
+        with diag.ficheiro_irreconheciveis.open("w", encoding="utf-8", newline="") as fp:
             csv.writer(fp).writerows([cabecalho] + irreconheciveis)
 
     tmp = path.with_suffix(".tmp")
