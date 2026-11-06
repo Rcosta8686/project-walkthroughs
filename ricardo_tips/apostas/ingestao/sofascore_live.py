@@ -687,9 +687,17 @@ def _preencher_contexto_pre(estado: EstadoLive) -> None:
 # por N segundos. Evita scanner ficar preso em cascata de timeouts quando
 # o Cloudflare esta a bloquear ou flaresolverr esta sobrecarregado.
 _CIRCUIT_FAILURE_THRESHOLD = 5   # falhas consecutivas antes de abrir
-_CIRCUIT_OPEN_SECS = 120         # 2 min de pausa quando aberto
+_CIRCUIT_OPEN_SECS = 120         # 2 min de pausa na 1a abertura
+_CIRCUIT_OPEN_MAX_SECS = 900     # bloqueio que persiste: 2, 4, 8, 15 min
 _circuit_falhas_consecutivas = 0
 _circuit_aberto_ate: float = 0.0  # unix timestamp
+_circuit_aberturas_seguidas = 0  # aberturas sem nenhum sucesso pelo meio
+
+
+def sofascore_disponivel() -> bool:
+    """False enquanto o circuit esta aberto. Os trabalhos em lote (resolver,
+    incremento) param quando isto fica False, para nao piorar o bloqueio."""
+    return _circuit_pode_pedir()
 
 
 def _circuit_pode_pedir() -> bool:
@@ -703,24 +711,34 @@ def _circuit_pode_pedir() -> bool:
 
 def _circuit_registar(sucesso: bool) -> None:
     """Actualiza o circuit breaker depois de cada pedido."""
-    global _circuit_falhas_consecutivas, _circuit_aberto_ate
+    global _circuit_falhas_consecutivas, _circuit_aberto_ate, _circuit_aberturas_seguidas
     import time as _time
     if sucesso:
-        if _circuit_falhas_consecutivas > 0:
+        if _circuit_falhas_consecutivas > 0 or _circuit_aberturas_seguidas > 0:
             log.info("Sofascore circuit: fechado apos %d falhas",
                      _circuit_falhas_consecutivas)
         _circuit_falhas_consecutivas = 0
         _circuit_aberto_ate = 0.0
+        _circuit_aberturas_seguidas = 0
     else:
         _circuit_falhas_consecutivas += 1
         if _circuit_falhas_consecutivas >= _CIRCUIT_FAILURE_THRESHOLD:
-            _circuit_aberto_ate = _time.time() + _CIRCUIT_OPEN_SECS
+            pausa = min(_CIRCUIT_OPEN_SECS * 2 ** _circuit_aberturas_seguidas,
+                        _CIRCUIT_OPEN_MAX_SECS)
+            _circuit_aberturas_seguidas += 1
+            _circuit_aberto_ate = _time.time() + pausa
             log.warning(
                 "Sofascore circuit ABERTO (%d falhas consecutivas) — "
                 "a saltar pedidos durante %ds",
-                _circuit_falhas_consecutivas, _CIRCUIT_OPEN_SECS,
+                _circuit_falhas_consecutivas, pausa,
             )
             _circuit_falhas_consecutivas = 0  # reset para proximo ciclo
+            # Browser encravado ou cookies queimados pelo Cloudflare: o proximo
+            # pedido (depois da pausa) vai com uma sessao nova.
+            try:
+                _flaresolverr.reiniciar_sessao("circuit aberto")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Renovar sessao falhou: %s", exc)
 
 
 def _get_json(path: str) -> dict | None:

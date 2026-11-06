@@ -238,6 +238,9 @@ def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> i
     print(f"\nEstatisticas finais em falta para {len(faltam)} jogos com projeccao...")
     gravados = 0
     for eid in faltam:
+        if not sofascore_live.sofascore_disponivel():
+            print("⚠ Sofascore a bloquear: estatisticas em falta ficam para depois.")
+            break
         try:
             n = historico_equipas.gravar_jogo_terminado(int(eid))
         except FlaresolverrIndisponivel as exc:
@@ -377,6 +380,12 @@ def resolver(desde: datetime | None = None) -> None:
     jogos_terminados: set[int] = set()
     atualizacoes: dict[tuple, dict] = {}
     for eid, linhas_grupo in por_evento.items():
+        # Sofascore a bloquear (circuit aberto): parar em vez de insistir —
+        # centenas de pedidos seguidos so prolongam o bloqueio do scanner.
+        if not sofascore_live.sofascore_disponivel():
+            print("⚠ Sofascore a bloquear: paro aqui para nao piorar; "
+                  "o resto fica para a proxima corrida.")
+            break
         # Grava o progresso de tempos a tempos: uma corrida longa (centenas de
         # jogos) interrompida nao perde tudo.
         if atualizacoes and resolvidos_jogos and resolvidos_jogos % _GRAVAR_A_CADA == 0:

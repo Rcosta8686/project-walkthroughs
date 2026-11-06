@@ -37,10 +37,34 @@ log = get_logger(__name__)
 
 _DEFAULT_URL = "http://localhost:8191/v1"
 _DEFAULT_TIMEOUT_MS = 15_000  # 15s por pedido (era 60s, acumulava em caso de trava)
-_SESSION_NAME = "ricardo_tips_sofascore"
+_SESSAO_SCANNER = "ricardo_tips_sofascore"
 
-# Rate limit prudente: 1 pedido / 1.5s para nao sobrecarregar
-_DELAY_ENTRE_PEDIDOS_S = 1.5
+
+def _papel() -> str:
+    """Nome do programa em execucao (scanner_live_v2, resolver_sugestoes_live, ...)."""
+    import sys
+    from pathlib import Path
+    return Path(sys.argv[0]).stem if sys.argv and sys.argv[0] else ""
+
+
+def _nome_sessao(papel: str) -> str:
+    """Um navegador (sessao flaresolverr) por programa.
+
+    Com uma sessao partilhada, o resolver/incremento a meio de centenas de
+    pedidos e o scanner usavam o mesmo browser ao mesmo tempo: flaresolverr
+    devolvia HTTP 500 e o scanner ficava cego.
+    """
+    if not papel or papel == "scanner_live_v2":
+        return _SESSAO_SCANNER
+    return "ricardo_tips_" + "".join(c if c.isalnum() else "_" for c in papel)[:40]
+
+
+_E_SCANNER = _papel() == "scanner_live_v2"
+_SESSION_NAME = _nome_sessao(_papel())
+
+# Rate limit: scanner 1 pedido / 1.5s; trabalhos em lote mais devagar para
+# deixar o Sofascore ao scanner e nao provocar o desafio do Cloudflare.
+_DELAY_ENTRE_PEDIDOS_S = 1.5 if _E_SCANNER else 2.5
 _ultimo_pedido: float = 0.0
 
 # Sessao flaresolverr criada uma vez e reutilizada (reduz overhead
@@ -183,6 +207,32 @@ def get(url: str, headers: dict | None = None, warmup_url: str | None = None) ->
     )
 
 
+_RENOVAR_NO_MAXIMO_CADA_S = 600
+_ultima_renovacao: float = 0.0
+
+
+def reiniciar_sessao(motivo: str = "") -> bool:
+    """Deita fora o navegador desta sessao; o proximo pedido cria outro e
+    repete o warmup (cookies novos). Resolve o browser encravado (HTTP 500)
+    e, muitas vezes, o desafio do Cloudflare. No maximo 1 vez / 10 min."""
+    global _sessao_criada, _ultima_renovacao
+    agora = time.monotonic()
+    if _ultima_renovacao and agora - _ultima_renovacao < _RENOVAR_NO_MAXIMO_CADA_S:
+        return False
+    _ultima_renovacao = agora
+    log.warning("Flaresolverr: a renovar a sessao '%s' (%s)", _SESSION_NAME, motivo)
+    try:
+        requests.post(
+            _url_flaresolverr(),
+            json={"cmd": "sessions.destroy", "session": _SESSION_NAME},
+            timeout=15,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    _sessao_criada = False
+    return True
+
+
 def encerrar_sessao() -> None:
     """Destroi a sessao flaresolverr (chama no shutdown do script)."""
     global _sessao_criada
@@ -197,3 +247,9 @@ def encerrar_sessao() -> None:
     except Exception:  # noqa: BLE001
         pass
     _sessao_criada = False
+
+
+if not _E_SCANNER:
+    # Trabalhos em lote fecham o seu browser no fim (memoria do docker).
+    import atexit
+    atexit.register(encerrar_sessao)
