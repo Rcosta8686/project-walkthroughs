@@ -162,7 +162,7 @@ def test_narrativa_usa_a_projeccao_do_modelo():
     assert "projeccao 8.2" in narrativa_final(s)
 
 
-def _correr_projeccao(monkeypatch, sot, cantos):
+def _correr_projeccao(monkeypatch, sot, cantos, cortes=None):
     import scanner_live_v2 as sc
     from types import SimpleNamespace
     from apostas.modelos.calibrador_mercado import Calibrador
@@ -172,6 +172,8 @@ def _correr_projeccao(monkeypatch, sot, cantos):
     monkeypatch.setattr(sc, "_mult_projecao", lambda m, j: 1.0)
     monkeypatch.setattr(sc, "_gravar_projecao_db", lambda *a: None)
     monkeypatch.setattr(sc, "_calibrador_live", lambda: Calibrador())
+    from apostas.alertas.corte_mercados import Cortes
+    monkeypatch.setattr(sc, "_cortes_live", lambda: cortes or Cortes())
     monkeypatch.setattr(sc, "telegram_cliente",
                         lambda: SimpleNamespace(enviar=enviadas.append))
     monkeypatch.setattr(sc.alertas_enviados, "registar",

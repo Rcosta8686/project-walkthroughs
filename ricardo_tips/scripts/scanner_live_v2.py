@@ -64,6 +64,7 @@ from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
+from apostas.alertas import corte_mercados  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -902,6 +903,11 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                     else f"{ref.lado} {ref.linha} so {ref.prob:.0%}",
                 )
                 continue
+            corta, razao = _cortes_live().bloqueia(mercado, ref.lado, estado.liga)
+            if corta:
+                log.info("Projecao %s %s: skip — corte automatico (%s)",
+                         event_id, mercado, razao)
+                continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
@@ -1413,6 +1419,27 @@ def _calibrador_live() -> Calibrador:
     return cal
 
 
+_cortes_cache: tuple[float, corte_mercados.Cortes] | None = None
+
+
+def _cortes_live() -> corte_mercados.Cortes:
+    """Mercados/lados a perder dinheiro nos ultimos 30 dias (nao vao ao Telegram)."""
+    global _cortes_cache
+    agora = time.time()
+    if _cortes_cache is not None and agora - _cortes_cache[0] < _CALIBRADOR_TTL_S:
+        return _cortes_cache[1]
+    try:
+        from apostas.relatorios.calibracao_alertas import carregar_resolvidos
+        cortes = corte_mercados.calcular(carregar_resolvidos(_ficheiro_csv()))
+        cortados = sorted(f"{m} {l}" for (m, l) in cortes.por_mercado if cortes.cortado(m, l))
+        log.info("Corte automatico: %s", ", ".join(cortados) or "nenhum mercado cortado")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Corte automatico falhou (%s), sem corte", exc)
+        cortes = corte_mercados.Cortes()
+    _cortes_cache = (agora, cortes)
+    return cortes
+
+
 _correcoes_proj_cache: tuple[float, dict] | None = None
 
 
@@ -1893,6 +1920,14 @@ def _correr_ciclo(args) -> None:
                 # — M23 ja refina por (liga, mercado) mas isto apanha ligas
                 # inteiras muito mas quando o filtro ainda nao tem volume.
                 if analista.liga_na_blacklist(s.get("liga", "")):
+                    continue
+                # Corte automatico: (mercado, lado) a perder dinheiro nos
+                # ultimos 30 dias nao vai ao Telegram (continua a ser medido).
+                corta, razao = _cortes_live().bloqueia(
+                    s.get("mercado", ""), s.get("lado", ""), s.get("liga", ""))
+                if corta:
+                    log.debug("Sinal %s: skip — corte automatico (%s)",
+                              s.get("event_id"), razao)
                     continue
                 # M23: filtro de desempenho — bloqueia (liga, mercado) com
                 # ROI real < -5% em n_resolvidos >= 30. Preserva mercados

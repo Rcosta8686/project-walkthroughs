@@ -98,6 +98,7 @@ def carregar_resolvidos(csv_path: Path, desde: datetime | None = None) -> list[d
                 "lucro": _float(row.get("lucro")),
                 "fonte": "analista" if casa == "ANALISTA" else "odds",
                 "ts": ts_str,
+                "liga": (row.get("liga") or "").strip(),
             })
     return out
 
@@ -201,6 +202,9 @@ def formatar_relatorio(rows: list[dict], min_n_mercado: int = 10) -> str:
             linhas.append(
                 f"  {nome}: prometia {g['prob_bruta']*100:.0f}% → corrigido "
                 f"{g['prob_cal']*100:.0f}% · real {g['taxa_real']*100:.0f}% (n={g['n']})")
+
+    from apostas.alertas import corte_mercados
+    linhas += ["", corte_mercados.formatar(corte_mercados.calcular(rows))]
 
     linhas.append("_✓ calibrado · ✓+ acerta acima do prometido · ✗ sobrestima · · poucos dados_")
     return "\n".join(linhas)
