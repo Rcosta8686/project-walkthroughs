@@ -13,6 +13,8 @@
 #   - Relatorio mensal (dia 1, 07:00)
 #   - Health check (cada 30 min)
 #   - Compactacao CSV (dom 23:00)
+#   - Incremento diario dos mini-cerebros (00:15)
+#   - Popular cerebros (dom 02:00)
 #
 # Para remover tudo: .\scripts\instalar_tasks_windows.ps1 -Remover
 
@@ -47,12 +49,15 @@ $Tasks = @(
         # --modo-exigente: so manda sinais com EV>=10% + mega-cerebro
         # com confianca>=2 + ambas as fichas com >=5 jogos. Reduz volume
         # mas cada alerta tem concordancia multi-camada.
-        Args = "--intervalo-s 180 --telegram --ev-minimo-telegram 0.07 --modo-exigente"
+        # --rapido: menos pedidos ao Sofascore por ciclo (menos bloqueios).
+        Args = "--intervalo-s 180 --telegram --ev-minimo-telegram 0.07 --modo-exigente --rapido"
         # LogonAndStartup: dispara ao login (user) e ao arranque do PC
         # (antes de login). Garante que o scanner volta sozinho mesmo
         # quando o PC reinicia sem login manual.
         Trigger = "LogonAndStartup"
         RestartOnFailure = $true
+        # Corre sempre: sem isto o Windows parava o scanner ao fim de 2 horas.
+        SemLimiteTempo = $true
     },
     @{
         Name = "RicardoTips_Resolver"
@@ -114,6 +119,15 @@ $Tasks = @(
         Trigger = "Weekly"
         DayOfWeek = "Sunday"
         Time = "23:00"
+    },
+    @{
+        # Todas as noites: estatisticas de equipa e jogadores de todos os jogos
+        # terminados (ultimos 3 dias) nas ligas do scanner + resolver.
+        Name = "RicardoTips_IncrementoDiario"
+        Script = "incremento_diario.py"
+        Args = ""
+        Trigger = "Daily"
+        Time = "00:15"
     },
     @{
         Name = "RicardoTips_PopularCerebros"
@@ -210,7 +224,10 @@ foreach ($t in $Tasks) {
         DontStopIfGoingOnBatteries = $true
         StartWhenAvailable = $true
         MultipleInstances = "IgnoreNew"
-        ExecutionTimeLimit = (New-TimeSpan -Hours 2)
+        ExecutionTimeLimit = (New-TimeSpan -Hours 4)
+    }
+    if ($t.SemLimiteTempo) {
+        $settingsArgs["ExecutionTimeLimit"] = (New-TimeSpan -Seconds 0)  # PT0S = sem limite
     }
     if ($t.RestartOnFailure) {
         $settingsArgs["RestartCount"] = 3
