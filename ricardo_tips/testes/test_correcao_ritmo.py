@@ -161,7 +161,9 @@ def test_gravar_ler_e_manter_a_data_de_activacao(tmp_path):
     depois = cr.calcular(_pares("cartoes", 1.3, seed=5), anterior=lido,
                          agora=AGORA + timedelta(days=3))
     assert depois.datas_ativacao["cartoes"] == AGORA   # continua a contar desde a 1a vez
-    assert "Ritmo do resto do jogo" in cr.formatar(depois) and "✅ ligado" in cr.formatar(depois)
+    txt = cr.formatar(depois)
+    assert "Ritmo do resto do jogo" in txt and "✅ 🟨 cartoes" in txt
+    assert "multiplicador por fase" in txt
 
 
 def test_calibrador_esquece_alertas_de_antes_do_ritmo():
@@ -227,7 +229,7 @@ def test_escolhe_o_ritmo_suavizado_so_onde_erra_menos():
     c = cr.calcular(pares, agora=AGORA)
     assert c.suavizados == {"cartoes"}
     assert "cartoes" in c.mudados and "cantos" not in c.suavizados
-    assert "ritmo suavizado" in cr.formatar(c)
+    assert "usa: normal generico" in cr.formatar(c)
 
 
 def test_prever_corrigido_usa_o_ritmo_suavizado_ligado():
@@ -237,3 +239,22 @@ def test_prever_corrigido_usa_o_ritmo_suavizado_ligado():
     c = cr.CorrecaoRitmo(bases={"cartoes": "suave"})
     assert cr.prever_corrigido(est, c).lam_cartoes_amarelos_restantes == pytest.approx(
         live_predictor.prever(est, ritmo_suavizado=("cartoes",)).lam_cartoes_amarelos_restantes)
+
+
+def test_relatorio_mostra_o_ganho_total_e_as_tres_versoes():
+    """O caso dos golos no PC: versao das equipas ligada, multiplicador nao."""
+    c = cr.CorrecaoRitmo(
+        bases={"golos": "equipas"}, ativos=set(),
+        avaliacao={"golos": {"n_teste": 599, "base": "equipas", "erro_antigo": 1.00,
+                             "erro_suave": 1.00, "erro_equipas": 0.98, "erro_bruto": 0.98,
+                             "erro_corrigido": 0.99, "previsto": 1.6, "real": 1.7}})
+    txt = cr.formatar(c)
+    assert "✅ ⚽ golos: previa +1.6 · real +1.7 · erro -2% vs o modelo antigo" in txt
+    assert "versoes: generico igual · mini-cerebros -2% → usa: normal das duas equipas" in txt
+    assert "multiplicador" not in txt
+
+
+def test_teto_do_multiplicador_deixa_corrigir_os_cartoes_do_fim_do_jogo():
+    pares = [{"mercado": "cartoes", "janela": 75, "event_id": i, "previsto": 0.5, "real": 1.05,
+              "data": AGORA} for i in range(400)]
+    assert 1.9 < cr.treinar(pares)[("cartoes", 75)].mult < 2.1   # antes ficava preso em 1.8

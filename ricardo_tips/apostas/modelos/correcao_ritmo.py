@@ -13,7 +13,7 @@ Por (mercado, fase de 15 min):
     mult = soma(real que faltava) / soma(previsto que faltava)
 
 com os jogos recentes a pesar mais (meia-vida 14 dias), encolhido para 1 com
-poucos jogos e limitado a [0.6, 1.8]. Um mercado so fica LIGADO se, treinando
+poucos jogos e limitado a [0.6, 2.5]. Um mercado so fica LIGADO se, treinando
 nos jogos mais antigos, a correccao baixar o erro (desvio de Poisson) nos mais
 recentes que nunca viu. Recalculado todas as noites (incremento diario).
 
@@ -33,7 +33,9 @@ from pathlib import Path
 
 MIN_PARES = 30
 K_ENCOLHIMENTO = 30
-MULT_MIN, MULT_MAX = 0.6, 1.8
+# Teto 2.5: com 1.8 os cartoes aos 75' batiam no limite (o modelo ainda previa
+# menos cartoes no fim do que saem). So liga se melhorar no teste.
+MULT_MIN, MULT_MAX = 0.6, 2.5
 MEIA_VIDA_DIAS = 14.0
 JANELA_DIAS = 60
 MIN_TESTE = 50
@@ -489,33 +491,37 @@ _NOMES = {"golos": "⚽ golos", "cantos": "🚩 cantos", "cartoes": "🟨 cartoe
           "remates": "💥 remates", "remates_a_baliza": "🎯 remates a baliza"}
 
 
+_NOME_BASE = {"antigo": "calculo antigo", "suave": "normal generico",
+              "equipas": "normal das duas equipas (mini-cerebros)"}
+
+
 def formatar(c: CorrecaoRitmo) -> str:
     linhas = ["*Ritmo do resto do jogo* (o que o modelo previa que faltava vs o que aconteceu)"]
     if not c.avaliacao:
         return "\n".join(linhas + ["  Ainda sem jogos acabados com momentos guardados suficientes."])
+
+    def pct(erro: float, ref: float) -> str:
+        g = (1 - erro / ref) * 100 if ref else 0.0
+        return f"-{g:.0f}%" if g >= 0.5 else f"+{-g:.0f}%" if g <= -0.5 else "igual"
+
     for mercado in MERCADOS:
         a = c.avaliacao.get(mercado)
         if not a:
             continue
-        estado = "✅ ligado" if mercado in c.mudados else "· desligado"
-        melhoria = (1 - a["erro_corrigido"] / a["erro_bruto"]) * 100 if a["erro_bruto"] else 0
-        efeito = (f"erro -{melhoria:.0f}%" if melhoria >= 0.5
-                  else f"erro +{-melhoria:.0f}%" if melhoria <= -0.5 else "erro igual")
-        fases = " ".join(f"{j}'×{c.mults[(mercado, j)].mult:.2f}"
-                         for j in JANELAS if (mercado, j) in c.mults)
+        base = c.bases.get(mercado, "antigo")
+        com_mult = mercado in c.ativos
+        final = a["erro_corrigido"] if com_mult else a["erro_bruto"]
+        estado = "✅" if mercado in c.mudados else "·"
         linhas.append(f"  {estado} {_NOMES[mercado]}: previa +{a['previsto']:.1f} · real "
-                      f"+{a['real']:.1f} · {efeito} com a correccao "
-                      f"(teste em {a['n_teste']} momentos)")
-        base = a.get("base", "antigo")
-        if base != "antigo" and a.get("erro_antigo"):
-            ganho = (1 - a[f"erro_{base}"] / a["erro_antigo"]) * 100
-            ganho_gen = (1 - a["erro_suave"] / a["erro_antigo"]) * 100
-            if base == "equipas":
-                linhas.append(f"      normal das duas equipas (mini-cerebros): erro -{ganho:.0f}% "
-                              f"vs o calculo antigo (normal generico: -{ganho_gen:.0f}%)")
-            else:
-                linhas.append(f"      ritmo suavizado (normal generico): erro -{ganho:.0f}% "
-                              "vs o calculo antigo")
-        if fases and mercado in c.ativos:
-            linhas.append(f"      multiplicador por fase: {fases}")
+                      f"+{a['real']:.1f} · erro {pct(final, a['erro_antigo'])} vs o modelo "
+                      f"antigo (teste em {a['n_teste']} momentos)")
+        if "erro_equipas" in a:
+            linhas.append(f"      versoes: generico {pct(a['erro_suave'], a['erro_antigo'])} · "
+                          f"mini-cerebros {pct(a['erro_equipas'], a['erro_antigo'])} → usa: "
+                          f"{_NOME_BASE[base]}")
+        if com_mult:
+            fases = " ".join(f"{j}'×{c.mults[(mercado, j)].mult:.2f}"
+                             for j in JANELAS if (mercado, j) in c.mults)
+            linhas.append(f"      + multiplicador por fase ({pct(a['erro_corrigido'], a['erro_bruto'])}"
+                          f" por cima): {fases}")
     return "\n".join(linhas)
