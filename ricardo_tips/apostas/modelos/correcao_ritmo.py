@@ -419,15 +419,19 @@ def calcular(pares: list[dict], anterior: CorrecaoRitmo | None = None,
     avaliacao = avaliar(pares, bases_anteriores=anterior.bases)
     fiaveis = {m: a for m, a in avaliacao.items() if a["n_teste"] >= MIN_TESTE}
     bases = {m: a["base"] for m, a in fiaveis.items() if a["base"] != "antigo"}
+    # Histerese: para ligar o multiplicador tem de baixar o erro 1%; ligado, so
+    # se desliga se o piorar mais de 1% (nao andar a saltar por ruido).
     ativos = {m for m, a in fiaveis.items()
-              if a["erro_corrigido"] <= a["erro_bruto"] * (1 - MELHORIA_MIN)}
+              if a["erro_corrigido"] <= a["erro_bruto"] * (
+                  1 + MELHORIA_MIN if m in anterior.ativos else 1 - MELHORIA_MIN)}
     agora = agora or agora_utc()
     datas = {}
     for m in ativos | set(bases):
-        igual = (bases.get(m, "antigo") == anterior.bases.get(m, "antigo")
-                 and (m in ativos) == (m in anterior.ativos))
-        # a data conta desde a ultima mudanca de configuracao deste mercado:
-        # o calibrador so aprende com alertas calculados assim
+        # A data conta desde a ultima mudanca de VERSAO do modelo neste mercado
+        # (o calibrador e o PRIME so aprendem com alertas dessa versao). Ligar ou
+        # desligar o multiplicador e um ajuste como o que ele ja faz todas as
+        # noites: nao apaga o historico.
+        igual = bases.get(m, "antigo") == anterior.bases.get(m, "antigo")
         datas[m] = anterior.datas_ativacao.get(m, agora) if igual else agora
     return CorrecaoRitmo(mults=treinar(_com_base(pares, bases)), ativos=ativos, bases=bases,
                          datas_ativacao=datas, avaliacao=avaliacao)
@@ -541,8 +545,31 @@ def ler(path: Path | None = None) -> CorrecaoRitmo:
         return CorrecaoRitmo()
 
 
+def _recuperar_datas(anterior: CorrecaoRitmo, raiz: Path | None = None) -> CorrecaoRitmo:
+    """Datas que um multiplicador ligado/desligado reiniciou (regra antiga): se
+    a copia de seguranca mais recente tem a mesma versao do modelo nesse
+    mercado com uma data mais antiga, volta a essa data."""
+    from apostas.utils.config import project_root
+    base = (raiz or project_root()) / "dados" / "backups"
+    if not base.exists():
+        return anterior
+    for pasta in sorted((d for d in base.iterdir() if d.is_dir()), reverse=True):
+        copia = ler(pasta / "correcao_ritmo.json")
+        if not copia.datas_ativacao:
+            continue
+        for m, d in copia.datas_ativacao.items():
+            atual = anterior.datas_ativacao.get(m)
+            if (atual is not None and d < atual
+                    and copia.bases.get(m, "antigo") == anterior.bases.get(m, "antigo")):
+                anterior.datas_ativacao[m] = d
+        break
+    return anterior
+
+
 def recalcular_e_gravar(sess, path: Path | None = None) -> CorrecaoRitmo:
     anterior = ler(path)
+    if path is None:
+        anterior = _recuperar_datas(anterior)
     pares = pares_da_bd(sess)
     c = calcular(pares, anterior=anterior)
     gravar(c, path)

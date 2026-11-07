@@ -258,3 +258,34 @@ def test_teto_do_multiplicador_deixa_corrigir_os_cartoes_do_fim_do_jogo():
     pares = [{"mercado": "cartoes", "janela": 75, "event_id": i, "previsto": 0.5, "real": 1.05,
               "data": AGORA} for i in range(400)]
     assert 1.9 < cr.treinar(pares)[("cartoes", 75)].mult < 2.1   # antes ficava preso em 1.8
+
+
+def test_multiplicador_ligado_nao_desliga_por_ruido_e_nao_apaga_historico():
+    """Ligado, so desliga se piorar mais de 1%; e ligar/desligar nao reinicia a
+    data (so mudar de versao do modelo a reinicia)."""
+    anterior = cr.CorrecaoRitmo(ativos={"cantos"}, bases={"cantos": "suave"},
+                                datas_ativacao={"cantos": AGORA - timedelta(days=20)})
+    # sem efeito nenhum (o multiplicador ajuda ~0): continua ligado
+    c = cr.calcular(_pares("cantos", 1.0, seed=8), anterior=anterior, agora=AGORA)
+    assert "cantos" in c.ativos
+    # e mesmo quando desliga, a data fica (a versao do modelo e a mesma)
+    sem = cr.CorrecaoRitmo(ativos=set(), bases={"cantos": "suave"},
+                           datas_ativacao={"cantos": AGORA - timedelta(days=20)})
+    d = cr.calcular(_pares("cantos", 1.0, seed=8), anterior=sem, agora=AGORA)
+    assert "cantos" not in d.ativos                      # desligado: precisa de 1% para ligar
+    assert d.datas_ativacao.get("cantos") in (None, AGORA - timedelta(days=20))
+
+
+def test_recupera_a_data_da_copia_de_seguranca(tmp_path):
+    antigo = AGORA - timedelta(days=30)
+    copia = tmp_path / "dados" / "backups" / "2026-11-07"
+    copia.mkdir(parents=True)
+    cr.gravar(cr.CorrecaoRitmo(ativos={"cantos"}, bases={"cantos": "suave", "remates": "equipas"},
+                               datas_ativacao={"cantos": antigo, "remates": antigo}),
+              copia / "correcao_ritmo.json")
+    hoje = cr.CorrecaoRitmo(bases={"cantos": "suave", "remates": "suave"},
+                            datas_ativacao={"cantos": AGORA, "remates": AGORA})
+    r = cr._recuperar_datas(hoje, raiz=tmp_path)
+    assert r.datas_ativacao["cantos"] == antigo          # mesma versao: volta a data antiga
+    assert r.datas_ativacao["remates"] == AGORA          # mudou de versao: a data nova fica
+    assert cr._recuperar_datas(cr.CorrecaoRitmo(), raiz=tmp_path / "nada").datas_ativacao == {}
