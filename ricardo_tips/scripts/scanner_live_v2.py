@@ -65,6 +65,7 @@ from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive 
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
+from apostas.dados_referencia import mercados_casa  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -907,6 +908,10 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
             if corta:
                 log.info("Projecao %s %s: skip — corte automatico (%s)",
                          event_id, mercado, razao)
+                continue
+            if not mercados_casa.mercado_disponivel(mercado, estado.liga):
+                log.info("Projecao %s %s: skip — sem mercado na casa em %s",
+                         event_id, mercado, estado.liga)
                 continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
@@ -1928,6 +1933,12 @@ def _correr_ciclo(args) -> None:
                 if corta:
                     log.debug("Sinal %s: skip — corte automatico (%s)",
                               s.get("event_id"), razao)
+                    continue
+                # A casa nao tem este mercado nesta liga (ex: remates na
+                # 2. Bundesliga): alerta que nao se pode apostar e ruido.
+                if not mercados_casa.mercado_disponivel(s.get("mercado", ""), s.get("liga", "")):
+                    log.debug("Sinal %s: skip — %s sem mercado na casa em %s",
+                              s.get("event_id"), s.get("mercado"), s.get("liga"))
                     continue
                 # M23: filtro de desempenho — bloqueia (liga, mercado) com
                 # ROI real < -5% em n_resolvidos >= 30. Preserva mercados
