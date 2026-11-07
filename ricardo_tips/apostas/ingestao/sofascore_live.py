@@ -119,6 +119,10 @@ class EstadoLive:
     fouls_casa: int | None = None
     fouls_fora: int | None = None
     arbitro: str | None = None
+    # Ha ligas/jogos sem estatisticas no Sofascore: sem isto, cantos/remates/
+    # cartoes contavam como 0 (dicas "under" falsas e resultados errados).
+    stats_ok: bool | None = None      # None = desconhecido (estado montado a mao)
+    cartoes_ok: bool | None = None    # cartoes fiaveis (estatisticas ou incidentes)
 
     # Jogadores com cartão
     cartoes_detalhe: list[dict] = field(default_factory=list)
@@ -590,10 +594,15 @@ def obter_estado_live(event_id: int) -> EstadoLive | None:
     stats_json = _get_json(f"/event/{event_id}/statistics")
     if stats_json:
         _preencher_stats(estado, stats_json)
+    estado.stats_ok = _tem_estatisticas(stats_json)
 
     incidents_json = _get_json(f"/event/{event_id}/incidents")
     if incidents_json:
         _preencher_cartoes(estado, incidents_json)
+    if not estado.stats_ok and incidents_json is not None:
+        # Sem estatisticas: os cartoes contam-se nos incidentes do jogo.
+        _cartoes_dos_incidentes(estado)
+    estado.cartoes_ok = bool(estado.stats_ok) or incidents_json is not None
 
     # Modo rapido: salta endpoints opcionais (graph + comments) para
     # reduzir carga quando ha muitos jogos e o scanner esta a encravar.
@@ -913,6 +922,47 @@ def _preencher_stats(estado: EstadoLive, stats_payload: dict) -> None:
                     setattr(estado, attr_f, conv(item.get("away")))
                 except (ValueError, TypeError):
                     continue
+
+
+def _tem_estatisticas(stats_payload: dict | None) -> bool:
+    """O Sofascore tem estatisticas do jogo inteiro (periodo ALL com dados)?"""
+    for periodo in (stats_payload or {}).get("statistics", []) or []:
+        if periodo.get("period") == "ALL" and any(
+                g.get("statisticsItems") for g in periodo.get("groups", []) or []):
+            return True
+    return False
+
+
+def _cartoes_dos_incidentes(estado: EstadoLive) -> None:
+    def n(equipa: str, classe: str) -> int:
+        return sum(1 for c in estado.cartoes_detalhe
+                   if c["equipa"] == equipa and c["classe"] == classe)
+    estado.yellow_cards_casa, estado.yellow_cards_fora = n("casa", "yellow"), n("fora", "yellow")
+    estado.red_cards_casa, estado.red_cards_fora = n("casa", "red"), n("fora", "red")
+
+
+# Mercado -> campos que tem de existir para o mercado fazer sentido.
+_CAMPOS_MERCADO = (
+    ("remates_a_baliza", ("shots_on_target_casa", "shots_on_target_fora")),
+    ("sot", ("shots_on_target_casa", "shots_on_target_fora")),
+    ("remates", ("shots_total_casa", "shots_total_fora")),
+    ("shots", ("shots_total_casa", "shots_total_fora")),
+    ("cantos", ("corners_casa", "corners_fora")),
+    ("corners", ("corners_casa", "corners_fora")),
+)
+
+
+def dados_disponiveis(estado, mercado: str) -> bool:
+    """Ha dados reais para este mercado neste jogo? (cantos/remates/cartoes
+    sem estatisticas no Sofascore nao sao 0: sao desconhecidos)."""
+    m = (mercado or "").strip().lower()
+    if m.startswith(("cart", "card", "amarel")):
+        ok = getattr(estado, "cartoes_ok", None)
+        return ok is None or bool(ok)
+    for prefixo, campos in _CAMPOS_MERCADO:
+        if m.startswith(prefixo):
+            return any(getattr(estado, c, None) is not None for c in campos)
+    return True
 
 
 def _preencher_cartoes(estado: EstadoLive, incidents_payload: dict) -> None:

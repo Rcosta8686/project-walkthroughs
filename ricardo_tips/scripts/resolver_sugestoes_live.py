@@ -73,21 +73,51 @@ def _puxar_resultado_final(event_id: int) -> dict | None:
     acabado = estado.minuto >= 90 or any(t in desc for t in terminais) or estado.estado in (100, 110, 120)
     if not acabado:
         return None
+    disp = sofascore_live.dados_disponiveis
+
+    def soma(mercado: str, a, b):
+        # Sem estatisticas no Sofascore o total e desconhecido, nao 0.
+        return ((a or 0) + (b or 0)) if disp(estado, mercado) else None
     return {
         "golos_total": estado.marcador_casa + estado.marcador_fora,
         "golos_casa": estado.marcador_casa,
         "golos_fora": estado.marcador_fora,
         "btts": estado.marcador_casa > 0 and estado.marcador_fora > 0,
-        "cantos_total": (estado.corners_casa or 0) + (estado.corners_fora or 0),
-        "cards_amarelos_total": estado.yellow_cards_casa + estado.yellow_cards_fora,
-        "cards_vermelhos_total": estado.red_cards_casa + estado.red_cards_fora,
-        "shots_total": (estado.shots_total_casa or 0) + (estado.shots_total_fora or 0),
-        "shots_on_target_total": (estado.shots_on_target_casa or 0) + (estado.shots_on_target_fora or 0),
+        "cantos_total": soma("cantos", estado.corners_casa, estado.corners_fora),
+        "cards_amarelos_total": soma("cartoes", estado.yellow_cards_casa,
+                                     estado.yellow_cards_fora),
+        "cards_vermelhos_total": soma("cartoes", estado.red_cards_casa, estado.red_cards_fora),
+        "shots_total": soma("remates", estado.shots_total_casa, estado.shots_total_fora),
+        "shots_on_target_total": soma("remates_a_baliza", estado.shots_on_target_casa,
+                                      estado.shots_on_target_fora),
     }
+
+
+# Mercado -> total que o resolve (None = Sofascore sem estatisticas desse jogo).
+_TOTAL_DO_MERCADO = {"cantos": "cantos_total", "cartoes": "cards_amarelos_total",
+                     "remates": "shots_total", "remates_a_baliza": "shots_on_target_total"}
+# Espera antes de desistir de um jogo sem estatisticas (as vezes chegam depois).
+HORAS_ESPERA_STATS = 20
+SEM_DADOS = "SD"
+
+
+def _sem_dados(mercado: str, res: dict) -> bool:
+    chave = _TOTAL_DO_MERCADO.get((mercado or "").strip().lower())
+    return chave is not None and res.get(chave) is None
+
+
+def _velha(row: dict, agora: datetime, horas: float = HORAS_ESPERA_STATS) -> bool:
+    try:
+        ts = datetime.fromisoformat((row.get("ts_scan") or "")[:19])
+    except ValueError:
+        return True
+    return (agora.replace(tzinfo=None) - ts) >= timedelta(hours=horas)
 
 
 def _wl_por_mercado(mercado: str, lado: str, linha: str, res: dict) -> str | None:
     """Devolve 'W' / 'L' / 'push' ou None se nao conseguir determinar."""
+    if _sem_dados(mercado, res):
+        return None
     try:
         if mercado == "golos":
             total = res["golos_total"]
@@ -376,6 +406,7 @@ def resolver(desde: datetime | None = None) -> None:
     print(f"{len(por_evento)} jogos distintos para resolver.\n")
     resolvidos_jogos = 0
     resolvidos_mercados = 0
+    sem_dados_linhas = 0
     wl_por_alerta: dict[int, str] = {}
     jogos_terminados: set[int] = set()
     atualizacoes: dict[tuple, dict] = {}
@@ -402,8 +433,11 @@ def resolver(desde: datetime | None = None) -> None:
         jogos_terminados.add(int(eid))
         h = linhas_grupo[0].get("home", "?")
         a = linhas_grupo[0].get("away", "?")
+        def _v(x):
+            return "sem dados" if x is None else x
         print(f"  [OK]  event {eid}: {h} {res['golos_casa']}-{res['golos_fora']} {a}  "
-              f"(cantos={res['cantos_total']} cards={res['cards_amarelos_total']} shots={res['shots_total']})")
+              f"(cantos={_v(res['cantos_total'])} cards={_v(res['cards_amarelos_total'])} "
+              f"shots={_v(res['shots_total'])})")
 
         # Grava historico persistente por equipa (append-only). Puxa stats
         # por parte (1T/2T) do Sofascore e grava 2 linhas (casa + fora).
@@ -434,10 +468,18 @@ def resolver(desde: datetime | None = None) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Resolver mega event %s falhou: %s", eid, _primeira_linha(exc))
 
-        agora = agora_utc().isoformat(timespec="seconds")
+        agora_dt = agora_utc()
+        agora = agora_dt.isoformat(timespec="seconds")
         for row in linhas_grupo:
             wl = _wl_por_mercado(row["mercado"], row["lado"], row.get("linha") or "", res)
             if wl is None:
+                # Sofascore sem estatisticas deste jogo: nao e W nem L. Espera
+                # umas horas (as vezes chegam depois) e depois fecha como SD.
+                if _sem_dados(row["mercado"], res) and _velha(row, agora_dt):
+                    row["resultado"], row["lucro"], row["resolvido_em"] = SEM_DADOS, "", agora
+                    atualizacoes[_chave_linha(row)] = {
+                        c: row[c] for c in ("resultado", "lucro", "resolvido_em")}
+                    sem_dados_linhas += 1
                 continue
             row["resultado"] = wl
             try:
@@ -473,6 +515,16 @@ def resolver(desde: datetime | None = None) -> None:
             log.warning("Fecho ApostaRealLive falhou: %s", exc)
 
     print(f"\n{resolvidos_jogos} jogos resolvidos → {resolvidos_mercados} linhas W/L marcadas.")
+    if sem_dados_linhas:
+        print(f"  {sem_dados_linhas} linhas fechadas como SD (Sofascore sem estatisticas desses "
+              "jogos: nao contam como ganhas nem perdidas).")
+    try:  # limpa resultados antigos dados com 0 cantos/remates/cartoes falsos
+        from apostas.relatorios import sem_stats
+        corr = sem_stats.reparar(CSV_PATH)
+        if corr.n:
+            print("  " + corr.texto())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Reparacao de jogos sem estatisticas falhou: %s", _primeira_linha(exc))
     _stats_seguro(desde, jogos_terminados)
 
 

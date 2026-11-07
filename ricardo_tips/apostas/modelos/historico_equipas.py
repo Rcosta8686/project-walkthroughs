@@ -220,6 +220,18 @@ def _resultado_wdl(gm: int, gs: int) -> str:
     return "D"
 
 
+def _amarelos_dos_incidentes(incidents_payload: dict) -> tuple[int, int]:
+    casa = fora = 0
+    for inc in incidents_payload.get("incidents", []) or []:
+        if (str(inc.get("incidentType") or "").lower() == "card"
+                and str(inc.get("incidentClass") or "").lower() == "yellow"):
+            if inc.get("isHome"):
+                casa += 1
+            else:
+                fora += 1
+    return casa, fora
+
+
 def gravar_jogo_terminado(event_id: int) -> int:
     """Puxa stats do jogo (ja terminado) e grava 2 linhas (casa + fora).
 
@@ -281,6 +293,14 @@ def gravar_jogo_terminado(event_id: int) -> int:
 
     stats_h = _extrair_stats_equipa(stats_json, "home")
     stats_a = _extrair_stats_equipa(stats_json, "away")
+    if stats_h.cards_am is None and stats_a.cards_am is None:
+        # Jogo sem estatisticas no Sofascore: os amarelos contam-se nos
+        # incidentes (os cartoes sao o mercado que mais interessa).
+        from apostas.ingestao.sofascore_live import _tem_estatisticas
+        if not _tem_estatisticas(stats_json):
+            inc = _get_json(f"/event/{event_id}/incidents")
+            if inc is not None:
+                stats_h.cards_am, stats_a.cards_am = _amarelos_dos_incidentes(inc)
 
     dias_h = _dias_desde_ultimo(home_id, data_jogo)
     dias_a = _dias_desde_ultimo(away_id, data_jogo)

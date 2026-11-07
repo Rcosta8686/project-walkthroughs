@@ -118,7 +118,7 @@ _VALIDADORES: dict[str, tuple[bool, Callable[[str], bool]]] = {  # coluna: (acei
     "corners_f": (True, lambda v: _inteiro(v, 40)),
     "yellows_c": (True, lambda v: _inteiro(v, 15)),
     "yellows_f": (True, lambda v: _inteiro(v, 15)),
-    "resultado": (True, lambda v: v in ("W", "L", "push")),
+    "resultado": (True, lambda v: v in ("W", "L", "push", "SD")),
     "lucro": (True, lambda v: _num(v, -1000.0, 1000.0)),
     "resolvido_em": (True, _ts),
 }

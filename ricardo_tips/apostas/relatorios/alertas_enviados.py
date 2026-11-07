@@ -153,6 +153,7 @@ class ResumoEnviados:
     derrotas: int = 0
     push: int = 0
     pendentes: int = 0
+    sem_dados: int = 0     # Sofascore sem estatisticas do jogo (nem ganha nem perdida)
     lucro: float = 0.0
     n_com_lucro: int = 0
     n_odd_real: int = 0   # dicas resolvidas medidas a odd real do mercado
@@ -280,6 +281,9 @@ def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
             lm.derrotas += 1
         elif d.resultado == "push":
             rel.push += 1
+        elif d.resultado == "SD":
+            rel.sem_dados += 1
+            continue
         else:
             rel.pendentes += 1
             continue
@@ -292,7 +296,7 @@ def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
     return rel
 
 
-_ICONE_RESULTADO = {"W": "✅", "L": "❌", "push": "↩", "pendente": "⏳"}
+_ICONE_RESULTADO = {"W": "✅", "L": "❌", "push": "↩", "pendente": "⏳", "SD": "∅"}
 
 
 def formatar_lista(dicas: list[DicaEnviada],
@@ -333,7 +337,8 @@ def formatar(rel: ResumoEnviados) -> str:
         f"  {rel.n} dicas ({rel.n - rel.n_projeccoes} alertas · {rel.n_projeccoes} projecções)"
         f" · {rel.vitorias}✅ {rel.derrotas}❌"
         + (f" {rel.push}↩" if rel.push else "")
-        + (f" · {rel.pendentes} por resolver" if rel.pendentes else ""))
+        + (f" · {rel.pendentes} por resolver" if rel.pendentes else "")
+        + (f" · {rel.sem_dados} sem dados no Sofascore" if rel.sem_dados else ""))
     sinal = "+" if rel.lucro >= 0 else ""
     linhas.append(f"  Acerto {taxa} · lucro *{sinal}{rel.lucro:.2f} un*"
                   + (f" · ROI *{rel.roi:+.1f}%*" if rel.roi is not None else ""))

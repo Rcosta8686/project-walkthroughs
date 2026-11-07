@@ -665,6 +665,8 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
 
     enviadas = 0
     for mercado, lam_c, lam_f, val_c, val_f in mercados_para_projetar:
+        if not sofascore_live.dados_disponiveis(estado, mercado):
+            continue  # sem estatisticas no Sofascore: o "actual" nao e 0
         def _proj(mult: float, mercado=mercado, lam_c=lam_c, lam_f=lam_f,
                   val_c=val_c, val_f=val_f):
             # aplicar_contexto=False: o live_predictor ja aplica fator_m +
@@ -1129,6 +1131,9 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
     )
 
     def _emit(mercado, lado, linha, casa, odd, prob):
+        # Sem estatisticas no Sofascore: cantos/remates/cartoes desconhecidos.
+        if not sofascore_live.dados_disponiveis(estado, mercado):
+            return
         # NOVO: skip linhas ja decididas (Over 2.5 num 4-2 = inutil)
         if not _linha_live(mercado, lado, linha, estado):
             return
@@ -1618,6 +1623,8 @@ def _ajuste_arbitro_cartoes(estado, fator_bd: float) -> float:
 def _alerta_cartoes_fim(estado, prev) -> bool:
     """Envia o 'cartao no fim' uma vez por jogo quando modelo e historia concordam."""
     if cartoes_finais.fase_de(int(estado.minuto or 0)) is None:
+        return False
+    if not sofascore_live.dados_disponiveis(estado, "cartoes"):
         return False
     if _em_cooldown(estado.event_id, "cartoes_fim", "over"):
         return False

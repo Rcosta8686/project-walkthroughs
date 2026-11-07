@@ -686,6 +686,7 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
       1 = "nota" (pouca conviccao, so terminal)
     Scanner usa este criterio para decidir se envia para Telegram.
     """
+    from apostas.ingestao.sofascore_live import dados_disponiveis
     ctx = _construir_contexto(estado, prev)
     out: list[Sinal] = []
 
@@ -696,11 +697,14 @@ def gerar_sinais(estado: "EstadoLive", prev: "PrevisaoLive",
         _sinal_golos(estado, prev, ctx, out, prob_minima)
     if not _estado_demasiado_cedo_para_sinal(estado, "btts"):
         _sinal_btts(estado, prev, ctx, out, prob_minima)
-    if not _estado_demasiado_cedo_para_sinal(estado, "cantos"):
+    if (not _estado_demasiado_cedo_para_sinal(estado, "cantos")
+            and dados_disponiveis(estado, "cantos")):
         _sinal_cantos(estado, prev, ctx, out, prob_minima)
-    if not _estado_demasiado_cedo_para_sinal(estado, "cartoes"):
+    if (not _estado_demasiado_cedo_para_sinal(estado, "cartoes")
+            and dados_disponiveis(estado, "cartoes")):
         _sinal_cartoes(estado, prev, ctx, out, prob_minima)
-    if not _estado_demasiado_cedo_para_sinal(estado, "remates"):
+    if (not _estado_demasiado_cedo_para_sinal(estado, "remates")
+            and dados_disponiveis(estado, "remates")):
         _sinal_remates(estado, prev, ctx, out, prob_minima)
     # Regressao xG: Rob Pizzola / Caan Berry. Processo (xG) > conversao (golos).
     if estado.minuto >= MINUTO_MIN_REGRESSAO:
@@ -1385,6 +1389,9 @@ def _sinal_remates(estado, prev, ctx, out, prob_min) -> None:
     proj_sot_f = prev.projeccao_sot_fora
     proj_sot_total = proj_sot_c + proj_sot_f
 
+    from apostas.ingestao.sofascore_live import dados_disponiveis
+    if not dados_disponiveis(estado, "remates_a_baliza"):
+        return  # sem remates a baliza no Sofascore: 0 seria mentira
     for linha in LINHAS_MERCADO["remates_a_baliza"]:
         if sot > linha:
             continue
