@@ -289,3 +289,18 @@ def test_recupera_a_data_da_copia_de_seguranca(tmp_path):
     assert r.datas_ativacao["cantos"] == antigo          # mesma versao: volta a data antiga
     assert r.datas_ativacao["remates"] == AGORA          # mudou de versao: a data nova fica
     assert cr._recuperar_datas(cr.CorrecaoRitmo(), raiz=tmp_path / "nada").datas_ativacao == {}
+
+
+def test_recupera_a_data_mais_antiga_enquanto_a_versao_e_a_mesma(tmp_path):
+    """A copia da noite pode ja ter a data reiniciada: vai as anteriores."""
+    muito_antigo, antigo, reiniciada = (AGORA - timedelta(days=d) for d in (40, 20, 1))
+    for dia, base, data in (("2026-11-07", "suave", reiniciada), ("2026-11-06", "suave", antigo),
+                            ("2026-11-05", "antigo", muito_antigo)):
+        pasta = tmp_path / "dados" / "backups" / dia
+        pasta.mkdir(parents=True)
+        cr.gravar(cr.CorrecaoRitmo(bases={"cantos": base}, datas_ativacao={"cantos": data}),
+                  pasta / "correcao_ritmo.json")
+    hoje = cr.CorrecaoRitmo(bases={"cantos": "suave"}, datas_ativacao={"cantos": AGORA})
+    r = cr._recuperar_datas(hoje, raiz=tmp_path)
+    assert r.datas_ativacao["cantos"] == antigo        # nao vai alem da mudanca de versao
+    assert cr.RECUPERADAS == {"cantos": antigo}

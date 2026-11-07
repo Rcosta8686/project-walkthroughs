@@ -545,24 +545,32 @@ def ler(path: Path | None = None) -> CorrecaoRitmo:
         return CorrecaoRitmo()
 
 
+RECUPERADAS: dict[str, datetime] = {}   # o que a ultima recuperacao trouxe (para o relatorio)
+
+
 def _recuperar_datas(anterior: CorrecaoRitmo, raiz: Path | None = None) -> CorrecaoRitmo:
-    """Datas que um multiplicador ligado/desligado reiniciou (regra antiga): se
-    a copia de seguranca mais recente tem a mesma versao do modelo nesse
-    mercado com uma data mais antiga, volta a essa data."""
+    """Datas que um multiplicador ligado/desligado reiniciou (regra antiga). Vai
+    as copias de seguranca da mais recente para a mais antiga e, enquanto a
+    versao do modelo nesse mercado for a mesma de agora, fica com a data mais
+    antiga (a copia de uma noite pode ja ter a data reiniciada)."""
     from apostas.utils.config import project_root
+    RECUPERADAS.clear()
     base = (raiz or project_root()) / "dados" / "backups"
     if not base.exists():
         return anterior
+    seguidos = {m for m in anterior.datas_ativacao}   # ainda sem mudanca de versao
     for pasta in sorted((d for d in base.iterdir() if d.is_dir()), reverse=True):
         copia = ler(pasta / "correcao_ritmo.json")
-        if not copia.datas_ativacao:
+        if not copia.bases and not copia.datas_ativacao:
             continue
-        for m, d in copia.datas_ativacao.items():
-            atual = anterior.datas_ativacao.get(m)
-            if (atual is not None and d < atual
-                    and copia.bases.get(m, "antigo") == anterior.bases.get(m, "antigo")):
+        for m in list(seguidos):
+            if copia.bases.get(m, "antigo") != anterior.bases.get(m, "antigo"):
+                seguidos.discard(m)          # antes disto era outra versao: parar aqui
+                continue
+            d = copia.datas_ativacao.get(m)
+            if d is not None and d < anterior.datas_ativacao[m]:
                 anterior.datas_ativacao[m] = d
-        break
+                RECUPERADAS[m] = d
     return anterior
 
 

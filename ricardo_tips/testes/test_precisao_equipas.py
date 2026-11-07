@@ -402,3 +402,22 @@ def test_priors_de_cada_equipa_nos_cantos_e_a_baliza():
     assert com.projeccao_cantos_casa / com.projeccao_cantos_fora == pytest.approx(
         pr.cantos_casa / pr.cantos_fora, rel=0.05)
     assert com.projeccao_sot_casa > 1.4 * com.projeccao_sot_fora
+
+
+def test_normal_de_casa_e_fora():
+    """Em casa a equipa 1 faz 9 cantos, fora 3: num jogo em casa conta o 9."""
+    from apostas.modelos.priors_equipas import HistoricoEquipas
+    linhas = []
+    for i in range(20):
+        casa = i % 2 == 0
+        d = AGORA - timedelta(days=i + 1)
+        linhas += [SimpleNamespace(sofascore_event_id=i, sofascore_team_id=1, data_jogo=d,
+                                   era_casa=casa, golos_marcados=1, golos_sofridos=1, remates=12,
+                                   sot=4, cantos=9 if casa else 3, cards_amarelos=2),
+                   SimpleNamespace(sofascore_event_id=i, sofascore_team_id=50 + i, data_jogo=d,
+                                   era_casa=not casa, golos_marcados=1, golos_sofridos=1,
+                                   remates=12, sot=4, cantos=5, cards_amarelos=2)]
+    h = HistoricoEquipas(linhas)
+    em_casa = h.priors(1, 77).cantos_casa
+    fora = h.priors(77, 1).cantos_fora
+    assert em_casa > fora + 1.5

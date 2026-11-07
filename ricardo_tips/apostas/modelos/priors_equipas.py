@@ -114,6 +114,16 @@ class HistoricoEquipas:
         def sofridos(attr):
             return lambda _own, opp: _v(opp, attr) if opp is not None else None
 
+        def no_local(jogos, valor, em_casa: bool, generico: float) -> float:
+            """Media so nos jogos em casa (ou fora), puxada para a media geral da
+            equipa: em casa um clube faz muito mais cantos do que fora."""
+            geral = media(jogos, valor, generico)
+            xs = [x for _, own, opp in jogos
+                  if (getattr(own, "era_casa", None) is None
+                      or bool(own.era_casa) == em_casa)
+                  and (x := valor(own, opp)) is not None]
+            return (sum(xs) + K_ENCOLHIMENTO * geral) / (len(xs) + K_ENCOLHIMENTO)
+
         g = GENERICO
         rem = g["remates"]
         return PriorsJogo(
@@ -125,14 +135,15 @@ class HistoricoEquipas:
             remates_casa=(media(jc, remates_feitos, rem) + media(jf, remates_sofridos, rem)) / 2,
             remates_fora=(media(jf, remates_feitos, rem) + media(jc, remates_sofridos, rem)) / 2,
             n_casa=len(jc), n_fora=len(jf),
-            cantos_casa=(media(jc, feitos("cantos"), g["cantos_equipa"])
-                         + media(jf, sofridos("cantos"), g["cantos_equipa"])) / 2,
-            cantos_fora=(media(jf, feitos("cantos"), g["cantos_equipa"])
-                         + media(jc, sofridos("cantos"), g["cantos_equipa"])) / 2,
-            sot_casa=(media(jc, feitos("sot"), g["sot_equipa"])
-                      + media(jf, sofridos("sot"), g["sot_equipa"])) / 2,
-            sot_fora=(media(jf, feitos("sot"), g["sot_equipa"])
-                      + media(jc, sofridos("sot"), g["sot_equipa"])) / 2,
+            # a casa joga em casa e o visitante fora: cada um com o seu normal nesse local
+            cantos_casa=(no_local(jc, feitos("cantos"), True, g["cantos_equipa"])
+                         + no_local(jf, sofridos("cantos"), False, g["cantos_equipa"])) / 2,
+            cantos_fora=(no_local(jf, feitos("cantos"), False, g["cantos_equipa"])
+                         + no_local(jc, sofridos("cantos"), True, g["cantos_equipa"])) / 2,
+            sot_casa=(no_local(jc, feitos("sot"), True, g["sot_equipa"])
+                      + no_local(jf, sofridos("sot"), False, g["sot_equipa"])) / 2,
+            sot_fora=(no_local(jf, feitos("sot"), False, g["sot_equipa"])
+                      + no_local(jc, sofridos("sot"), True, g["sot_equipa"])) / 2,
         )
 
 

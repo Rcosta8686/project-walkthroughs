@@ -29,11 +29,15 @@ from apostas.utils.db import abrir_sessao, criar_schema  # noqa: E402
 
 
 def main() -> None:
+    from apostas.utils.versao import versao_codigo
+    print(f"Versao do codigo: {versao_codigo()}")
     criar_schema()
     print("A comparar o que o modelo previa com o que aconteceu (pode demorar 1-2 min)...\n")
     with abrir_sessao() as s:
         c = correcao_ritmo.recalcular_e_gravar(s)
         hist = cartoes_finais.recalcular_e_gravar(s)
+    for m, d in correcao_ritmo.RECUPERADAS.items():
+        print(f"📅 {m}: recuperei a data do modelo (desde {d:%d/%m}) da copia de seguranca")
     print(correcao_ritmo.formatar(c))
     from apostas.modelos import precisao_equipas
     print("\n" + precisao_equipas.formatar(precisao_equipas.ler()))
