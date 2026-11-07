@@ -220,6 +220,15 @@ class EstadoLiveSnapshot(Base):
 
     arbitro: Mapped[str | None] = mapped_column(String(100))
 
+    # Substituicoes ate este minuto: total, ofensivas (entra mais avancado do
+    # que sai) e defensivas. O que o treinador foi buscar ao jogo.
+    subs_casa: Mapped[int | None] = mapped_column(Integer)
+    subs_fora: Mapped[int | None] = mapped_column(Integer)
+    subs_of_casa: Mapped[int | None] = mapped_column(Integer)
+    subs_of_fora: Mapped[int | None] = mapped_column(Integer)
+    subs_def_casa: Mapped[int | None] = mapped_column(Integer)
+    subs_def_fora: Mapped[int | None] = mapped_column(Integer)
+
     __table_args__ = (
         # Permite dedupe (nao gravar snapshot do mesmo minuto duas vezes)
         UniqueConstraint("event_id", "minuto", name="uq_snapshot_evento_minuto"),

@@ -87,6 +87,7 @@ _COLUNAS_SNAPSHOT = (
     "big_chances_casa", "big_chances_fora", "posse_casa", "corners_casa", "corners_fora",
     "shots_blocked_casa", "shots_blocked_fora", "yellow_casa", "yellow_fora",
     "red_casa", "red_fora", "fouls_casa", "fouls_fora", "arbitro",
+    "subs_of_casa", "subs_of_fora", "subs_def_casa", "subs_def_fora",
 )
 
 
@@ -113,7 +114,11 @@ def _estado_de_snapshot(sn):
 
 _COLUNAS_EEJ = ("sofascore_event_id", "sofascore_team_id", "data_jogo", "era_casa",
                 "golos_marcados", "golos_sofridos", "remates", "sot", "cantos", "cards_amarelos",
-                "arbitro", "liga")
+                "arbitro", "liga",
+                # 1a/2a parte e intervalo: o mini-cerebro do treinador
+                "golos_marcados_1t", "golos_sofridos_1t", "resultado_1t", "cantos_1t",
+                "cantos_2t", "cards_amarelos_1t", "cards_amarelos_2t", "remates_1t", "remates_2t",
+                "sot_1t", "sot_2t")
 _DIAS_HISTORICO = 150  # para os priors dos jogos mais antigos da janela
 
 
@@ -130,12 +135,13 @@ def _jogos_acabados(linhas) -> dict[int, dict]:
         fora = next((r for r in rows if not r.era_casa), None)
         if casa is None or fora is None:
             continue
-        totais = {}
+        totais, finais = {}, {}
         for mercado, (_, _, col) in MERCADOS.items():
             a, b = getattr(casa, col), getattr(fora, col)
             if a is not None and b is not None:
                 totais[mercado] = float(a) + float(b)
-        out[eid] = {"totais": totais, "casa": int(casa.sofascore_team_id),
+                finais[mercado] = (float(a), float(b))
+        out[eid] = {"totais": totais, "finais": finais, "casa": int(casa.sofascore_team_id),
                     "fora": int(fora.sofascore_team_id), "data": casa.data_jogo,
                     "arbitro": getattr(casa, "arbitro", None) or getattr(fora, "arbitro", None)}
     return out
@@ -160,6 +166,17 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
     historico = HistoricoEquipas(linhas)
     from apostas.modelos.arbitros import HistoricoArbitros
     arbitros = HistoricoArbitros(linhas)
+    from apostas.modelos import precisao_equipas as pe
+    from apostas.modelos.perfil_treinador import PerfisTreinador
+    treinadores = PerfisTreinador(linhas)
+    treinador_cache: dict[tuple, float] = {}
+
+    def fator_treinador(equipa: int, mercado: str, sit: str, data) -> float:
+        chave_t = (equipa, mercado, sit, data)
+        if chave_t not in treinador_cache:
+            f = treinadores.fator(equipa, mercado, sit, antes=data)
+            treinador_cache[chave_t] = f.fator if f is not None else 1.0
+        return treinador_cache[chave_t]
     jogos = {e: j for e, j in _jogos_acabados(linhas).items()
              if j["data"] is not None and j["data"] >= desde - timedelta(days=1)}
     if not jogos:
@@ -206,11 +223,31 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
             real = jogo["totais"][mercado] - (vc + vf)
             if real < -0.5:  # final incoerente com o que ja se via
                 continue
-            pares.append({"mercado": mercado, "janela": chave[1], "event_id": chave[0],
-                          "previsto": max(0.0, float(getattr(prev, attr))),
-                          "previsto_suave": max(0.0, float(getattr(prev_suave, attr))),
-                          "previsto_equipas": max(0.0, float(getattr(prev_eq, attr))),
-                          "real": max(0.0, real), "data": sn.ts})
+            par = {"mercado": mercado, "janela": chave[1], "event_id": chave[0],
+                   "previsto": max(0.0, float(getattr(prev, attr))),
+                   "previsto_suave": max(0.0, float(getattr(prev_suave, attr))),
+                   "previsto_equipas": max(0.0, float(getattr(prev_eq, attr))),
+                   "real": max(0.0, real), "data": sn.ts}
+            fin = jogo.get("finais", {}).get(mercado)
+            if fin is not None:  # o mesmo, mas para cada equipa
+                mc, mf = int(sn.marcador_casa or 0), int(sn.marcador_fora or 0)
+                par.update(mc=mc, mf=mf, home=sn.home, away=sn.away,
+                           c_atual=float(vc), f_atual=float(vf),
+                           c_real=max(0.0, fin[0] - vc), f_real=max(0.0, fin[1] - vf))
+                for nome_b, pb in (("antigo", prev), ("suave", prev_suave), ("equipas", prev_eq)):
+                    par[f"c_{nome_b}"], par[f"f_{nome_b}"] = pe.restantes(pb, estado, mercado)
+                segunda = int(sn.minuto) >= pe.MINUTO_TREINADOR
+                par["c_treinador"] = (fator_treinador(jogo["casa"], mercado,
+                                                      pe.situacao(mc, mf), jogo["data"])
+                                      if segunda else 1.0)
+                par["f_treinador"] = (fator_treinador(jogo["fora"], mercado,
+                                                      pe.situacao(mf, mc), jogo["data"])
+                                      if segunda else 1.0)
+                par["c_postura"] = pe.postura(getattr(sn, "subs_of_casa", None),
+                                              getattr(sn, "subs_def_casa", None))
+                par["f_postura"] = pe.postura(getattr(sn, "subs_of_fora", None),
+                                              getattr(sn, "subs_def_fora", None))
+            pares.append(par)
     return pares
 
 
@@ -505,8 +542,18 @@ def ler(path: Path | None = None) -> CorrecaoRitmo:
 
 def recalcular_e_gravar(sess, path: Path | None = None) -> CorrecaoRitmo:
     anterior = ler(path)
-    c = calcular(pares_da_bd(sess), anterior=anterior)
+    pares = pares_da_bd(sess)
+    c = calcular(pares, anterior=anterior)
     gravar(c, path)
+    # Os mesmos momentos, por equipa: precisao + camadas (situacao, treinador,
+    # substituicoes). So se grava ao lado do ficheiro real do ritmo.
+    if path is None:
+        try:
+            from apostas.modelos import precisao_equipas
+            precisao_equipas.recalcular_e_gravar(pares, c)
+        except Exception as exc:  # noqa: BLE001
+            from apostas.utils.logger import get_logger
+            get_logger(__name__).warning("Precisao por equipa falhou: %s", exc)
     return c
 
 

@@ -35,6 +35,8 @@ def main() -> None:
         c = correcao_ritmo.recalcular_e_gravar(s)
         hist = cartoes_finais.recalcular_e_gravar(s)
     print(correcao_ritmo.formatar(c))
+    from apostas.modelos import precisao_equipas
+    print("\n" + precisao_equipas.formatar(precisao_equipas.ler()))
     print("\n" + cartoes_finais.formatar_historia(hist))
     from apostas.relatorios import prime
     print("\n" + prime.formatar(prime.recalcular_e_gravar()))

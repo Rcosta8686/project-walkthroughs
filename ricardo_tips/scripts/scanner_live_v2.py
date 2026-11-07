@@ -64,6 +64,7 @@ from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
+from apostas.modelos import perfil_treinador, precisao_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live, prime, vs_casa  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -469,6 +470,12 @@ def _gravar_snapshot(estado) -> None:
             fouls_casa=estado.fouls_casa,
             fouls_fora=estado.fouls_fora,
             arbitro=estado.arbitro,
+            subs_casa=getattr(estado, "substituicoes_casa", None),
+            subs_fora=getattr(estado, "substituicoes_fora", None),
+            subs_of_casa=getattr(estado, "subs_ofensivas_casa", None),
+            subs_of_fora=getattr(estado, "subs_ofensivas_fora", None),
+            subs_def_casa=getattr(estado, "subs_defensivas_casa", None),
+            subs_def_fora=getattr(estado, "subs_defensivas_fora", None),
         )
         s.add(snap)
 
@@ -552,7 +559,7 @@ _PROB_MIN_REFERENCIA_PROJ = 0.60
 
 
 def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
-                           min_estrelas: int = 4) -> int:
+                           min_estrelas: int = 4, prev_equipas=None) -> int:
     """Se minuto >= target (40/55/70) e ainda nao enviado para este jogo,
     envia projeccao de SOT + cantos ao Telegram e grava na DB.
 
@@ -947,11 +954,18 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 continue
             odd_r = _odd_real(event_id, mercado, ref.lado, ref.linha)
             txt_odd = _texto_odd_real(odd_r)
+            try:
+                # A previsao por equipa aprende sobre o modelo corrigido (o dos alertas).
+                txt_equipas = _texto_equipas(estado, prev_equipas or prev, mercado)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Previsao por equipa falhou: %s", exc)
+                txt_equipas = ""
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
                 extras=extras, roi_line=roi_line,
                 referencia=projecao_live.formatar_referencia(ref)
+                + (f"\n{txt_equipas}" if txt_equipas else "")
                 + (f"\n💶 {txt_odd}" if txt_odd else ""),
             )
             # Narrativa final mega-cerebro (previsao + certezas) tambem
@@ -1575,6 +1589,73 @@ def _vs_casa_live() -> vs_casa.VsCasa:
     return _vs_casa_cache[1]
 
 
+_precisao_cache: tuple[float, precisao_equipas.Precisao] | None = None
+_treinadores_cache: tuple[float, perfil_treinador.PerfisTreinador] | None = None
+_TREINADORES_TTL_S = 6 * 3600
+_MERCADO_EQUIPA = {"sot": "remates_a_baliza", "remates_a_baliza": "remates_a_baliza",
+                   "remates": "remates", "cantos": "cantos", "cartoes": "cartoes",
+                   "cards": "cartoes", "golos": "golos", "btts": "golos", "1x2": "golos"}
+
+
+def _precisao_live() -> precisao_equipas.Precisao:
+    global _precisao_cache
+    agora = time.time()
+    if _precisao_cache is None or agora - _precisao_cache[0] >= _RITMO_TTL_S:
+        _precisao_cache = (agora, precisao_equipas.ler())
+    return _precisao_cache[1]
+
+
+def _treinadores_live() -> perfil_treinador.PerfisTreinador:
+    global _treinadores_cache
+    agora = time.time()
+    if _treinadores_cache is None or agora - _treinadores_cache[0] >= _TREINADORES_TTL_S:
+        with abrir_sessao() as s:
+            _treinadores_cache = (agora, perfil_treinador.carregar_do_bd(s))
+    return _treinadores_cache[1]
+
+
+def _texto_subs(estado) -> str:
+    partes = []
+    for nome, lado in ((estado.home, "casa"), (estado.away, "fora")):
+        of = int(getattr(estado, f"subs_ofensivas_{lado}", 0) or 0)
+        de = int(getattr(estado, f"subs_defensivas_{lado}", 0) or 0)
+        if of or de:
+            bits = ([f"{of} ofensiva{'s' if of > 1 else ''}"] if of else []) + (
+                [f"{de} defensiva{'s' if de > 1 else ''}"] if de else [])
+            partes.append(f"{nome} {' + '.join(bits)}")
+    return ("🔄 Substituicoes: " + " · ".join(partes)) if partes else ""
+
+
+def _texto_equipas(estado, prev, mercado: str) -> str:
+    """Quanto cada equipa vai acabar (com o treinador de cada uma na 2a parte)
+    + o que o treinador costuma fazer + as substituicoes que ja fez."""
+    m = _MERCADO_EQUIPA.get((mercado or "").lower())
+    if m is None or prev is None:
+        return ""
+    precisao = _precisao_live()
+    fatores, razoes = [1.0, 1.0], []
+    if int(estado.minuto or 0) >= precisao_equipas.MINUTO_TREINADOR:
+        try:
+            perfis = _treinadores_live()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Perfis de treinador falharam: %s", exc)
+            perfis = None
+        mc, mf = int(estado.marcador_casa or 0), int(estado.marcador_fora or 0)
+        equipas = ((getattr(estado, "home_id", None), estado.home, precisao_equipas.situacao(mc, mf)),
+                   (getattr(estado, "away_id", None), estado.away, precisao_equipas.situacao(mf, mc)))
+        for i, (eid, nome, sit) in enumerate(equipas):
+            f = perfis.fator(eid, m, sit) if perfis is not None else None
+            if f is not None:
+                fatores[i] = f.fator
+                frase = perfil_treinador.texto(nome, sit, m, f)
+                if frase:
+                    razoes.append(f"🧑‍🏫 {frase}")
+    linhas = [precisao_equipas.texto_equipas(estado, prev, precisao, m,
+                                             (fatores[0], fatores[1])),
+              *razoes, _texto_subs(estado)]
+    return "\n".join(x for x in linhas if x)
+
+
 def _texto_casa(s: dict, mercado: str) -> str:
     """'Casa 1.85 (da 52%) · nos 68%' + historia; vazio sem odd da casa."""
     if s.get("p_casa") is None or not s.get("odd_casa"):
@@ -1649,6 +1730,12 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
         return False
     odd_r = _odd_real(estado.event_id, "cartoes", "over", sinal.linha)
     texto = cartoes_finais.formatar_telegram(sinal, estado)
+    try:
+        txt_equipas = _texto_equipas(estado, prev, "cartoes")
+        if txt_equipas:
+            texto += "\n" + txt_equipas
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Previsao por equipa falhou: %s", exc)
     if odd_r is not None:
         s_casa = {"mercado": "cartoes", "lado": "over", "linha": sinal.linha,
                   "prob_modelo": sinal.p1}
@@ -2137,7 +2224,7 @@ def _correr_ciclo(args) -> None:
         try:
             n_proj = _enviar_projecoes_jogo(
                 estado, prev_bruta, args.telegram,
-                min_estrelas=args.projecao_tele_estrelas,
+                min_estrelas=args.projecao_tele_estrelas, prev_equipas=prev,
             )
             if n_proj:
                 print(f"    📊 {n_proj} projeccao(oes) enviadas ao Telegram.")
@@ -2178,6 +2265,10 @@ def _correr_ciclo(args) -> None:
                 sug = _sinal_para_sugestao(estado, sinal)
                 sug["prob_bruta"] = round(prob_bruta, 4)
                 sug.update(_extras_narrativa(estado, prev, sinal.mercado))
+                try:  # quanto cada equipa vai acabar + treinador + substituicoes
+                    sug["equipas_txt"] = _texto_equipas(estado, prev, sinal.mercado)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Previsao por equipa falhou: %s", exc)
                 # Marca se o analista apostaria aqui o seu proprio dinheiro
                 sug["_alta_conviccao"] = analista._conviccao_alta(sinal, estado)
                 todas_sugestoes.append(sug)

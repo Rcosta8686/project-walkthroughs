@@ -207,6 +207,11 @@ class EstadoLive:
     rating_gr_fora: float | None = None
     substituicoes_casa: int = 0                 # subs ja feitas
     substituicoes_fora: int = 0
+    # Entra mais avancado do que sai (avancado por defesa) = ofensiva.
+    subs_ofensivas_casa: int = 0
+    subs_ofensivas_fora: int = 0
+    subs_defensivas_casa: int = 0
+    subs_defensivas_fora: int = 0
 
     # ─── Lineup pre-match (titulares iniciais, para deteccao de rotacao) ──
     # Lista de (player_id, nome) dos 11 titulares de cada equipa. Vazia se
@@ -1063,16 +1068,33 @@ def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
             estado.lineup_titulares_fora = titulares
 
 
+_POSICAO = {"G": 0, "D": 1, "M": 2, "F": 3}
+
+
+def tipo_substituicao(inc: dict) -> str:
+    """'ofensiva' (entra mais avancado do que sai), 'defensiva' ou 'igual'."""
+    def pos(chave: str) -> int | None:
+        p = str(((inc.get(chave) or {}).get("position") or "")).upper()[:1]
+        return _POSICAO.get(p)
+    entra, sai = pos("playerIn"), pos("playerOut")
+    if entra is None or sai is None or entra == sai:
+        return "igual"
+    return "ofensiva" if entra > sai else "defensiva"
+
+
 def _preencher_substituicoes(estado: EstadoLive, incidents_payload: dict) -> None:
-    """Conta substituicoes ja feitas por equipa."""
+    """Conta substituicoes ja feitas por equipa (e quais foram para atacar ou defender)."""
     for inc in incidents_payload.get("incidents", []) or []:
         if (inc.get("incidentType") or "").lower() != "substitution":
             continue
-        is_home = bool(inc.get("isHome"))
-        if is_home:
-            estado.substituicoes_casa += 1
-        else:
-            estado.substituicoes_fora += 1
+        lado = "casa" if inc.get("isHome") else "fora"
+        setattr(estado, f"substituicoes_{lado}", getattr(estado, f"substituicoes_{lado}") + 1)
+        tipo = tipo_substituicao(inc)
+        if tipo == "ofensiva":
+            setattr(estado, f"subs_ofensivas_{lado}", getattr(estado, f"subs_ofensivas_{lado}") + 1)
+        elif tipo == "defensiva":
+            setattr(estado, f"subs_defensivas_{lado}",
+                    getattr(estado, f"subs_defensivas_{lado}") + 1)
 
 
 # Palavras-chave que identificam intencao narrativa (lowercase).

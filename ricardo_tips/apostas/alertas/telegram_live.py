@@ -193,6 +193,8 @@ def enviar_sugestao_live(s: dict) -> None:
         # mostrar o badge no texto (nao bloqueia nada).
         dual_str = "🔗 DUAL — " if s.get("dual_sinal") else ""
         prime_line = f"\n💎 *PRIME* — {s['prime']}" if s.get("prime") else ""
+        if s.get("equipas_txt"):  # quanto cada equipa vai acabar (+ treinador, subs)
+            prime_line += f"\n{s['equipas_txt']}"
         if s.get("odd_real_txt"):
             prime_line += f"\n💶 {s['odd_real_txt']}"
 

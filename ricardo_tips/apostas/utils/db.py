@@ -74,4 +74,24 @@ def criar_schema() -> None:
     """Cria todas as tabelas (idempotente — não apaga dados existentes)."""
     engine = get_engine()
     Base.metadata.create_all(engine)
+    _acrescentar_colunas(engine)
     log.info("Schema criado/verificado em %s", _config.db_path())
+
+
+def _acrescentar_colunas(engine: Engine) -> None:
+    """create_all nao mexe em tabelas que ja existem: colunas novas (nullable)
+    acrescentam-se aqui com ALTER TABLE, sem tocar nos dados."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    tabelas = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for tabela in Base.metadata.sorted_tables:
+            if tabela.name not in tabelas:
+                continue
+            existentes = {c["name"] for c in insp.get_columns(tabela.name)}
+            for col in tabela.columns:
+                if col.name in existentes or not col.nullable or col.primary_key:
+                    continue
+                tipo = col.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE "{tabela.name}" ADD COLUMN "{col.name}" {tipo}'))
+                log.info("BD: coluna nova %s.%s", tabela.name, col.name)

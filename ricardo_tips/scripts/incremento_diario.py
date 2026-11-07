@@ -85,6 +85,8 @@ def main() -> None:
         with abrir_sessao() as s:
             ritmo = correcao_ritmo.recalcular_e_gravar(s)
         print("\n" + correcao_ritmo.formatar(ritmo))
+        from apostas.modelos import precisao_equipas
+        print("\n" + precisao_equipas.formatar(precisao_equipas.ler()))
     except Exception as exc:  # noqa: BLE001
         log.warning("Correccao do ritmo falhou: %s", exc)
     # 4. Cartao no fim: taxas historicas de "mais 1 cartao ate ao fim".
