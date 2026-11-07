@@ -36,6 +36,8 @@ def main() -> None:
         hist = cartoes_finais.recalcular_e_gravar(s)
     print(correcao_ritmo.formatar(c))
     print("\n" + cartoes_finais.formatar_historia(hist))
+    from apostas.relatorios import prime
+    print("\n" + prime.formatar(prime.recalcular_e_gravar()))
     print(f"\nGravado em {correcao_ritmo.caminho()} — o scanner usa-o na proxima hora.")
 
 

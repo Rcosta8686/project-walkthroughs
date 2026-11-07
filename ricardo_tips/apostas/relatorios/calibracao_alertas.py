@@ -99,6 +99,7 @@ def carregar_resolvidos(csv_path: Path, desde: datetime | None = None) -> list[d
                 "fonte": "analista" if casa == "ANALISTA" else "odds",
                 "ts": ts_str,
                 "liga": (row.get("liga") or "").strip(),
+                "minuto": _float(row.get("minuto")),
             })
     return out
 

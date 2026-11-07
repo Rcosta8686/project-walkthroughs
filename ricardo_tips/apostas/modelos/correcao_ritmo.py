@@ -351,6 +351,22 @@ class CorrecaoRitmo:
         return base if base in self.mudados else None
 
 
+def filtrar_desde_mudanca(rows: list[dict], ritmo: CorrecaoRitmo) -> list[dict]:
+    """So as sugestoes calculadas com o modelo actual: num mercado em que a
+    versao do modelo ou o multiplicador mudou, as de antes dessa data
+    prometiam com outro calculo (calibrador, PRIME)."""
+    if not ritmo.mudados:
+        return rows
+    out = []
+    for r in rows:
+        base = ritmo.afecta(r.get("mercado", ""))
+        desde = ritmo.datas_ativacao.get(base) if base else None
+        if desde is not None and (r.get("ts") or "") < desde.isoformat(timespec="seconds"):
+            continue
+        out.append(r)
+    return out
+
+
 def calcular(pares: list[dict], anterior: CorrecaoRitmo | None = None,
              agora: datetime | None = None) -> CorrecaoRitmo:
     from apostas.utils.tempo import agora_utc

@@ -86,6 +86,12 @@ def main() -> None:
         print("\n" + cartoes_finais.formatar_historia(hist))
     except Exception as exc:  # noqa: BLE001
         log.warning("Historia do cartao no fim falhou: %s", exc)
+    # 5. PRIME: grupos de dicas com acerto garantido >= 92% (modelo actual).
+    try:
+        from apostas.relatorios import prime
+        print("\n" + prime.formatar(prime.recalcular_e_gravar()))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("PRIME falhou: %s", exc)
 
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

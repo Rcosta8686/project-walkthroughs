@@ -64,7 +64,7 @@ from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.modelos import cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
-from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
+from apostas.relatorios import alertas_enviados, csv_live, prime  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
 
@@ -1548,20 +1548,21 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
 
 def _sem_alertas_antes_do_ritmo(rows: list[dict],
                                 ritmo: correcao_ritmo.CorrecaoRitmo) -> list[dict]:
-    """O calibrador nao aprende com alertas calculados antes de o ritmo ser
-    corrigido nesse mercado (prometiam por baixo do ritmo real): corrigir os
-    dois juntos contava o mesmo erro duas vezes. Volta a aprender so com os
-    alertas novos."""
-    if not ritmo.mudados:
-        return rows
-    out = []
-    for r in rows:
-        base = ritmo.afecta(r.get("mercado", ""))
-        desde = ritmo.datas_ativacao.get(base) if base else None
-        if desde is not None and (r.get("ts") or "") < desde.isoformat(timespec="seconds"):
-            continue
-        out.append(r)
-    return out
+    """O calibrador nao aprende com alertas calculados antes de o ritmo mudar
+    nesse mercado (contava o mesmo erro duas vezes): so os novos."""
+    return correcao_ritmo.filtrar_desde_mudanca(rows, ritmo)
+
+
+_prime_cache: tuple[float, "prime.Prime"] | None = None
+
+
+def _prime_live() -> "prime.Prime":
+    """Grupos PRIME (acerto garantido >= 92%), recalculados a noite."""
+    global _prime_cache
+    agora = time.time()
+    if _prime_cache is None or agora - _prime_cache[0] >= _RITMO_TTL_S:
+        _prime_cache = (agora, prime.ler())
+    return _prime_cache[1]
 
 
 _cortes_cache: tuple[float, corte_mercados.Cortes] | None = None
@@ -2315,6 +2316,14 @@ def _correr_ciclo(args) -> None:
                         continue
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Fichas fortes check falhou: %s", exc)
+                # 💎 PRIME: a historia garante >= 92% neste tipo de dica.
+                try:
+                    g_prime = _prime_live().grupo_prime(
+                        mercado, lado, s.get("minuto"), s.get("prob_bruta", s.get("prob_modelo")))
+                    if g_prime is not None:
+                        s["prime"] = prime.selo(g_prime)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("PRIME falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
                 try:
                     alertas_enviados.registar(

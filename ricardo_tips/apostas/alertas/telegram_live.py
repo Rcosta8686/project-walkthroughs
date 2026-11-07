@@ -192,6 +192,7 @@ def enviar_sugestao_live(s: dict) -> None:
         # carimba `dual_sinal` no dict quando passa; usamos aqui apenas para
         # mostrar o badge no texto (nao bloqueia nada).
         dual_str = "🔗 DUAL — " if s.get("dual_sinal") else ""
+        prime_line = f"\n💎 *PRIME* — {s['prime']}" if s.get("prime") else ""
 
         # M16: historico por tipo de alerta — SOMENTE para o cabecalho de
         # categoria forte / fraca. O ROI numerico ja vai inline na seccao
@@ -339,6 +340,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}  {fase}"
+                f"{prime_line}"
                 f"{analise_block}"
                 f"{historico_line}"
                 f"{treinadores_line}"
@@ -370,6 +372,7 @@ def enviar_sugestao_live(s: dict) -> None:
                 f"\n"
                 f"⚽ {home} vs {away}\n"
                 f"🏆 {liga}  ·  [{minuto}']  {marcador}"
+                f"{prime_line}"
                 f"{analise_block}"
                 f"{historico_line}"
                 f"{treinadores_line}"

@@ -60,6 +60,8 @@ def main() -> None:
                          "(corre scripts\\correcao_ritmo.py ou espera pelo incremento das 00:15)")
     from apostas.modelos import cartoes_finais
     texto += "\n\n" + cartoes_finais.formatar_historia(cartoes_finais.ler())
+    from apostas.relatorios import prime
+    texto += "\n\n" + prime.formatar(prime.ler())
     print(texto)
 
     if args.telegram:

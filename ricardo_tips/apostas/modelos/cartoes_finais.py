@@ -176,6 +176,7 @@ class SinalCartoesFim:
     razoes: list[str]
     equipa: str               # mais provavel levar o proximo cartao
     p_equipa: float
+    garantido: float = 0.0    # pior caso estatistico (Wilson) da taxa historica
 
     @property
     def odd_justa(self) -> float:
@@ -190,6 +191,7 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
             derbi: bool = False) -> SinalCartoesFim | None:
     """None se o momento nao serve (fora da janela, jogo decidido, pouca tensao
     ou as duas fontes nao concordam)."""
+    from apostas.relatorios.prime import wilson_inferior
     minuto = int(estado.minuto or 0)
     mc, mf = int(estado.marcador_casa or 0), int(estado.marcador_fora or 0)
     if fase_de(minuto) is None or abs(mc - mf) > 1:
@@ -242,7 +244,8 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
     return SinalCartoesFim(
         minuto=minuto, amarelos=yc + yf, linha=yc + yf + 0.5, p1=p1, p1_modelo=p1_modelo,
         p1_historia=taxa.p1, p2=min(p2_modelo, taxa.p2), n_historia=taxa.n,
-        situacao=descr.format(*chave), razoes=razoes, equipa=equipa, p_equipa=p_eq)
+        situacao=descr.format(*chave), razoes=razoes, equipa=equipa, p_equipa=p_eq,
+        garantido=wilson_inferior(taxa.mais1, taxa.n))
 
 
 def formatar_telegram(s: SinalCartoesFim, estado) -> str:
@@ -261,7 +264,8 @@ def formatar_telegram(s: SinalCartoesFim, estado) -> str:
         "",
         "🔥 *Porque este jogo:* " + "; ".join(s.razoes),
         f"📚 *Historia:* em {s.n_historia} jogos guardados em momento parecido "
-        f"({s.situacao}), saiu mais 1 cartao em *{s.p1_historia * 100:.0f}%*",
+        f"({s.situacao}), saiu mais 1 cartao em *{s.p1_historia * 100:.0f}%* "
+        f"(garantido ≥ {s.garantido * 100:.0f}%)",
         f"🧠 *Modelo:* {s.p1_modelo * 100:.0f}% de sair mais 1 ate ao fim",
         f"👤 Mais provavel levar o proximo: *{s.equipa}* ({s.p_equipa * 100:.0f}%)",
     ]
