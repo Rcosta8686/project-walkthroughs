@@ -120,6 +120,12 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
         desde.append(d)
     from apostas.modelos import cartoes_finais, correcao_ritmo
     monkeypatch.setattr(cartoes_finais, "recalcular_e_gravar", lambda s: cartoes_finais.Historia())
+    from apostas.relatorios import prime
+    from apostas.utils import backup
+    monkeypatch.setattr(prime, "recalcular_e_gravar", lambda: prime.Prime())
+    copias = []
+    monkeypatch.setattr(backup, "fazer_backup", lambda: copias.append(1) or backup.ResultadoBackup(
+        pasta=Path("dados/backups/hoje"), ficheiros=5, tamanho_mb=12.0, apagados=0))
     recalculos = []
     monkeypatch.setattr(correcao_ritmo, "recalcular_e_gravar",
                         lambda s: recalculos.append(1) or correcao_ritmo.CorrecaoRitmo())
@@ -127,5 +133,6 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
     script.main()
     out = capsys.readouterr().out
     assert recalculos == [1] and "Ritmo do resto do jogo" in out
+    assert copias == [1] and "Copia de seguranca: 5 ficheiros" in out
     assert "24 ligas · 60 jogos terminados · 12 novos" in out
     assert len(desde) == 1 and desde[0].hour == 0

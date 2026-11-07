@@ -255,11 +255,9 @@ def formatar_telegram(s: SinalCartoesFim, estado) -> str:
         f"🏆 {estado.liga} · {s.minuto}' · {s.amarelos} amarelos ate agora",
         "",
         f"🎯 *OVER {s.linha} amarelos* (sai pelo menos mais 1) · *{s.p1 * 100:.0f}%*",
-        f"   odd justa {s.odd_justa:.2f} → so se a casa pagar *≥ {s.odd_minima:.2f}*",
     ]
     if s.p2 >= 0.40:
-        linhas.append(f"   bonus: OVER {s.linha + 1} (mais 2) · {s.p2 * 100:.0f}% · "
-                      f"odd justa {1 / s.p2:.2f}")
+        linhas.append(f"   bonus: OVER {s.linha + 1} (mais 2) · {s.p2 * 100:.0f}%")
     linhas += [
         "",
         "🔥 *Porque este jogo:* " + "; ".join(s.razoes),

@@ -193,6 +193,8 @@ def enviar_sugestao_live(s: dict) -> None:
         # mostrar o badge no texto (nao bloqueia nada).
         dual_str = "🔗 DUAL — " if s.get("dual_sinal") else ""
         prime_line = f"\n💎 *PRIME* — {s['prime']}" if s.get("prime") else ""
+        if s.get("odd_real_txt"):
+            prime_line += f"\n💶 {s['odd_real_txt']}"
 
         # M16: historico por tipo de alerta — SOMENTE para o cabecalho de
         # categoria forte / fraca. O ROI numerico ja vai inline na seccao

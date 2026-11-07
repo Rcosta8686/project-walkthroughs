@@ -84,6 +84,7 @@ def test_mensagem_diz_a_aposta_e_o_fundamento():
     assert "CARTAO NO FIM" in txt and "OVER 4.5 amarelos" in txt
     assert "em 120 jogos guardados em momento parecido (75' · empate · faltas altas)" in txt
     assert "bonus: OVER 5.5" in txt and "Mais provavel levar o proximo" in txt
+    assert "so se a casa pagar" not in txt
 
 
 def test_gravar_ler_e_resumo(tmp_path):
@@ -140,6 +141,7 @@ def test_scanner_envia_uma_vez_e_regista(monkeypatch):
     monkeypatch.setattr(sc, "telegram_cliente", lambda: SimpleNamespace(enviar=enviadas.append))
     monkeypatch.setattr(sc.alertas_enviados, "registar", lambda **kw: registos.append(kw))
     monkeypatch.setattr(referencias, "fator_arbitro", lambda nome: 1.0)
+    monkeypatch.setattr(sc, "_odd_real", lambda *a: None)
     assert sc._alerta_cartoes_fim(_estado(), _prev(2.0)) is True
     assert sc._alerta_cartoes_fim(_estado(minuto=78), _prev(2.0)) is False   # ja enviado
     assert len(enviadas) == 1

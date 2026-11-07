@@ -402,10 +402,8 @@ def escolher_referencia(proj: ProjecaoResumo, calibrar=None) -> ReferenciaProjec
     return max(candidatos, key=lambda c: (c.prob, c.lado == "over"))
 
 
-def formatar_referencia(ref: ReferenciaProjecao, margem: float = 0.05) -> str:
-    odd_min = round(ref.odd_justa * (1 + margem), 2)
-    return (f"🎯 *Aposta de referência: {ref.lado.upper()} {ref.linha}* · modelo {ref.prob * 100:.0f}%"
-            f" · odd justa {ref.odd_justa:.2f} → só se a casa pagar *≥ {odd_min:.2f}*")
+def formatar_referencia(ref: ReferenciaProjecao) -> str:
+    return f"🎯 *Aposta de referência: {ref.lado.upper()} {ref.linha}* · modelo {ref.prob * 100:.0f}%"
 
 
 # ─────────── Filtro: projeccao e informativa? ─────────────────────────────

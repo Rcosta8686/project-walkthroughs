@@ -146,10 +146,11 @@ def test_referencia_aplica_a_calibracao():
     assert ref is not None and (ref.lado, ref.linha, ref.prob) == ("over", 8.5, 0.62)
 
 
-def test_formatar_referencia_pede_odd_acima_da_justa():
+def test_formatar_referencia_diz_a_aposta_e_a_probabilidade():
     ref = projecao_live.ReferenciaProjecao(linha=8.5, lado="over", prob=0.7, odd_justa=1.43)
     txt = projecao_live.formatar_referencia(ref)
-    assert "OVER 8.5" in txt and "70%" in txt and "≥ 1.50" in txt
+    assert "OVER 8.5" in txt and "70%" in txt
+    assert "so se a casa pagar" not in txt and "só se a casa pagar" not in txt
 
 
 def test_narrativa_usa_a_projeccao_do_modelo():
@@ -162,7 +163,8 @@ def test_narrativa_usa_a_projeccao_do_modelo():
     assert "projeccao 8.2" in narrativa_final(s)
 
 
-def _correr_projeccao(monkeypatch, sot, cantos, cortes=None, limpar_cooldown=True):
+def _correr_projeccao(monkeypatch, sot, cantos, cortes=None, limpar_cooldown=True,
+                      odd_real=None):
     import scanner_live_v2 as sc
     from types import SimpleNamespace
     from apostas.modelos.calibrador_mercado import Calibrador
@@ -174,6 +176,7 @@ def _correr_projeccao(monkeypatch, sot, cantos, cortes=None, limpar_cooldown=Tru
     monkeypatch.setattr(sc, "_calibrador_live", lambda: Calibrador())
     from apostas.alertas.corte_mercados import Cortes
     monkeypatch.setattr(sc, "_cortes_live", lambda: cortes or Cortes())
+    monkeypatch.setattr(sc, "_odd_real", lambda *a: odd_real)
     monkeypatch.setattr(sc, "telegram_cliente",
                         lambda: SimpleNamespace(enviar=enviadas.append))
     monkeypatch.setattr(sc.alertas_enviados, "registar",

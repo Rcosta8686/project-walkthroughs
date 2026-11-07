@@ -22,7 +22,10 @@ from pathlib import Path
 from apostas.utils.config import project_root
 from apostas.utils.tempo import agora_utc
 
-CAMPOS = ["alert_id", "ts_envio", "tipo", "event_id", "mercado", "lado", "linha", "odd"]
+# odd = odd indicada na dica (alvo/justa); odd_real = a que o mercado pagava
+# no momento do envio (Sofascore), quando havia. O lucro mede-se a odd real.
+CAMPOS = ["alert_id", "ts_envio", "tipo", "event_id", "mercado", "lado", "linha", "odd",
+          "odd_real"]
 _NOME_MERCADO = {
     "remates": "💥 remates", "remates_a_baliza": "🎯 remates a baliza",
     "sot": "🎯 remates a baliza", "cantos": "🚩 cantos", "cartoes": "🟨 cartoes",
@@ -34,14 +37,32 @@ def caminho() -> Path:
     return project_root() / "dados" / "tracking" / "alertas_enviados.csv"
 
 
+def _actualizar_cabecalho(p: Path) -> None:
+    """Ficheiro com o cabecalho antigo (sem odd_real): reescreve com o actual,
+    para as linhas novas nao ficarem desalinhadas."""
+    with p.open(encoding="utf-8", newline="") as fp:
+        r = csv.DictReader(fp)
+        if list(r.fieldnames or []) == CAMPOS:
+            return
+        linhas = list(r)
+    tmp = p.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=CAMPOS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(linhas)
+    tmp.replace(p)
+
+
 def registar(alert_id=None, ts: datetime | None = None, path: Path | None = None, *,
              tipo: str = "alerta", event_id=None, mercado: str = "", lado: str = "",
-             linha=None, odd=None) -> None:
+             linha=None, odd=None, odd_real=None) -> None:
     if tipo == "alerta" and not alert_id:
         return
     p = path or caminho()
     p.parent.mkdir(parents=True, exist_ok=True)
     novo = not p.exists()
+    if not novo:
+        _actualizar_cabecalho(p)
     with p.open("a", encoding="utf-8", newline="") as fp:
         w = csv.writer(fp)
         if novo:
@@ -49,7 +70,8 @@ def registar(alert_id=None, ts: datetime | None = None, path: Path | None = None
         w.writerow([alert_id or "", (ts or agora_utc()).isoformat(timespec="seconds"),
                     tipo, event_id or "", mercado, lado,
                     "" if linha is None else linha,
-                    "" if odd is None else round(float(odd), 3)])
+                    "" if odd is None else round(float(odd), 3),
+                    "" if odd_real is None else round(float(odd_real), 3)])
 
 
 def carregar(path: Path | None = None) -> list[dict]:
@@ -133,6 +155,7 @@ class ResumoEnviados:
     pendentes: int = 0
     lucro: float = 0.0
     n_com_lucro: int = 0
+    n_odd_real: int = 0   # dicas resolvidas medidas a odd real do mercado
     por_mercado: list[LinhaMercado] = field(default_factory=list)
 
     @property
@@ -149,7 +172,7 @@ def _resultado_projeccao(r: dict, totais: dict) -> tuple[str, float | None]:
     if total == linha:
         return "push", 0.0
     ganhou = total > linha if lado == "over" else total < linha
-    odd = _float(r.get("odd"))
+    odd = _float(r.get("odd_real")) or _float(r.get("odd"))
     if odd is None or odd <= 1.0:
         return ("W" if ganhou else "L"), None
     return ("W", odd - 1.0) if ganhou else ("L", -1.0)
@@ -165,9 +188,10 @@ class DicaEnviada:
     linha: str
     odd: float | None
     resultado: str          # W | L | push | pendente
-    lucro: float | None
+    lucro: float | None     # a odd real quando havia, senao a odd indicada
     home: str = ""
     away: str = ""
+    odd_real: float | None = None
 
     @property
     def grupo(self) -> str:
@@ -210,20 +234,25 @@ def listar(inicio: datetime, fim: datetime, csv_sugestoes: Path,
                                          lucro=None))
                 continue
             m = (row.get("mercado") or "?").strip().lower()
+            resultado = (row.get("resultado") or "").strip() or "pendente"
+            odd_real = _float(r.get("odd_real"))
+            lucro = _float(row.get("lucro"))
+            if odd_real and resultado in ("W", "L", "push"):
+                lucro = {"W": odd_real - 1.0, "L": -1.0, "push": 0.0}[resultado]
             dicas.append(DicaEnviada(
                 ts=r["ts"], tipo="alerta", event_id=_int(row.get("event_id")),
                 mercado=_NOME_MERCADO.get(m, m), lado=(row.get("lado") or "").strip().lower(),
-                linha=(row.get("linha") or "").strip(), odd=_float(row.get("odd")),
-                resultado=(row.get("resultado") or "").strip() or "pendente",
-                lucro=_float(row.get("lucro")),
-                home=row.get("home") or "", away=row.get("away") or ""))
+                linha=(row.get("linha") or "").strip(), odd=odd_real or _float(row.get("odd")),
+                resultado=resultado, lucro=lucro,
+                home=row.get("home") or "", away=row.get("away") or "", odd_real=odd_real))
         else:  # projeccao, cartoes_fim: resolvidos pelo total final na BD
             m = (r.get("mercado") or "?").lower()
             res, lucro = _resultado_projeccao(r, totais_proj or {})
             dicas.append(DicaEnviada(
+                odd_real=_float(r.get("odd_real")),
                 ts=r["ts"], tipo=r["tipo"], event_id=_int(r.get("event_id")),
                 mercado=_NOME_MERCADO.get(m, m), lado=(r.get("lado") or "").lower(),
-                linha=(r.get("linha") or "").strip(), odd=_float(r.get("odd")),
+                linha=(r.get("linha") or "").strip(), odd=_float(r.get("odd_real")) or _float(r.get("odd")),
                 resultado=res, lucro=lucro))
     dicas.sort(key=lambda d: d.ts)
     return dicas
@@ -240,6 +269,8 @@ def resumir(inicio: datetime, fim: datetime, csv_sugestoes: Path,
         rel.n += 1
         if d.tipo == "projeccao":
             rel.n_projeccoes += 1
+        if d.odd_real and d.resultado in ("W", "L", "push"):
+            rel.n_odd_real += 1
         lm = mercados.setdefault(d.grupo, LinhaMercado(nome=d.grupo))
         if d.resultado == "W":
             rel.vitorias += 1
@@ -312,5 +343,9 @@ def formatar(rel: ResumoEnviados) -> str:
         icone = "🟢" if lm.lucro > 0 else ("🔴" if lm.lucro < 0 else "⚪")
         linhas.append(f"  {icone} {lm.nome}: {lm.vitorias}/{lm.vitorias + lm.derrotas}"
                       f" · {lm.lucro:+.2f} un")
-    linhas.append("  _1 un por dica, à odd indicada na mensagem._")
+    if rel.n_odd_real:
+        linhas.append(f"  _1 un por dica, à odd real do mercado em {rel.n_odd_real} de "
+                      f"{rel.vitorias + rel.derrotas + rel.push} (as outras à odd indicada)._")
+    else:
+        linhas.append("  _1 un por dica, à odd indicada na mensagem._")
     return "\n".join(linhas)

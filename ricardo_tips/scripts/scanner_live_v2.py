@@ -67,6 +67,7 @@ from apostas.modelos import cartoes_finais, correcao_ritmo, priors_equipas  # no
 from apostas.relatorios import alertas_enviados, csv_live, prime  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
+from apostas.ingestao import odds_live  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -941,11 +942,14 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 log.info("Projecao %s %s: skip — dica %s ja enviada neste jogo",
                          event_id, mercado, ref.lado)
                 continue
+            odd_r = _odd_real(event_id, mercado, ref.lado, ref.linha)
+            txt_odd = _texto_odd_real(odd_r)
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
                 extras=extras, roi_line=roi_line,
-                referencia=projecao_live.formatar_referencia(ref),
+                referencia=projecao_live.formatar_referencia(ref)
+                + (f"\n💶 {txt_odd}" if txt_odd else ""),
             )
             # Narrativa final mega-cerebro (previsao + certezas) tambem
             # nas projeccoes, igual aos sinais do analista.
@@ -987,7 +991,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
             try:
                 alertas_enviados.registar(
                     tipo="projeccao", event_id=event_id, mercado=mercado,
-                    lado=ref.lado, linha=ref.linha, odd=ref.odd_justa)
+                    lado=ref.lado, linha=ref.linha, odd=ref.odd_justa, odd_real=odd_r)
             except OSError as exc:
                 log.warning("Registo de projeccao enviada falhou: %s", exc)
 
@@ -1502,6 +1506,37 @@ def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo):
     return priors
 
 
+_ODDS_TTL_S = 120
+_odds_cache: dict[int, tuple[float, dict]] = {}
+
+
+def _odd_real(event_id, mercado: str, lado: str, linha) -> float | None:
+    """Odd real ao vivo (Sofascore) desta linha; so pedida quando uma dica vai
+    sair (1 pedido por jogo de 2 em 2 min no maximo)."""
+    if not event_id:
+        return None
+    eid = int(event_id)
+    agora = time.time()
+    hit = _odds_cache.get(eid)
+    if hit is None or agora - hit[0] >= _ODDS_TTL_S:
+        try:
+            odds = odds_live.obter(eid)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Odds live %s falharam: %s", eid, exc)
+            odds = {}
+        if len(_odds_cache) > 300:
+            for k in sorted(_odds_cache, key=lambda k: _odds_cache[k][0])[:150]:
+                _odds_cache.pop(k, None)
+        _odds_cache[eid] = hit = (agora, odds)
+    return odds_live.procurar(hit[1], mercado, lado, linha)
+
+
+def _texto_odd_real(odd_real: float | None) -> str:
+    """So informacao: o Ricardo decide no live; a odd do mercado nunca bloqueia
+    uma dica (fica guardada para medir o lucro real)."""
+    return f"Odd no mercado agora: *{odd_real:.2f}*" if odd_real else ""
+
+
 _historia_cartoes_cache: tuple[float, cartoes_finais.Historia] | None = None
 
 
@@ -1532,7 +1567,11 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
     sinal = cartoes_finais.avaliar(estado, prev, historia, fator_arbitro=f_arb, derbi=derbi)
     if sinal is None:
         return False
-    telegram_cliente().enviar(cartoes_finais.formatar_telegram(sinal, estado))
+    odd_r = _odd_real(estado.event_id, "cartoes", "over", sinal.linha)
+    texto = cartoes_finais.formatar_telegram(sinal, estado)
+    if odd_r is not None:
+        texto += f"\n💶 {_texto_odd_real(odd_r)}"
+    telegram_cliente().enviar(texto)
     _marcar_enviado(estado.event_id, "cartoes_fim", "over")
     log.info("Cartao no fim %s %s vs %s: OVER %.1f %.0f%% (historia %d jogos)",
              estado.event_id, estado.home, estado.away, sinal.linha, sinal.p1 * 100,
@@ -1540,7 +1579,7 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
     try:
         alertas_enviados.registar(tipo="cartoes_fim", event_id=estado.event_id,
                                   mercado="cartoes", lado="over", linha=sinal.linha,
-                                  odd=sinal.odd_justa)
+                                  odd=sinal.odd_justa, odd_real=odd_r)
     except OSError as exc:
         log.warning("Registo do cartao no fim falhou: %s", exc)
     return True
@@ -2316,7 +2355,15 @@ def _correr_ciclo(args) -> None:
                         continue
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Fichas fortes check falhou: %s", exc)
-                # 💎 PRIME: a historia garante >= 92% neste tipo de dica.
+                # Odd real do mercado (Sofascore): so informacao + medir lucro real.
+                if s.get("casa") == "ANALISTA":
+                    try:
+                        odd_r = _odd_real(event_id, mercado, lado, linha)
+                    except Exception:  # noqa: BLE001
+                        odd_r = None
+                    if odd_r is not None:
+                        s["odd_real"], s["odd_real_txt"] = odd_r, _texto_odd_real(odd_r)
+                # 💎 PRIME: tipo de dica que ja provou dar lucro.
                 try:
                     g_prime = _prime_live().grupo_prime(
                         mercado, lado, s.get("minuto"), s.get("prob_bruta", s.get("prob_modelo")))
@@ -2329,7 +2376,7 @@ def _correr_ciclo(args) -> None:
                     alertas_enviados.registar(
                         s.get("alert_id"), event_id=event_id, mercado=mercado, lado=lado,
                         linha=linha if linha not in ("", None) else None,
-                        odd=s.get("odd") or None)
+                        odd=s.get("odd") or None, odd_real=s.get("odd_real"))
                 except OSError as exc:
                     log.warning("Registo de alerta enviado falhou: %s", exc)
                 _marcar_enviado(event_id, mercado, lado, linha)

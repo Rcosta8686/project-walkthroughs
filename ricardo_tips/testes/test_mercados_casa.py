@@ -36,6 +36,7 @@ def test_projeccao_de_remates_a_baliza_na_segunda_divisao_nao_sai(monkeypatch):
     monkeypatch.setattr(sc, "_gravar_projecao_db", lambda *a: None)
     monkeypatch.setattr(sc, "_calibrador_live", lambda: Calibrador())
     monkeypatch.setattr(sc, "_cortes_live", lambda: Cortes())
+    monkeypatch.setattr(sc, "_odd_real", lambda *a: None)
     monkeypatch.setattr(sc, "telegram_cliente", lambda: SimpleNamespace(enviar=enviadas.append))
     monkeypatch.setattr(sc.alertas_enviados, "registar", lambda **kw: None)
     sc._projecoes_enviadas.clear()

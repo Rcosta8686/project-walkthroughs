@@ -6,7 +6,9 @@
    O que ja esta na BD e saltado.
 2. Corre o resolver para os alertas desses dias (resultado, lucro e
    estatisticas dos jogos com projeccao).
-3. Recalcula a correccao do ritmo do resto do jogo (correcao_ritmo.json).
+3. Recalcula a correccao do ritmo do resto do jogo (correcao_ritmo.json),
+   a historia do cartao no fim e os grupos PRIME.
+4. Copia de seguranca da BD e de dados/tracking (dados/backups, 7 dias).
 
 Uso:
   venv\\Scripts\\python.exe scripts\\incremento_diario.py
@@ -92,6 +94,12 @@ def main() -> None:
         print("\n" + prime.formatar(prime.recalcular_e_gravar()))
     except Exception as exc:  # noqa: BLE001
         log.warning("PRIME falhou: %s", exc)
+    # 6. Copia de seguranca diaria (BD + dados/tracking, ultimos 7 dias).
+    try:
+        from apostas.utils.backup import fazer_backup
+        print("\n" + fazer_backup().texto())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Copia de seguranca falhou: %s", exc)
 
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

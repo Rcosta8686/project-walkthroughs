@@ -61,3 +61,6 @@ Thumbs.db
 # Configuracao do verificador de codigo (versionada)
 !pyrightconfig.json
 !testes/pyright_baseline.json
+
+# Copias de seguranca diarias (incremento das 00:15)
+dados/backups/
