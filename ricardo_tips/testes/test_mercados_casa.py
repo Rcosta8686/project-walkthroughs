@@ -40,6 +40,7 @@ def test_projeccao_de_remates_a_baliza_na_segunda_divisao_nao_sai(monkeypatch):
     monkeypatch.setattr(sc.alertas_enviados, "registar", lambda **kw: None)
     sc._projecoes_enviadas.clear()
     sc._primeiro_minuto_visto.clear()
+    sc._cooldown.clear()
     estado = SimpleNamespace(event_id=78, minuto=56, liga="2. Bundesliga", home="Osnabrück",
                              away="Kaiserslautern", home_id=None, away_id=None,
                              marcador_casa=0, marcador_fora=0,

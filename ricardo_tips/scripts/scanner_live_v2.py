@@ -31,7 +31,7 @@ import argparse
 import csv
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Forca UTF-8 (Windows cp1252 nao aceita emojis quando stdout e redirecionado)
@@ -79,7 +79,10 @@ log = get_logger(__name__)
 # dentro da janela de cooldown.
 # Impede re-notificar o mesmo sinal dentro de COOLDOWN_MIN minutos.
 _cooldown: dict[tuple, datetime] = {}
-COOLDOWN_MIN = 30
+# Uma vez por jogo: 3h cobre o jogo inteiro (com intervalo e descontos). Com
+# 30 min o Ricardo recebia a mesma dica outra vez mais tarde no jogo (Rennes
+# OVER remates aos 45' e aos 63', Wrexham, Lens) — repeticao e ruido.
+COOLDOWN_MIN = 180
 
 # Projeccoes ja enviadas: event_id -> set(minutos_target: {40, 55, 70})
 # Impede enviar duas vezes a projeccao do mesmo target no mesmo jogo.
@@ -201,8 +204,7 @@ def _em_cooldown(event_id, mercado, lado, linha=None) -> bool:
     A linha e ignorada: OVER 6.5 e OVER 8.5 do mesmo jogo+mercado+lado
     sao o mesmo "sinal" para o utilizador — nao enviar outra vez por 30 min.
     """
-    key = (str(event_id), mercado, lado)
-    ts = _cooldown.get(key)
+    ts = _cooldown.get(_chave_cooldown(event_id, mercado, lado))
     if ts is None:
         return False
     return (agora_utc() - ts).total_seconds() < COOLDOWN_MIN * 60
@@ -210,8 +212,27 @@ def _em_cooldown(event_id, mercado, lado, linha=None) -> bool:
 
 def _marcar_enviado(event_id, mercado, lado, linha=None) -> None:
     """Guarda o envio por (event_id, mercado, lado) — linha ignorada."""
-    key = (str(event_id), mercado, lado)
-    _cooldown[key] = agora_utc()
+    _cooldown[_chave_cooldown(event_id, mercado, lado)] = agora_utc()
+
+
+def _chave_cooldown(event_id, mercado, lado) -> tuple:
+    """Alertas e projeccoes partilham a chave ("sot" das projeccoes = "remates_a_baliza"
+    dos alertas): a mesma aposta nao chega duas vezes por caminhos diferentes."""
+    return (str(event_id), corte_mercados.canonico(mercado or ""), (lado or "").lower())
+
+
+def _carregar_cooldown_do_registo() -> int:
+    """Depois de um restart, os alertas enviados nas ultimas COOLDOWN_MIN
+    voltam ao cooldown (lidos do registo de enviados): sem isto um restart a
+    meio de um jogo repetia a dica."""
+    limite = agora_utc() - timedelta(minutes=COOLDOWN_MIN)
+    n = 0
+    for r in alertas_enviados.carregar():
+        if r["ts"] < limite or not r.get("event_id") or not r.get("mercado"):
+            continue
+        _cooldown[_chave_cooldown(r["event_id"], r["mercado"], r.get("lado"))] = r["ts"]
+        n += 1
+    return n
 
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
@@ -914,6 +935,11 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
                 log.info("Projecao %s %s: skip — sem mercado na casa em %s",
                          event_id, mercado, estado.liga)
                 continue
+            # A mesma aposta ja saiu neste jogo (alerta ou projeccao anterior).
+            if _em_cooldown(event_id, mercado, ref.lado):
+                log.info("Projecao %s %s: skip — dica %s ja enviada neste jogo",
+                         event_id, mercado, ref.lado)
+                continue
             msg = projecao_live.formatar_telegram(
                 proj, estado.home, estado.away,
                 estado.marcador_casa, estado.marcador_fora,
@@ -956,6 +982,7 @@ def _enviar_projecoes_jogo(estado, prev, enviar_telegram: bool,
             except Exception as exc:  # noqa: BLE001
                 log.warning("Telegram projecao erro: %s", exc)
                 continue
+            _marcar_enviado(event_id, mercado, ref.lado)
             try:
                 alertas_enviados.registar(
                     tipo="projeccao", event_id=event_id, mercado=mercado,
@@ -2207,7 +2234,10 @@ def _correr_ciclo(args) -> None:
                     log.debug("Fichas fortes check falhou: %s", exc)
                 telegram_live.enviar_sugestao_live(s)
                 try:
-                    alertas_enviados.registar(s.get("alert_id"))
+                    alertas_enviados.registar(
+                        s.get("alert_id"), event_id=event_id, mercado=mercado, lado=lado,
+                        linha=linha if linha not in ("", None) else None,
+                        odd=s.get("odd") or None)
                 except OSError as exc:
                     log.warning("Registo de alerta enviado falhou: %s", exc)
                 _marcar_enviado(event_id, mercado, lado, linha)
@@ -2276,6 +2306,12 @@ def main() -> None:
     mortos = garantir_instancia_unica("scanner_live_v2.py")
     if mortos:
         print(f"  Terminados {len(mortos)} scanner(s) antigo(s): {mortos}")
+    try:
+        n_cd = _carregar_cooldown_do_registo()
+        if n_cd:
+            log.info("Cooldown: %d dicas enviadas recentemente nao se repetem", n_cd)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Cooldown a partir do registo falhou: %s", exc)
     # Que versao do codigo esta a correr: um scanner que nao foi reiniciado
     # depois do git pull continua com o codigo antigo em memoria.
     from apostas.utils.versao import versao_codigo

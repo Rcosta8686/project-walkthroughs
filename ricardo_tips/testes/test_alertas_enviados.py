@@ -162,7 +162,7 @@ def test_narrativa_usa_a_projeccao_do_modelo():
     assert "projeccao 8.2" in narrativa_final(s)
 
 
-def _correr_projeccao(monkeypatch, sot, cantos, cortes=None):
+def _correr_projeccao(monkeypatch, sot, cantos, cortes=None, limpar_cooldown=True):
     import scanner_live_v2 as sc
     from types import SimpleNamespace
     from apostas.modelos.calibrador_mercado import Calibrador
@@ -180,6 +180,8 @@ def _correr_projeccao(monkeypatch, sot, cantos, cortes=None):
                         lambda **kw: registadas.append(kw))
     sc._projecoes_enviadas.clear()
     sc._primeiro_minuto_visto.clear()
+    if limpar_cooldown:
+        sc._cooldown.clear()
     estado = SimpleNamespace(event_id=77, minuto=56, liga="Serie A", home="Lecce", away="Genoa",
                              home_id=None, away_id=None, marcador_casa=0, marcador_fora=0,
                              shots_on_target_casa=sot[0], shots_on_target_fora=sot[1],
@@ -197,3 +199,16 @@ def test_scanner_projeccao_enviada_traz_aposta_de_referencia_e_fica_registada(mo
     r = registadas[0]
     assert r["tipo"] == "projeccao" and r["event_id"] == 77
     assert r["lado"] in ("over", "under") and r["linha"] % 1 == 0.5 and r["odd"] > 1.0
+
+
+def test_scanner_projeccao_da_mesma_aposta_nao_sai_duas_vezes_no_jogo(monkeypatch):
+    import scanner_live_v2 as sc
+    sc._cooldown.clear()
+    primeira, _ = _correr_projeccao(monkeypatch, (3, 2, 5.5, 4.0), (4, 3, 6.5, 5.0))
+    assert len(primeira) == 2
+    # 15 min depois (janela seguinte) as mesmas apostas de referencia: nada sai
+    sc._projecoes_enviadas.clear()
+    segunda, _ = _correr_projeccao(monkeypatch, (3, 2, 5.5, 4.0), (4, 3, 6.5, 5.0),
+                                   limpar_cooldown=False)
+    assert segunda == []
+    sc._cooldown.clear()
