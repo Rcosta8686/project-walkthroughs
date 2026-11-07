@@ -112,7 +112,8 @@ def _estado_de_snapshot(sn):
 
 
 _COLUNAS_EEJ = ("sofascore_event_id", "sofascore_team_id", "data_jogo", "era_casa",
-                "golos_marcados", "golos_sofridos", "remates", "sot", "cantos", "cards_amarelos")
+                "golos_marcados", "golos_sofridos", "remates", "sot", "cantos", "cards_amarelos",
+                "arbitro")
 _DIAS_HISTORICO = 150  # para os priors dos jogos mais antigos da janela
 
 
@@ -135,7 +136,8 @@ def _jogos_acabados(linhas) -> dict[int, dict]:
             if a is not None and b is not None:
                 totais[mercado] = float(a) + float(b)
         out[eid] = {"totais": totais, "casa": int(casa.sofascore_team_id),
-                    "fora": int(fora.sofascore_team_id), "data": casa.data_jogo}
+                    "fora": int(fora.sofascore_team_id), "data": casa.data_jogo,
+                    "arbitro": getattr(casa, "arbitro", None) or getattr(fora, "arbitro", None)}
     return out
 
 
@@ -156,6 +158,8 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
         select(*[getattr(EEJ, c) for c in _COLUNAS_EEJ])
         .where(EEJ.data_jogo >= desde - timedelta(days=_DIAS_HISTORICO))).all()
     historico = HistoricoEquipas(linhas)
+    from apostas.modelos.arbitros import HistoricoArbitros
+    arbitros = HistoricoArbitros(linhas)
     jogos = {e: j for e, j in _jogos_acabados(linhas).items()
              if j["data"] is not None and j["data"] >= desde - timedelta(days=1)}
     if not jogos:
@@ -181,8 +185,11 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
         vistos.add(chave)
         jogo = jogos[chave[0]]
         if chave[0] not in priors_cache:  # so jogos de ANTES deste
-            priors_cache[chave[0]] = historico.priors(jogo["casa"], jogo["fora"],
-                                                      antes=jogo["data"])
+            pr = historico.priors(jogo["casa"], jogo["fora"], antes=jogo["data"])
+            arb = arbitros.perfil(jogo.get("arbitro") or sn.arbitro, antes=jogo["data"])
+            if pr is not None and arb is not None:
+                pr = replace(pr, fator_arbitro=arb.fator)
+            priors_cache[chave[0]] = pr
         priors = priors_cache[chave[0]]
         try:
             estado = _estado_de_snapshot(sn)

@@ -32,12 +32,16 @@ class PriorsJogo:
     remates_fora: float
     n_casa: int           # jogos usados de cada equipa
     n_fora: int
+    fator_arbitro: float | None = None   # mini-cerebro dos arbitros, se conhecido
 
     def kwargs(self) -> dict:
         """Argumentos para live_predictor.prever."""
-        return {"lam_golos_pre": self.golos, "lam_cantos_pre": self.cantos,
-                "lam_cartoes_pre": self.cartoes,
-                "remates_pre": (self.remates_casa, self.remates_fora)}
+        kw = {"lam_golos_pre": self.golos, "lam_cantos_pre": self.cantos,
+              "lam_cartoes_pre": self.cartoes,
+              "remates_pre": (self.remates_casa, self.remates_fora)}
+        if self.fator_arbitro is not None:
+            kw["fator_arbitro"] = self.fator_arbitro
+        return kw
 
 
 def _v(row, attr: str) -> float | None:

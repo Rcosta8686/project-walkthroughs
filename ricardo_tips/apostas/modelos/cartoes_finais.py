@@ -188,9 +188,11 @@ class SinalCartoesFim:
 
 
 def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
-            derbi: bool = False) -> SinalCartoesFim | None:
+            derbi: bool = False, arbitro_txt: str | None = None,
+            ajuste_lam: float = 1.0) -> SinalCartoesFim | None:
     """None se o momento nao serve (fora da janela, jogo decidido, pouca tensao
-    ou as duas fontes nao concordam)."""
+    ou as duas fontes nao concordam). ajuste_lam corrige os cartoes previstos
+    quando o arbitro real (nossos jogos) difere do que o modelo usou."""
     from apostas.relatorios.prime import wilson_inferior
     minuto = int(estado.minuto or 0)
     mc, mf = int(estado.marcador_casa or 0), int(estado.marcador_fora or 0)
@@ -206,8 +208,12 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
         extra.append(f"faltas acima do normal ({fc + ff} ao {minuto}')")
     if (yc + yf) / minuto * 90 >= CARTOES_QUENTES_POR_90:
         extra.append(f"cartoes ja a sair ({yc + yf} amarelos)")
+    if fator_arbitro <= 0.9 and arbitro_txt:  # permissivo: so informa, nao conta como tensao
+        razoes.append(f"atencao: {arbitro_txt} ({(fator_arbitro - 1) * 100:.0f}% que o normal)")
     if fator_arbitro >= 1.05:
-        extra.append(f"arbitro rigoroso (+{(fator_arbitro - 1) * 100:.0f}% cartoes)")
+        extra.append(f"{arbitro_txt} (+{(fator_arbitro - 1) * 100:.0f}% que o normal)"
+                     if arbitro_txt else
+                     f"arbitro rigoroso (+{(fator_arbitro - 1) * 100:.0f}% cartoes)")
     if derbi:
         extra.append("derbi")
     if vermelhos:
@@ -219,7 +225,7 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
         return None
     razoes += extra
 
-    lam = float(prev.lam_cartoes_amarelos_restantes)
+    lam = float(prev.lam_cartoes_amarelos_restantes) * ajuste_lam
     p1_modelo, p2_modelo = _p_mais(lam, 1), _p_mais(lam, 2)
     achado = historia.procurar(minuto, mc, mf, fc, ff)
     if achado is None:

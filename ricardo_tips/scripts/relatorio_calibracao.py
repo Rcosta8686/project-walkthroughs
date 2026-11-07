@@ -62,6 +62,13 @@ def main() -> None:
     texto += "\n\n" + cartoes_finais.formatar_historia(cartoes_finais.ler())
     from apostas.relatorios import prime
     texto += "\n\n" + prime.formatar(prime.ler())
+    try:
+        from apostas.modelos import arbitros
+        from apostas.utils.db import abrir_sessao
+        with abrir_sessao() as sess:
+            texto += "\n\n" + arbitros.formatar_ranking(arbitros.da_bd(sess))
+    except Exception as exc:  # noqa: BLE001
+        texto += f"\n\n(arbitros: nao consegui ler a BD — {exc})"
     print(texto)
 
     if args.telegram:

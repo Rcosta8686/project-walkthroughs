@@ -305,6 +305,7 @@ def prever(
     ajustes_cerebro=None,
     ritmo_suavizado=(),
     remates_pre: tuple[float, float] | None = None,
+    fator_arbitro: float | None = None,
 ) -> PrevisaoLive:
     """Devolve previsao de eventos restantes para um jogo in-play.
 
@@ -445,11 +446,14 @@ def prever(
     fator_red_cards = 1.0 + 0.25 * reds
 
     # NOVO: fator arbitro
-    try:
-        from apostas.modelos.referencias import fator_arbitro
-        fator_arb = fator_arbitro(estado.arbitro)
-    except Exception:  # noqa: BLE001
-        fator_arb = 1.0
+    if fator_arbitro is not None:  # mini-cerebro dos arbitros (nossos jogos)
+        fator_arb = fator_arbitro
+    else:
+        try:
+            from apostas.modelos.referencias import fator_arbitro as _fator_fixo
+            fator_arb = _fator_fixo(estado.arbitro)
+        except Exception:  # noqa: BLE001
+            fator_arb = 1.0
 
     # NOVO: fator rivalidade (derby = +15%)
     try:

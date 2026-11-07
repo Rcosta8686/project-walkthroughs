@@ -63,7 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
-from apostas.modelos import cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
+from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live, prime  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -1496,6 +1496,10 @@ def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo):
         with abrir_sessao() as s:
             hist = priors_equipas.carregar_do_bd(s, [int(estado.home_id), int(estado.away_id)])
             priors = hist.priors(int(estado.home_id), int(estado.away_id))
+        arb = arbitros.perfil_live(getattr(estado, "arbitro", None))
+        if priors is not None and arb is not None:
+            import dataclasses
+            priors = dataclasses.replace(priors, fator_arbitro=arb.fator)
     except Exception as exc:  # noqa: BLE001
         log.debug("Priors %s falharam: %s", eid, exc)
         priors = None
@@ -1549,6 +1553,18 @@ def _historia_cartoes_live() -> cartoes_finais.Historia:
     return _historia_cartoes_cache[1]
 
 
+def _ajuste_arbitro_cartoes(estado, fator_bd: float) -> float:
+    """Quanto corrigir os cartoes previstos com o arbitro real da BD. Se o
+    modelo de cartoes ja usa a versao 'equipas' (que inclui o arbitro da BD),
+    nada a corrigir; senao troca o fator da lista fixa pelo da BD."""
+    from apostas.modelos import referencias
+    ritmo = _ritmo_live()
+    if ritmo.bases.get("cartoes") == "equipas" and _priors_jogo(estado, ritmo) is not None:
+        return 1.0
+    fixo = referencias.fator_arbitro(getattr(estado, "arbitro", None)) or 1.0
+    return fator_bd / fixo
+
+
 def _alerta_cartoes_fim(estado, prev) -> bool:
     """Envia o 'cartao no fim' uma vez por jogo quando modelo e historia concordam."""
     if cartoes_finais.fase_de(int(estado.minuto or 0)) is None:
@@ -1559,12 +1575,19 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
     if not historia.taxas:
         return False
     from apostas.modelos import referencias
+    arb_txt, ajuste = None, 1.0
     try:
-        f_arb = referencias.fator_arbitro(estado.arbitro)
+        arb = arbitros.perfil_live(getattr(estado, "arbitro", None))
+        if arb is not None:  # mini-cerebro dos arbitros (nossos jogos)
+            f_arb, arb_txt = arb.fator, arb.texto()
+            ajuste = _ajuste_arbitro_cartoes(estado, arb.fator)
+        else:
+            f_arb = referencias.fator_arbitro(estado.arbitro)
         derbi = referencias.eh_derby(estado.home, estado.away)
     except Exception:  # noqa: BLE001
         f_arb, derbi = 1.0, False
-    sinal = cartoes_finais.avaliar(estado, prev, historia, fator_arbitro=f_arb, derbi=derbi)
+    sinal = cartoes_finais.avaliar(estado, prev, historia, fator_arbitro=f_arb, derbi=derbi,
+                                   arbitro_txt=arb_txt, ajuste_lam=ajuste)
     if sinal is None:
         return False
     odd_r = _odd_real(estado.event_id, "cartoes", "over", sinal.linha)
