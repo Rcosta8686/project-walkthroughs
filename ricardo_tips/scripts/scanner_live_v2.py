@@ -1502,10 +1502,11 @@ _PRIORS_TTL_S = 6 * 3600
 _priors_cache: dict[int, tuple[float, "priors_equipas.PriorsJogo | None"]] = {}
 
 
-def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo):
+def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo, forcar: bool = False):
     """O normal deste jogo segundo os mini-cerebros das duas equipas (uma vez
-    por jogo). So quando algum mercado usa a versao 'equipas' do modelo."""
-    if not ritmo.com_equipas or estado.home_id is None or estado.away_id is None:
+    por jogo). So quando algum mercado usa a versao 'equipas' do modelo (ou
+    `forcar`: para dividir o jogo entre as equipas)."""
+    if (not ritmo.com_equipas and not forcar) or estado.home_id is None or estado.away_id is None:
         return None
     eid = int(estado.event_id)
     agora = time.time()
@@ -1626,6 +1627,25 @@ def _texto_subs(estado) -> str:
     return ("🔄 Substituicoes: " + " · ".join(partes)) if partes else ""
 
 
+def _versoes_divisao(estado, versao: str | None) -> dict:
+    """A versao do modelo que divide melhor o jogo entre as equipas."""
+    if versao not in ("antigo", "suave", "equipas"):
+        return {}
+    try:
+        todos = live_predictor.MERCADOS_SUAVIZAVEIS
+        if versao == "antigo":
+            return {versao: live_predictor.prever(estado)}
+        if versao == "suave":
+            return {versao: live_predictor.prever(estado, ritmo_suavizado=todos)}
+        priors = _priors_jogo(estado, _ritmo_live(), forcar=True)
+        if priors is None:
+            return {}
+        return {versao: live_predictor.prever(estado, ritmo_suavizado=todos, **priors.kwargs())}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Versao %s para a divisao falhou: %s", versao, exc)
+        return {}
+
+
 def _texto_equipas(estado, prev, mercado: str) -> str:
     """Quanto cada equipa vai acabar (com o treinador de cada uma na 2a parte)
     + o que o treinador costuma fazer + as substituicoes que ja fez."""
@@ -1650,8 +1670,9 @@ def _texto_equipas(estado, prev, mercado: str) -> str:
                 frase = perfil_treinador.texto(nome, sit, m, f)
                 if frase:
                     razoes.append(f"🧑‍🏫 {frase}")
+    versoes = _versoes_divisao(estado, precisao.divisao.get(m))
     linhas = [precisao_equipas.texto_equipas(estado, prev, precisao, m,
-                                             (fatores[0], fatores[1])),
+                                             (fatores[0], fatores[1]), versoes),
               *razoes, _texto_subs(estado)]
     return "\n".join(x for x in linhas if x)
 

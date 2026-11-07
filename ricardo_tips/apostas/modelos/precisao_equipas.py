@@ -46,6 +46,12 @@ ACTUAL = {"golos": ("marcador_casa", "marcador_fora"),
 _PROJ = {"cantos": ("projeccao_cantos_casa", "projeccao_cantos_fora"),
          "remates": ("projeccao_shots_casa", "projeccao_shots_fora"),
          "remates_a_baliza": ("projeccao_sot_casa", "projeccao_sot_fora")}
+# Total que falta (o do ritmo, ja medido) por mercado, na PrevisaoLive.
+LAM = {"golos": "lam_golos_restantes", "cantos": "lam_cantos_restantes",
+       "cartoes": "lam_cartoes_amarelos_restantes", "remates": "lam_shots_restantes",
+       "remates_a_baliza": "lam_shots_on_target_restantes"}
+VERSOES = ("antigo", "suave", "equipas")
+_TOTAL_VERSAO = {"antigo": "previsto", "suave": "previsto_suave", "equipas": "previsto_equipas"}
 SITUACOES = ("a ganhar", "empate", "a perder")
 POSTURAS = ("ofensiva", "defensiva", "neutra")
 K_ENCOLHIMENTO = 50
@@ -157,6 +163,10 @@ class Precisao:
     ativos_equipa: list[str] = field(default_factory=list)             # camada 4 ligada
     ganhos: dict[str, dict[str, float]] = field(default_factory=dict)  # mercado -> camada -> %
     diagnostico: dict[str, dict[str, float]] = field(default_factory=dict)  # todas, ligadas ou nao
+    # Como dividir o que falta entre as duas equipas: a versao do modelo que
+    # divide melhor (pode nao ser a que acerta melhor o total).
+    divisao: dict[str, str] = field(default_factory=dict)
+    ganho_divisao: dict[str, float] = field(default_factory=dict)
     teste: dict[str, Metricas] = field(default_factory=dict)           # modelo final
     teste_sem: dict[str, Metricas] = field(default_factory=dict)       # sem as camadas
     por_fase: dict[str, dict[str, Metricas]] = field(default_factory=dict)
@@ -195,22 +205,45 @@ class Precisao:
 
 # ─── Registos por equipa (os pares vem de correcao_ritmo.pares_da_bd) ─────
 
-def previsoes(pares: list[dict], ritmo) -> list[dict]:
-    """Um registo por (momento, mercado, equipa): previsao do modelo actual
-    (versao escolhida x multiplicador do ritmo) e o que faltava de facto."""
+def _quota(p: dict, lado: str, versao: str) -> float:
+    """Parte do que falta que vai para esta equipa, segundo uma versao."""
+    c, f = p.get(f"c_{versao}"), p.get(f"f_{versao}")
+    if c is None or f is None:
+        c, f = p.get("c_antigo", 0.0), p.get("f_antigo", 0.0)
+    s = c + f
+    if s <= 0:
+        return 0.5
+    return (c if lado == "c" else f) / s
+
+
+def _total(p: dict, versao: str) -> float:
+    v = p.get(_TOTAL_VERSAO[versao])
+    if v is None:  # pares sem total: soma das equipas dessa versao
+        c, f = p.get(f"c_{versao}"), p.get(f"f_{versao}")
+        if c is None or f is None:
+            c, f = p.get("c_antigo", 0.0), p.get("f_antigo", 0.0)
+        v = c + f
+    return float(v)
+
+
+def previsoes(pares: list[dict], ritmo, divisao: dict[str, str] | None = None) -> list[dict]:
+    """Um registo por (momento, mercado, equipa): o total que falta do modelo
+    actual (versao escolhida x multiplicador do ritmo) dividido pelas duas
+    equipas segundo `divisao` (por defeito a mesma versao), e o real."""
     out = []
     for p in pares:
         if "c_real" not in p:
             continue
         m = p["mercado"]
         base = ritmo.bases.get(m, "antigo")
-        k = ritmo.mult(m, p["janela"])
+        total = _total(p, base) * ritmo.mult(m, p["janela"])
+        versao_div = (divisao or {}).get(m, base)
         for lado, outro in (("c", "f"), ("f", "c")):
             out.append({
                 "mercado": m, "janela": p["janela"], "data": p.get("data"),
                 "sit": situacao(p[f"m{lado}"], p[f"m{outro}"]),
                 "atual": p[f"{lado}_atual"], "real": p[f"{lado}_real"],
-                "resto": p.get(f"{lado}_{base}", p.get(f"{lado}_antigo", 0.0)) * k,
+                "resto": total * _quota(p, lado, versao_div),
                 "treinador": p.get(f"{lado}_treinador", 1.0) or 1.0,
                 "post": p.get(f"{lado}_postura"),
                 "team": (str(p[f"{lado}_id"]) if p.get(f"{lado}_id") is not None else None),
@@ -276,17 +309,35 @@ def _ganho(sem: Metricas | None, com: Metricas | None) -> float | None:
 def calcular(pares: list[dict], ritmo, anterior: Precisao | None = None,
              agora: datetime | None = None) -> Precisao:
     agora = agora or datetime.now()
-    regs = sorted(previsoes(pares, ritmo), key=lambda r: str(r["data"] or ""))
     p = Precisao(calculado_em=agora.isoformat(timespec="seconds"),
                  historia=list((anterior.historia if anterior else [])[-MANTER_HISTORIA:]))
+
+    def um(_r) -> float:
+        return 1.0
+
+    def ordenar(rs: list[dict]) -> list[dict]:
+        return sorted(rs, key=lambda r: str(r["data"] or ""))
+    # 0. Que versao divide melhor o jogo entre as duas equipas (nos mais recentes).
+    erro_div: dict[str, dict[str, Metricas]] = {}
+    for v in VERSOES:
+        rs = ordenar(previsoes(pares, ritmo, {m: v for m in MERCADOS}))
+        erro_div[v] = _metricas(rs[int(len(rs) * FRAC_TREINO):], um)
+    for m in MERCADOS:
+        atual = ritmo.bases.get(m, "antigo")
+        ref = erro_div.get(atual, {}).get(m)
+        if ref is None or ref.n < MIN_TESTE:
+            continue
+        melhor = min(VERSOES, key=lambda v: erro_div[v][m].mae if m in erro_div[v] else 1e9)
+        g = 1 - erro_div[melhor][m].mae / ref.mae if ref.mae else 0.0
+        if melhor != atual and g > 0.01:
+            p.divisao[m] = melhor
+            p.ganho_divisao[m] = round(g, 4)
+    regs = ordenar(previsoes(pares, ritmo, p.divisao))
     if not regs:
         return p
     # Aprende nos mais antigos, testa nos mais recentes que nao viu.
     corte = int(len(regs) * FRAC_TREINO)
     treino, teste = regs[:corte], regs[corte:]
-
-    def um(_r) -> float:
-        return 1.0
     p.teste_sem = _metricas(teste, um)
     # Camada 1: situacao.
     m1 = _treinar(treino, "sit", um)
@@ -409,15 +460,22 @@ def _exemplos(regs: list[dict], fator, n: int = 4) -> list[str]:
 # ─── Ao vivo ───────────────────────────────────────────────────────────────
 
 def prever_final(estado, prev, precisao: Precisao, mercado: str,
-                 treinador: tuple[float, float] = (1.0, 1.0)) -> dict | None:
+                 treinador: tuple[float, float] = (1.0, 1.0),
+                 versoes: dict | None = None) -> dict | None:
     """Previsao final de cada equipa com intervalo: {"casa": (v, lo, hi), "fora": ...}.
-    `treinador`: fator do perfil do treinador de cada equipa (2a parte)."""
+    `treinador`: fator do perfil do treinador de cada equipa (2a parte).
+    `versoes`: PrevisaoLive de cada versao ("antigo"/"suave"/"equipas"), para
+    dividir o total pelas equipas como a medicao mostrou que divide melhor."""
     if mercado not in MERCADOS:
         return None
     from apostas.ingestao.sofascore_live import dados_disponiveis
     if not dados_disponiveis(estado, mercado):
         return None
-    rc, rf = restantes(prev, estado, mercado)
+    total = max(0.0, _n(getattr(prev, LAM[mercado], 0.0)))
+    prev_div = (versoes or {}).get(precisao.divisao.get(mercado, ""), prev)
+    qc, qf = restantes(prev_div, estado, mercado)
+    quota_c = qc / (qc + qf) if qc + qf > 0 else 0.5
+    rc, rf = total * quota_c, total * (1 - quota_c)
     mc, mf = _n(estado.marcador_casa), _n(estado.marcador_fora)
     lo, hi = precisao.intervalo(mercado, int(estado.minuto or 0))
     segunda = int(estado.minuto or 0) >= MINUTO_TREINADOR
@@ -440,9 +498,10 @@ def _intervalo_txt(v: float, lo: float, hi: float) -> str:
 
 
 def texto_equipas(estado, prev, precisao: Precisao, mercado: str,
-                  treinador: tuple[float, float] = (1.0, 1.0)) -> str:
+                  treinador: tuple[float, float] = (1.0, 1.0),
+                  versoes: dict | None = None) -> str:
     """'📏 Ate ao fim: Porto 10 (9-11) · Benfica 3 (2-4) remates a baliza'."""
-    pf = prever_final(estado, prev, precisao, mercado, treinador)
+    pf = prever_final(estado, prev, precisao, mercado, treinador, versoes)
     if not pf:
         return ""
     m = precisao.teste.get(mercado)
@@ -475,6 +534,7 @@ def ler(path: Path | None = None) -> Precisao:
             mults_postura=d.get("mults_postura", {}), ativos_postura=d.get("ativos_postura", []),
             mults_equipa=d.get("mults_equipa", {}), ativos_equipa=d.get("ativos_equipa", []),
             ganhos=d.get("ganhos", {}), diagnostico=d.get("diagnostico", {}),
+            divisao=d.get("divisao", {}), ganho_divisao=d.get("ganho_divisao", {}),
             teste={m: Metricas(**x) for m, x in d.get("teste", {}).items()},
             teste_sem={m: Metricas(**x) for m, x in d.get("teste_sem", {}).items()},
             por_fase={m: {j: Metricas(**x) for j, x in js.items()}
@@ -495,6 +555,10 @@ _NOME_CAMADA = {"situacao": "situacao (a ganhar/empate/a perder)",
                 "treinador": "treinador de cada equipa na 2a parte",
                 "substituicoes": "substituicoes ofensivas/defensivas",
                 "equipa": "erro proprio de cada equipa"}
+
+
+_NOME_VERSAO = {"antigo": "calculo antigo", "suave": "normal generico",
+                "equipas": "normal de cada equipa (mini-cerebros)"}
 
 
 def _diagnostico_txt(p: Precisao, m: str) -> str:
@@ -542,6 +606,9 @@ def formatar(p: Precisao) -> str:
             linhas.append("      por fase: " + " ".join(
                 f"{j}' {f.taxa_dentro1 * 100:.0f}%" + (f"/{f.teto * 100:.0f}" if f.teto else "")
                 for j, f in sorted(fases.items(), key=lambda kv: int(kv[0])) if f.n >= 20))
+        if m in p.divisao:
+            linhas.append(f"      divisao entre as equipas: {_NOME_VERSAO[p.divisao[m]]} "
+                          f"(erro -{p.ganho_divisao.get(m, 0) * 100:.0f}%)")
         linhas.append("      camadas: " + _diagnostico_txt(p, m))
         for camada, g in p.ganhos.get(m, {}).items():
             extra = ""

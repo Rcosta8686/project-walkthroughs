@@ -19,11 +19,20 @@ AGORA = datetime(2026, 11, 7, 22)
 
 
 def _prev(**kw):
+    """PrevisaoLive de teste; os totais que faltam batem com o estado de _estado()
+    (6-3 cantos, 11-6 remates, 5-2 a baliza)."""
     base = dict(lam_golos_casa_rest=0.6, lam_golos_fora_rest=0.3,
                 lam_cartoes_amarelos_restantes=2.0, projeccao_cantos_casa=8.0,
                 projeccao_cantos_fora=4.0, projeccao_shots_casa=15.0, projeccao_shots_fora=8.0,
                 projeccao_sot_casa=7.0, projeccao_sot_fora=3.0)
     base.update(kw)
+    base.setdefault("lam_golos_restantes", base["lam_golos_casa_rest"] + base["lam_golos_fora_rest"])
+    base.setdefault("lam_cantos_restantes",
+                    base["projeccao_cantos_casa"] - 6 + base["projeccao_cantos_fora"] - 3)
+    base.setdefault("lam_shots_restantes",
+                    base["projeccao_shots_casa"] - 11 + base["projeccao_shots_fora"] - 6)
+    base.setdefault("lam_shots_on_target_restantes",
+                    base["projeccao_sot_casa"] - 5 + base["projeccao_sot_fora"] - 2)
     return SimpleNamespace(**base)
 
 
@@ -323,3 +332,73 @@ def test_aprende_o_erro_proprio_de_cada_equipa():
                          p, "cantos")
     assert pf is not None and pf["casa"][0] - 6 > (pf["fora"][0] - 3) * 1.8
     assert "erro proprio de cada equipa" in pe.formatar(p)
+
+
+def test_total_do_ritmo_e_divisao_de_outra_versao():
+    """O total que falta vem do modelo actual; a divisao pelas equipas da versao
+    que divide melhor (ex: mini-cerebros: o Porto faz muitos mais cantos)."""
+    p = pe.Precisao(divisao={"cantos": "equipas"})
+    e = _estado()
+    actual = _prev(projeccao_cantos_casa=8.0, projeccao_cantos_fora=7.0)   # faltam 2 + 4
+    assert actual.lam_cantos_restantes == 6.0
+    equipas = _prev(projeccao_cantos_casa=10.5, projeccao_cantos_fora=4.5)  # divide 4.5 / 1.5
+    pf = pe.prever_final(e, actual, p, "cantos", versoes={"equipas": equipas})
+    assert pf["casa"][0] == pytest.approx(6 + 6 * 0.75) and pf["fora"][0] == pytest.approx(3 + 1.5)
+    sem = pe.prever_final(e, actual, p, "cantos")    # sem a versao: divide pela propria
+    assert sem["casa"][0] == pytest.approx(6 + 6 * 2 / 6)
+
+
+def _pares_divisao(n=1200, seed=21):
+    """A versao 'equipas' sabe que a casa faz 75% dos cantos; a 'antigo' divide a meias."""
+    rnd = random.Random(seed)
+    out = []
+    for i in range(n):
+        total = rnd.uniform(3.0, 7.0)
+        quota = rnd.choice([0.25, 0.5, 0.75])
+        par = {"mercado": "cantos", "janela": 15, "event_id": i,
+               "data": AGORA - timedelta(hours=n - i), "mc": 0, "mf": 0, "home": "A",
+               "away": "B", "c_atual": 0.0, "f_atual": 0.0,
+               "previsto": total, "previsto_suave": total, "previsto_equipas": total,
+               "c_antigo": total / 2, "f_antigo": total / 2,
+               "c_suave": total / 2, "f_suave": total / 2,
+               "c_equipas": total * quota, "f_equipas": total * (1 - quota),
+               "c_treinador": 1.0, "f_treinador": 1.0, "c_postura": None, "f_postura": None}
+        par["c_real"] = max(0.0, round(total * quota + rnd.gauss(0, 0.6)))
+        par["f_real"] = max(0.0, round(total * (1 - quota) + rnd.gauss(0, 0.6)))
+        out.append(par)
+    return out
+
+
+def test_escolhe_a_versao_que_divide_melhor():
+    p = pe.calcular(_pares_divisao(), cr.CorrecaoRitmo(), agora=AGORA)
+    assert p.divisao == {"cantos": "equipas"} and p.ganho_divisao["cantos"] > 0.1
+    assert "divisao entre as equipas: normal de cada equipa (mini-cerebros)" in pe.formatar(p)
+
+
+def test_priors_de_cada_equipa_nos_cantos_e_a_baliza():
+    from apostas.modelos.priors_equipas import HistoricoEquipas
+    linhas = []
+    for i in range(20):   # equipa 1 faz 8 cantos e 7 a baliza; equipa 2 faz 2 e 2
+        for team, opp, c, s in ((1, 100 + i, 8, 7), (2, 200 + i, 2, 2)):
+            d = AGORA - timedelta(days=i + 1)
+            linhas += [SimpleNamespace(sofascore_event_id=team * 1000 + i, sofascore_team_id=team,
+                                       data_jogo=d, golos_marcados=1, golos_sofridos=1,
+                                       remates=12, sot=s, cantos=c, cards_amarelos=2),
+                       SimpleNamespace(sofascore_event_id=team * 1000 + i, sofascore_team_id=opp,
+                                       data_jogo=d, golos_marcados=1, golos_sofridos=1,
+                                       remates=12, sot=4, cantos=5, cards_amarelos=2)]
+    pr = HistoricoEquipas(linhas).priors(1, 2)
+    assert pr.cantos_casa > 6 > pr.cantos_fora and pr.sot_casa > pr.sot_fora + 1.5
+    kw = pr.kwargs()
+    assert kw["cantos_pre"] == (pr.cantos_casa, pr.cantos_fora) and "sot_pre" in kw
+    from apostas.modelos import live_predictor
+    e = _estado(minuto=5, corners_casa=0, corners_fora=0, shots_on_target_casa=0,
+                shots_on_target_fora=0, shots_total_casa=1, shots_total_fora=1)
+    todos = live_predictor.MERCADOS_SUAVIZAVEIS
+    gen = live_predictor.prever(e, ritmo_suavizado=todos)
+    com = live_predictor.prever(e, ritmo_suavizado=todos, **kw)
+    assert gen.projeccao_cantos_casa == pytest.approx(gen.projeccao_cantos_fora)
+    # a divisao segue o normal de cada equipa (6.25 vs 3.85 cantos, 5.2 vs 3.2 a baliza)
+    assert com.projeccao_cantos_casa / com.projeccao_cantos_fora == pytest.approx(
+        pr.cantos_casa / pr.cantos_fora, rel=0.05)
+    assert com.projeccao_sot_casa > 1.4 * com.projeccao_sot_fora

@@ -20,7 +20,8 @@ from datetime import datetime
 
 N_JOGOS = 20
 K_ENCOLHIMENTO = 5
-GENERICO = {"golos": 2.6, "cantos": 10.5, "cartoes": 4.0, "remates": 12.0}
+GENERICO = {"golos": 2.6, "cantos": 10.5, "cartoes": 4.0, "remates": 12.0,
+            "cantos_equipa": 5.25, "sot_equipa": 4.2}
 
 
 @dataclass
@@ -33,6 +34,11 @@ class PriorsJogo:
     n_casa: int           # jogos usados de cada equipa
     n_fora: int
     fator_arbitro: float | None = None   # mini-cerebro dos arbitros, se conhecido
+    # Normal de cada equipa (o que faz + o que o adversario deixa fazer), por 90'.
+    cantos_casa: float | None = None
+    cantos_fora: float | None = None
+    sot_casa: float | None = None
+    sot_fora: float | None = None
 
     def kwargs(self) -> dict:
         """Argumentos para live_predictor.prever."""
@@ -41,6 +47,10 @@ class PriorsJogo:
               "remates_pre": (self.remates_casa, self.remates_fora)}
         if self.fator_arbitro is not None:
             kw["fator_arbitro"] = self.fator_arbitro
+        if self.cantos_casa is not None and self.cantos_fora is not None:
+            kw["cantos_pre"] = (self.cantos_casa, self.cantos_fora)
+        if self.sot_casa is not None and self.sot_fora is not None:
+            kw["sot_pre"] = (self.sot_casa, self.sot_fora)
         return kw
 
 
@@ -98,6 +108,12 @@ class HistoricoEquipas:
         def remates_sofridos(_own, opp):
             return _v(opp, "remates") if opp is not None else None
 
+        def feitos(attr):
+            return lambda own, _opp: _v(own, attr)
+
+        def sofridos(attr):
+            return lambda _own, opp: _v(opp, attr) if opp is not None else None
+
         g = GENERICO
         rem = g["remates"]
         return PriorsJogo(
@@ -109,6 +125,14 @@ class HistoricoEquipas:
             remates_casa=(media(jc, remates_feitos, rem) + media(jf, remates_sofridos, rem)) / 2,
             remates_fora=(media(jf, remates_feitos, rem) + media(jc, remates_sofridos, rem)) / 2,
             n_casa=len(jc), n_fora=len(jf),
+            cantos_casa=(media(jc, feitos("cantos"), g["cantos_equipa"])
+                         + media(jf, sofridos("cantos"), g["cantos_equipa"])) / 2,
+            cantos_fora=(media(jf, feitos("cantos"), g["cantos_equipa"])
+                         + media(jc, sofridos("cantos"), g["cantos_equipa"])) / 2,
+            sot_casa=(media(jc, feitos("sot"), g["sot_equipa"])
+                      + media(jf, sofridos("sot"), g["sot_equipa"])) / 2,
+            sot_fora=(media(jf, feitos("sot"), g["sot_equipa"])
+                      + media(jc, sofridos("sot"), g["sot_equipa"])) / 2,
         )
 
 
