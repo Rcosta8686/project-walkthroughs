@@ -2199,6 +2199,7 @@ def _correr_ciclo(args) -> None:
             n_casa = _odds_casa_novas(todas_sugestoes)
             if n_casa:
                 print(f"  → {n_casa} com a odd da casa guardada (nos vs casa)")
+                log.info("Nos vs casa: %d dicas novas com a odd da casa guardada", n_casa)
         except Exception as exc:  # noqa: BLE001
             log.warning("Odds da casa falharam: %s", exc)
         # DEDUP entre ciclos: evita re-enviar notificacao do mesmo sinal
