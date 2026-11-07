@@ -521,7 +521,7 @@ def resolver(desde: datetime | None = None) -> None:
     try:  # limpa resultados antigos dados com 0 cantos/remates/cartoes falsos
         from apostas.relatorios import sem_stats
         corr = sem_stats.reparar(CSV_PATH)
-        if corr.n:
+        if corr.n or corr.reabertas:
             print("  " + corr.texto())
     except Exception as exc:  # noqa: BLE001
         log.warning("Reparacao de jogos sem estatisticas falhou: %s", _primeira_linha(exc))

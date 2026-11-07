@@ -33,7 +33,7 @@ def main() -> None:
     args = parser.parse_args()
     csv_path = project_root() / "dados" / "tracking" / "sugestoes_live_v2.csv"
     corr = sem_stats.reparar(csv_path, aplicar=not args.so_ver)
-    if not corr.n:
+    if not corr.n and not corr.reabertas:
         print("Nada a corrigir: nenhum resultado de jogo sem estatisticas.")
         return
     print(corr.texto())

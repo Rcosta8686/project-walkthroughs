@@ -148,6 +148,7 @@ def test_resolver_espera_e_depois_fecha_como_sd(tmp_path, monkeypatch):
     monkeypatch.setattr(rsl.historico_equipas, "gravar_jogo_terminado", lambda eid: 0)
     monkeypatch.setattr(rsl.historico_jogadores, "gravar_jogadores_terminado", lambda eid: 0)
     monkeypatch.setattr(sem_stats, "jogos_sem_stats", lambda s: {})
+    monkeypatch.setattr(sem_stats, "mercados_com_dados", lambda s, eventos: set())
     sem = {"golos_total": 5, "golos_casa": 2, "golos_fora": 3, "btts": True,
            "cantos_total": None, "cards_amarelos_total": 3, "cards_vermelhos_total": 0,
            "shots_total": None, "shots_on_target_total": None}
@@ -236,3 +237,113 @@ def test_csv_aceita_sd():
     from apostas.relatorios import csv_live
     ok = csv_live._VALIDADORES["resultado"][1]
     assert ok("SD") and ok("W") and not ok("X")
+
+
+def test_resultado_impossivel_com_zero_prova_que_havia_dados(tmp_path):
+    """Um "under cantos" perdido so acontece com cantos reais: o jogo tinha
+    estatisticas (a BD e que nao as gravou) e nada desse jogo se mexe."""
+    f = tmp_path / "sug.csv"
+    _csv_sugestoes(f, [
+        {"alert_id": "1", "event_id": "9", "mercado": "cantos", "lado": "under",
+         "resultado": "L", "lucro": "-1"},
+        {"alert_id": "2", "event_id": "9", "mercado": "cantos", "lado": "under",
+         "resultado": "W", "lucro": "0.8"},
+        {"alert_id": "3", "event_id": "9", "mercado": "remates", "lado": "over",
+         "resultado": "L", "lucro": "-1"},
+        {"alert_id": "4", "event_id": "8", "mercado": "cartoes", "lado": "over",
+         "resultado": "W", "lucro": "0.9"},
+        {"alert_id": "5", "event_id": "8", "mercado": "cartoes", "lado": "under",
+         "resultado": "W", "lucro": "0.9"},
+        {"alert_id": "6", "event_id": "8", "mercado": "cantos", "lado": "under",
+         "resultado": "W", "lucro": "0.8"},
+    ])
+    sem = {"9": {"cantos", "remates"}, "8": {"cantos", "remates", "cartoes"}}
+    corr = sem_stats.reparar(f, sem=sem)
+    with f.open(encoding="utf-8") as fp:
+        rows = {r["alert_id"]: r["resultado"] for r in csv.DictReader(fp)}
+    # jogo 9: intacto. Jogo 8: os cartoes eram reais (over ganho), os cantos nao.
+    assert rows == {"1": "L", "2": "W", "3": "L", "4": "W", "5": "W", "6": "SD"}
+    assert corr.n == 1 and corr.jogos == 1 and corr.jogos_com_prova == 1
+    assert "1 jogos mantidos" in corr.texto()
+
+
+def test_cantos_vistos_ao_vivo_provam_estatisticas(tmp_path):
+    f = tmp_path / "sug.csv"
+    campos = ["alert_id", "event_id", "mercado", "lado", "resultado", "lucro", "corners_c",
+              "corners_f", "yellows_c", "yellows_f"]
+    with f.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=campos)
+        w.writeheader()
+        w.writerow({"alert_id": "1", "event_id": "9", "mercado": "cantos", "lado": "under",
+                    "resultado": "W", "corners_c": "3", "corners_f": ""})
+        w.writerow({"alert_id": "2", "event_id": "7", "mercado": "cantos", "lado": "under",
+                    "resultado": "W", "corners_c": "", "corners_f": "", "yellows_c": "2"})
+        w.writerow({"alert_id": "3", "event_id": "7", "mercado": "cartoes", "lado": "under",
+                    "resultado": "W", "corners_c": "", "corners_f": "", "yellows_c": "2"})
+    corr = sem_stats.reparar(f, sem={"9": {"cantos"}, "7": {"cantos", "cartoes"}})
+    with f.open(encoding="utf-8") as fp:
+        rows = {r["alert_id"]: r["resultado"] for r in csv.DictReader(fp)}
+    assert rows == {"1": "W", "2": "SD", "3": "W"} and corr.n == 1
+
+
+def test_momentos_ao_vivo_com_cantos_tiram_o_jogo_da_lista(bd):
+    from apostas.utils.db import abrir_sessao
+    from apostas.utils.schema import EstadoLiveSnapshot as Snap
+    from apostas.utils.schema import EstatisticaEquipaJogo as EEJ
+    with abrir_sessao() as s:
+        for ev in (1, 2):
+            s.add_all([EEJ(sofascore_event_id=ev, sofascore_team_id=10 * ev + t,
+                           nome_equipa="T", era_casa=t == 1, data_jogo=AGORA, resultado="D")
+                       for t in (1, 2)])
+        s.add(Snap(event_id=2, ts=AGORA, home="A", away="B", liga="L", minuto=60,
+                   marcador_casa=0, marcador_fora=0, corners_casa=4, corners_fora=2,
+                   yellow_casa=0, yellow_fora=0))
+        s.add(Snap(event_id=1, ts=AGORA, home="A", away="B", liga="L", minuto=60,
+                   marcador_casa=0, marcador_fora=0, yellow_casa=0, yellow_fora=0))
+    with abrir_sessao() as s:
+        assert set(sem_stats.jogos_sem_stats(s)) == {"1"}
+
+
+def test_sd_por_engano_da_1a_versao_voltam_a_resolver_uma_vez(tmp_path):
+    f = tmp_path / "sug.csv"
+    campos = ["alert_id", "event_id", "mercado", "lado", "resultado", "lucro", "resolvido_em",
+              "corners_c", "corners_f"]
+    with f.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=campos)
+        w.writeheader()
+        w.writerow({"alert_id": "1", "event_id": "9", "mercado": "cantos", "lado": "under",
+                    "resultado": "SD", "resolvido_em": "2026-11-06T23:00:00"})   # BD tem dados
+        w.writerow({"alert_id": "2", "event_id": "8", "mercado": "cantos", "lado": "over",
+                    "resultado": "SD", "corners_c": "5"})                        # CSV prova
+        w.writerow({"alert_id": "3", "event_id": "7", "mercado": "cantos", "lado": "under",
+                    "resultado": "SD"})                                          # sem dados mesmo
+    sem = {"8": {"cantos", "remates"}, "7": {"cantos", "remates"}}
+    corr = sem_stats.reparar(f, sem=sem, com_dados={("9", "cantos")})
+    with f.open(encoding="utf-8") as fp:
+        rows = {r["alert_id"]: r for r in csv.DictReader(fp)}
+    assert [rows[i]["resultado"] for i in "123"] == ["", "", "SD"]
+    assert rows["1"]["resolvido_em"] == "" and corr.reabertas == 2
+    assert "2 dicas marcadas SD por engano" in corr.texto()
+    # o resolver volta a dar SD a 1 (sem dados afinal): nao reabre outra vez
+    with f.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=campos)
+        w.writeheader()
+        w.writerow({"alert_id": "1", "event_id": "9", "mercado": "cantos", "lado": "under",
+                    "resultado": "SD"})
+    assert sem_stats.reparar(f, sem=sem, com_dados={("9", "cantos")}).reabertas == 0
+
+
+def test_dados_na_bd_por_mercado(bd):
+    from apostas.utils.db import abrir_sessao
+    from apostas.utils.schema import EstadoLiveSnapshot as Snap
+    from apostas.utils.schema import EstatisticaEquipaJogo as EEJ
+    with abrir_sessao() as s:
+        s.add_all([EEJ(sofascore_event_id=1, sofascore_team_id=t, nome_equipa="T",
+                       era_casa=t == 1, data_jogo=AGORA, resultado="D", cards_amarelos=2)
+                   for t in (1, 2)])
+        s.add(Snap(event_id=2, ts=AGORA, home="A", away="B", liga="L", minuto=60,
+                   marcador_casa=0, marcador_fora=0, shots_total_casa=7, yellow_casa=0,
+                   yellow_fora=0))
+    with abrir_sessao() as s:
+        assert sem_stats.mercados_com_dados(s, {"1", "2", "3"}) == {("1", "cartoes"),
+                                                                   ("2", "remates")}
