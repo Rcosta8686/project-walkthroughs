@@ -53,6 +53,11 @@ def main() -> None:
             texto += "\n\n" + formatar_resumo(treinar_correcoes(pares_projecao_real(sess)))
     except Exception as exc:  # noqa: BLE001
         texto += f"\n\n(projeccoes: nao consegui ler a BD — {exc})"
+    from apostas.modelos import correcao_ritmo
+    ritmo = correcao_ritmo.ler()
+    texto += "\n\n" + (correcao_ritmo.formatar(ritmo) if ritmo.avaliacao else
+                         "*Ritmo do resto do jogo*: ainda nao calculado "
+                         "(corre scripts\\correcao_ritmo.py ou espera pelo incremento das 00:15)")
     print(texto)
 
     if args.telegram:

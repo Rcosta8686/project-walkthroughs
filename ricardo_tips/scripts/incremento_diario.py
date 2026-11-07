@@ -6,6 +6,7 @@
    O que ja esta na BD e saltado.
 2. Corre o resolver para os alertas desses dias (resultado, lucro e
    estatisticas dos jogos com projeccao).
+3. Recalcula a correccao do ritmo do resto do jogo (correcao_ritmo.json).
 
 Uso:
   venv\\Scripts\\python.exe scripts\\incremento_diario.py
@@ -65,6 +66,17 @@ def main() -> None:
         inicio = datetime(agora.year, agora.month, agora.day) - timedelta(days=args.dias)
         print(f"\nA resolver alertas desde {inicio:%d/%m}...\n")
         resolver_sugestoes_live.resolver(desde=inicio)
+
+    # 3. Ritmo do resto do jogo: reaprende com os jogos acabados (o scanner le
+    #    o resultado na hora seguinte).
+    try:
+        from apostas.modelos import correcao_ritmo
+        from apostas.utils.db import abrir_sessao
+        with abrir_sessao() as s:
+            ritmo = correcao_ritmo.recalcular_e_gravar(s)
+        print("\n" + correcao_ritmo.formatar(ritmo))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Correccao do ritmo falhou: %s", exc)
 
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

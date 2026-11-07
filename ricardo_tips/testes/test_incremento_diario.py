@@ -118,8 +118,13 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
 
     def desde_append(d):
         desde.append(d)
+    from apostas.modelos import correcao_ritmo
+    recalculos = []
+    monkeypatch.setattr(correcao_ritmo, "recalcular_e_gravar",
+                        lambda s: recalculos.append(1) or correcao_ritmo.CorrecaoRitmo())
     monkeypatch.setattr(sys, "argv", ["incremento_diario.py", "--dias", "2"])
     script.main()
     out = capsys.readouterr().out
+    assert recalculos == [1] and "Ritmo do resto do jogo" in out
     assert "24 ligas · 60 jogos terminados · 12 novos" in out
     assert len(desde) == 1 and desde[0].hour == 0

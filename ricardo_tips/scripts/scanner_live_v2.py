@@ -63,6 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
+from apostas.modelos import correcao_ritmo  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -1088,8 +1089,8 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
     sugestoes = []
     exp_pre = _puxar_expectativa(estado)
     ajustes = _ajustes_cerebro_para(estado)
-    prev = live_predictor.prever(
-        estado, expectativa_pre=exp_pre, ajustes_cerebro=ajustes,
+    prev = correcao_ritmo.prever_corrigido(
+        estado, _ritmo_live(), expectativa_pre=exp_pre, ajustes_cerebro=ajustes,
     )
 
     def _emit(mercado, lado, linha, casa, odd, prob):
@@ -1414,7 +1415,7 @@ def _calibrador_live() -> Calibrador:
         return _calibrador_cache[1]
     try:
         from apostas.relatorios.calibracao_alertas import carregar_resolvidos
-        rows = carregar_resolvidos(_ficheiro_csv())
+        rows = _sem_alertas_antes_do_ritmo(carregar_resolvidos(_ficheiro_csv()), _ritmo_live())
         cal = treinar(rows)
         log.info("Calibrador por mercado: %d alertas, %d curvas", len(rows), len(cal.curvas))
     except Exception as exc:  # noqa: BLE001
@@ -1422,6 +1423,43 @@ def _calibrador_live() -> Calibrador:
         cal = Calibrador()
     _calibrador_cache = (agora, cal)
     return cal
+
+
+_RITMO_TTL_S = 3600
+_ritmo_cache: tuple[float, correcao_ritmo.CorrecaoRitmo] | None = None
+
+
+def _ritmo_live() -> correcao_ritmo.CorrecaoRitmo:
+    """Correccao do ritmo calculada todas as noites (incremento diario)."""
+    global _ritmo_cache
+    agora = time.time()
+    if _ritmo_cache is not None and agora - _ritmo_cache[0] < _RITMO_TTL_S:
+        return _ritmo_cache[1]
+    c = correcao_ritmo.ler()
+    if c.mudados:
+        log.info("Correccao do ritmo ligada: %s", ", ".join(
+            f"{m} (desde {c.datas_ativacao[m]:%d/%m})" if m in c.datas_ativacao else m
+            for m in sorted(c.mudados)))
+    _ritmo_cache = (agora, c)
+    return c
+
+
+def _sem_alertas_antes_do_ritmo(rows: list[dict],
+                                ritmo: correcao_ritmo.CorrecaoRitmo) -> list[dict]:
+    """O calibrador nao aprende com alertas calculados antes de o ritmo ser
+    corrigido nesse mercado (prometiam por baixo do ritmo real): corrigir os
+    dois juntos contava o mesmo erro duas vezes. Volta a aprender so com os
+    alertas novos."""
+    if not ritmo.mudados:
+        return rows
+    out = []
+    for r in rows:
+        base = ritmo.afecta(r.get("mercado", ""))
+        desde = ritmo.datas_ativacao.get(base) if base else None
+        if desde is not None and (r.get("ts") or "") < desde.isoformat(timespec="seconds"):
+            continue
+        out.append(r)
+    return out
 
 
 _cortes_cache: tuple[float, corte_mercados.Cortes] | None = None
@@ -1484,6 +1522,29 @@ def _calibrar_sinal(estado, sinal):
     return dataclasses.replace(
         sinal, prob_modelo=cal, odd_minima=odd_be, odd_valor=odd_val, estrelas=estrelas,
     ), bruta
+
+
+def _extras_narrativa(estado, prev, mercado: str) -> dict:
+    """Valores so para a conclusao do mega-cerebro (nao vao para o CSV): a
+    projeccao do modelo para o total do jogo e os remates actuais. Sem isto a
+    conclusao dos alertas de remates dizia "sinal ha mas sem forma concreta"."""
+    m = (mercado or "").lower()
+    if m == "remates":
+        total = prev.projeccao_shots_casa + prev.projeccao_shots_fora
+    elif m in ("remates_a_baliza", "sot"):
+        total = prev.projeccao_sot_casa + prev.projeccao_sot_fora
+    elif m == "cantos":
+        total = prev.projeccao_cantos_casa + prev.projeccao_cantos_fora
+    elif m in ("cartoes", "cards"):
+        total = (int(estado.yellow_cards_casa or 0) + int(estado.yellow_cards_fora or 0)
+                 + prev.lam_cartoes_amarelos_restantes)
+    elif m == "golos":
+        total = (int(estado.marcador_casa or 0) + int(estado.marcador_fora or 0)
+                 + prev.lam_golos_restantes)
+    else:
+        return {}
+    return {"projecao_total": round(float(total), 1),
+            "shots_total_c": estado.shots_total_casa, "shots_total_f": estado.shots_total_fora}
 
 
 def _sinal_para_sugestao(estado, sinal) -> dict:
@@ -1834,7 +1895,14 @@ def _correr_ciclo(args) -> None:
         # Modelo corre SEMPRE, nao depende de ter odds da Odds API.
         # Fase 5: ajustes do cerebro (confronto 2 fichas) injectados.
         ajustes = _ajustes_cerebro_para(estado)
-        prev = live_predictor.prever(estado, ajustes_cerebro=ajustes)
+        prev_bruta = live_predictor.prever(estado, ajustes_cerebro=ajustes)
+        # Ritmo do resto do jogo corrigido com os jogos ja acabados (ritmo
+        # suavizado + multiplicador, so nos mercados em que a medicao mostrou
+        # que acerta mais). As projeccoes usam a bruta: tem a sua propria
+        # correccao, aprendida sobre ela.
+        ritmo = _ritmo_live()
+        prev = (correcao_ritmo.prever_corrigido(estado, ritmo, ajustes_cerebro=ajustes)
+                if ritmo.mudados else prev_bruta)
         _imprimir_estado(estado, prev)
 
         # PROJECCOES aos 40'/55'/70': substituem sinais "faceis" de
@@ -1842,7 +1910,7 @@ def _correr_ciclo(args) -> None:
         # para o user comparar com o que a casa paga.
         try:
             n_proj = _enviar_projecoes_jogo(
-                estado, prev, args.telegram,
+                estado, prev_bruta, args.telegram,
                 min_estrelas=args.projecao_tele_estrelas,
             )
             if n_proj:
@@ -1876,6 +1944,7 @@ def _correr_ciclo(args) -> None:
                 sinal, prob_bruta = _calibrar_sinal(estado, sinal)
                 sug = _sinal_para_sugestao(estado, sinal)
                 sug["prob_bruta"] = round(prob_bruta, 4)
+                sug.update(_extras_narrativa(estado, prev, sinal.mercado))
                 # Marca se o analista apostaria aqui o seu proprio dinheiro
                 sug["_alta_conviccao"] = analista._conviccao_alta(sinal, estado)
                 todas_sugestoes.append(sug)

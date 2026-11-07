@@ -135,6 +135,11 @@ def narrativa_final(s: dict, *, sintese_razao: str = "") -> str:
         actual = yel_c + yel_f
     elif mercado == "golos":
         actual = sc_c + sc_f
+    elif mercado == "remates":
+        sh_c = _parse_int(s.get("shots_total_c"))
+        sh_f = _parse_int(s.get("shots_total_f"))
+        if sh_c is not None and sh_f is not None:
+            actual = sh_c + sh_f
 
     if actual is not None and minuto > 0:
         ritmo = _ritmo_por_90(actual, minuto)

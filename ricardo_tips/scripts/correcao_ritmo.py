@@ -1,0 +1,41 @@
+"""Calcula ja a correccao do ritmo do resto do jogo (o incremento das 00:15
+faz o mesmo todas as noites) e mostra o resultado.
+
+Volta a correr o modelo em cada momento guardado dos jogos ao vivo ja
+acabados, compara o que previa que faltava com o que aconteceu, e liga a
+correccao so nos mercados em que ela melhora a previsao nos jogos mais
+recentes. Nao faz pedidos ao Sofascore (so usa a BD).
+
+Uso:
+  venv\\Scripts\\python.exe scripts\\correcao_ritmo.py
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+for _stream in (sys.stdout, sys.stderr):  # consola Windows: emojis sem crash
+    _reconf = getattr(_stream, "reconfigure", None)
+    if _reconf is not None:
+        try:
+            _reconf(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+from apostas.modelos import correcao_ritmo  # noqa: E402
+from apostas.utils.db import abrir_sessao, criar_schema  # noqa: E402
+
+
+def main() -> None:
+    criar_schema()
+    print("A comparar o que o modelo previa com o que aconteceu (pode demorar 1-2 min)...\n")
+    with abrir_sessao() as s:
+        c = correcao_ritmo.recalcular_e_gravar(s)
+    print(correcao_ritmo.formatar(c))
+    print(f"\nGravado em {correcao_ritmo.caminho()} — o scanner usa-o na proxima hora.")
+
+
+if __name__ == "__main__":
+    main()

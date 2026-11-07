@@ -153,6 +153,19 @@ _LIGA_SOT_RATIO = 0.35
 _SOT_SHRINK_K = 8   # remates ate assumir ratio actual (shrinkage Bayesian)
 
 
+# Ritmo suavizado: o ritmo observado mistura-se com o ritmo normal de um jogo,
+# com o peso de PESO_PRIOR_MIN minutos. Sem isto 0 cartoes aos 30' davam 0
+# cartoes previstos ate ao fim e o UNDER parecia certo. O scanner so liga por
+# mercado quando a medicao nos jogos acabados mostra que acerta mais
+# (correcao_ritmo); por defeito fica o calculo antigo.
+MERCADOS_SUAVIZAVEIS = ("cantos", "cartoes", "remates", "remates_a_baliza")
+PESO_PRIOR_MIN = {"cantos": 30.0, "cartoes": 45.0, "remates": 20.0, "remates_a_baliza": 20.0}
+
+
+def _ritmo_suave(actual: float, minuto: int, prior_por_min: float, peso: float) -> float:
+    return (actual + prior_por_min * peso) / (minuto + peso)
+
+
 def _sot_rate_processo(sot: int, shots: int, minuto: int) -> float:
     """SoT/minuto a partir do VOLUME de remates (processo), nao SoT passado.
 
@@ -290,6 +303,7 @@ def prever(
     lam_cartoes_pre: float | None = None,
     expectativa_pre=None,
     ajustes_cerebro=None,
+    ritmo_suavizado=(),
 ) -> PrevisaoLive:
     """Devolve previsao de eventos restantes para um jogo in-play.
 
@@ -389,8 +403,12 @@ def prever(
     lam_golos_rest *= fator_chasing
 
     # 6. Cantos: posse diferencial + shots blocked + chasing
+    suave = set(ritmo_suavizado or ())
     cantos_actual = (estado.corners_casa or 0) + (estado.corners_fora or 0)
-    if minuto > 10:
+    if minuto > 10 and "cantos" in suave:
+        cantos_rate = _ritmo_suave(cantos_actual, minuto, lam_cantos_pre / 90.0,
+                                   PESO_PRIOR_MIN["cantos"])
+    elif minuto > 10:
         cantos_rate = cantos_actual / minuto
     else:
         cantos_rate = lam_cantos_pre / 90.0
@@ -410,7 +428,10 @@ def prever(
 
     # 7. Cartoes: 2H + jogos apertados + arbitro + rivalidade + fouls
     cards_actual = estado.yellow_cards_casa + estado.yellow_cards_fora
-    if minuto > 10:
+    if minuto > 10 and "cartoes" in suave:
+        cards_rate = _ritmo_suave(cards_actual, minuto, lam_cartoes_pre / 90.0,
+                                  PESO_PRIOR_MIN["cartoes"])
+    elif minuto > 10:
         cards_rate = cards_actual / minuto
     else:
         cards_rate = lam_cartoes_pre / 90.0
@@ -466,6 +487,19 @@ def prever(
         sot_rate_f = _sot_rate_processo(sot_f, shots_f, minuto)
         cantos_rate_c = cantos_c_act / minuto
         cantos_rate_f = cantos_f_act / minuto
+        if "remates" in suave:
+            p_sh = PESO_PRIOR_MIN["remates"]
+            shots_rate_c = _ritmo_suave(shots_c, minuto, 12.0 / 90.0, p_sh)
+            shots_rate_f = _ritmo_suave(shots_f, minuto, 12.0 / 90.0, p_sh)
+        if "remates_a_baliza" in suave:
+            p_sot = PESO_PRIOR_MIN["remates_a_baliza"]
+            prior_sot = (12.0 / 90.0) * _LIGA_SOT_RATIO
+            sot_rate_c = (sot_rate_c * minuto + prior_sot * p_sot) / (minuto + p_sot)
+            sot_rate_f = (sot_rate_f * minuto + prior_sot * p_sot) / (minuto + p_sot)
+        if "cantos" in suave:
+            p_ca = PESO_PRIOR_MIN["cantos"]
+            cantos_rate_c = _ritmo_suave(cantos_c_act, minuto, lam_cantos_pre / 180.0, p_ca)
+            cantos_rate_f = _ritmo_suave(cantos_f_act, minuto, lam_cantos_pre / 180.0, p_ca)
     else:
         shots_rate_c = shots_rate_f = 12.0 / 90.0
         sot_rate_c = sot_rate_f = (12.0 / 90.0) * _LIGA_SOT_RATIO
