@@ -279,3 +279,47 @@ def test_scanner_junta_equipas_treinador_e_substituicoes(monkeypatch):
     assert linhas[2] == "🔄 Substituicoes: Porto 2 ofensivas · Benfica 1 defensiva"
     assert sc._texto_equipas(e, _prev(), "1x2").startswith("📏")      # golos por equipa
     assert sc._texto_equipas(e, _prev(), "dupla") == ""
+
+
+def test_maximo_possivel_poisson():
+    # ritmo certo de 3.5 que faltam, 0 feitos: previsao 4, acerta ±1 se sair 3, 4 ou 5
+    assert pe.p_dentro1(0, 3.5) == pytest.approx(0.5368, abs=0.001)
+    # quase nada a faltar: quase certo
+    assert pe.p_dentro1(2, 0.2) == pytest.approx(0.9825, abs=0.001)
+    p = pe.calcular(_pares(), cr.CorrecaoRitmo(), agora=AGORA)
+    m = p.teste["remates_a_baliza"]
+    assert 0.3 < m.teto < 1.0
+    txt = pe.formatar(p)
+    assert "maximo possivel ~" in txt and "camadas: situacao" in txt
+    assert "substituicoes: a juntar dados" in txt
+
+
+def _pares_equipas(n=1500, seed=11):
+    """20 equipas: umas acabam sempre mais fortes do que o modelo diz, outras menos."""
+    rnd = random.Random(seed)
+    efeito = {t: (0.6, 1.0, 1.6)[t % 3] for t in range(20)}
+    out = []
+    for i in range(n):
+        tc, tf = rnd.sample(range(20), 2)
+        par = {"mercado": "cantos", "janela": 30, "event_id": i,
+               "data": AGORA - timedelta(hours=n - i), "mc": 0, "mf": 0, "home": f"T{tc}",
+               "away": f"T{tf}", "c_atual": 2.0, "f_atual": 2.0, "c_id": tc, "f_id": tf}
+        for lado, team in (("c", tc), ("f", tf)):
+            resto = rnd.uniform(2.0, 5.0)
+            par[f"{lado}_antigo"] = resto
+            par[f"{lado}_treinador"] = 1.0
+            par[f"{lado}_postura"] = None
+            par[f"{lado}_real"] = max(0.0, round(resto * efeito[team] + rnd.gauss(0, 0.5)))
+        out.append(par)
+    return out
+
+
+def test_aprende_o_erro_proprio_de_cada_equipa():
+    p = pe.calcular(_pares_equipas(), cr.CorrecaoRitmo(), agora=AGORA)
+    assert "cantos" in p.ativos_equipa and p.ganhos["cantos"]["equipa"] > 0.1
+    assert p.mults_equipa["cantos"]["2"] > 1.3 and p.mults_equipa["cantos"]["0"] < 0.75
+    e = _estado(home_id=2, away_id=0)
+    pf = pe.prever_final(e, _prev(projeccao_cantos_casa=10.0, projeccao_cantos_fora=7.0),
+                         p, "cantos")
+    assert pf is not None and pf["casa"][0] - 6 > (pf["fora"][0] - 3) * 1.8
+    assert "erro proprio de cada equipa" in pe.formatar(p)

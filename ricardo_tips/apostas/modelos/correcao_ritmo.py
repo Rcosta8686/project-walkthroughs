@@ -232,6 +232,7 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
             if fin is not None:  # o mesmo, mas para cada equipa
                 mc, mf = int(sn.marcador_casa or 0), int(sn.marcador_fora or 0)
                 par.update(mc=mc, mf=mf, home=sn.home, away=sn.away,
+                           c_id=jogo["casa"], f_id=jogo["fora"],
                            c_atual=float(vc), f_atual=float(vf),
                            c_real=max(0.0, fin[0] - vc), f_real=max(0.0, fin[1] - vf))
                 for nome_b, pb in (("antigo", prev), ("suave", prev_suave), ("equipas", prev_eq)):
