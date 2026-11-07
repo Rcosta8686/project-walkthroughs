@@ -58,6 +58,8 @@ def main() -> None:
     texto += "\n\n" + (correcao_ritmo.formatar(ritmo) if ritmo.avaliacao else
                          "*Ritmo do resto do jogo*: ainda nao calculado "
                          "(corre scripts\\correcao_ritmo.py ou espera pelo incremento das 00:15)")
+    from apostas.modelos import cartoes_finais
+    texto += "\n\n" + cartoes_finais.formatar_historia(cartoes_finais.ler())
     print(texto)
 
     if args.telegram:

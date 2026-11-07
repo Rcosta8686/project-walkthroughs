@@ -31,6 +31,7 @@ _COLUNA = {
     "sot": EstatisticaEquipaJogo.sot,
     "cantos": EstatisticaEquipaJogo.cantos,
     "remates": EstatisticaEquipaJogo.remates,
+    "cartoes": EstatisticaEquipaJogo.cards_amarelos,  # resolve o 'cartao no fim'
 }
 
 

@@ -77,6 +77,15 @@ def main() -> None:
         print("\n" + correcao_ritmo.formatar(ritmo))
     except Exception as exc:  # noqa: BLE001
         log.warning("Correccao do ritmo falhou: %s", exc)
+    # 4. Cartao no fim: taxas historicas de "mais 1 cartao ate ao fim".
+    try:
+        from apostas.modelos import cartoes_finais
+        from apostas.utils.db import abrir_sessao
+        with abrir_sessao() as s:
+            hist = cartoes_finais.recalcular_e_gravar(s)
+        print("\n" + cartoes_finais.formatar_historia(hist))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Historia do cartao no fim falhou: %s", exc)
 
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

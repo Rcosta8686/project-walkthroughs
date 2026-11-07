@@ -24,7 +24,7 @@ for _stream in (sys.stdout, sys.stderr):  # consola Windows: emojis sem crash
         except OSError:
             pass
 
-from apostas.modelos import correcao_ritmo  # noqa: E402
+from apostas.modelos import cartoes_finais, correcao_ritmo  # noqa: E402
 from apostas.utils.db import abrir_sessao, criar_schema  # noqa: E402
 
 
@@ -33,7 +33,9 @@ def main() -> None:
     print("A comparar o que o modelo previa com o que aconteceu (pode demorar 1-2 min)...\n")
     with abrir_sessao() as s:
         c = correcao_ritmo.recalcular_e_gravar(s)
+        hist = cartoes_finais.recalcular_e_gravar(s)
     print(correcao_ritmo.formatar(c))
+    print("\n" + cartoes_finais.formatar_historia(hist))
     print(f"\nGravado em {correcao_ritmo.caminho()} — o scanner usa-o na proxima hora.")
 
 

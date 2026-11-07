@@ -86,7 +86,7 @@ def projeccoes_no_periodo(inicio: datetime, fim: datetime,
                           path: Path | None = None) -> set[tuple[int, str]]:
     """(event_id, mercado) das projeccoes enviadas, para ir buscar os totais a BD."""
     return {(eid, r["mercado"]) for r in carregar(path)
-            if r["tipo"] == "projeccao" and inicio <= r["ts"] < fim
+            if r["tipo"] != "alerta" and inicio <= r["ts"] < fim
             and (eid := _int(r.get("event_id"))) is not None}
 
 
@@ -171,7 +171,8 @@ class DicaEnviada:
 
     @property
     def grupo(self) -> str:
-        return f"{self.mercado} {self.lado}" + (" (projecção)" if self.tipo == "projeccao" else "")
+        sufixo = {"projeccao": " (projecção)", "cartoes_fim": " (cartão no fim)"}
+        return f"{self.mercado} {self.lado}" + sufixo.get(self.tipo, "")
 
 
 def listar(inicio: datetime, fim: datetime, csv_sugestoes: Path,
@@ -216,11 +217,11 @@ def listar(inicio: datetime, fim: datetime, csv_sugestoes: Path,
                 resultado=(row.get("resultado") or "").strip() or "pendente",
                 lucro=_float(row.get("lucro")),
                 home=row.get("home") or "", away=row.get("away") or ""))
-        elif r["tipo"] == "projeccao":
+        else:  # projeccao, cartoes_fim: resolvidos pelo total final na BD
             m = (r.get("mercado") or "?").lower()
             res, lucro = _resultado_projeccao(r, totais_proj or {})
             dicas.append(DicaEnviada(
-                ts=r["ts"], tipo="projeccao", event_id=_int(r.get("event_id")),
+                ts=r["ts"], tipo=r["tipo"], event_id=_int(r.get("event_id")),
                 mercado=_NOME_MERCADO.get(m, m), lado=(r.get("lado") or "").lower(),
                 linha=(r.get("linha") or "").strip(), odd=_float(r.get("odd")),
                 resultado=res, lucro=lucro))
@@ -277,6 +278,8 @@ def formatar_lista(dicas: list[DicaEnviada],
             aposta += f" @{d.odd:.2f}"
         if d.tipo == "projeccao":
             aposta += " (proj.)"
+        elif d.tipo == "cartoes_fim":
+            aposta += " (fim)"
         fim = f" → {d.lucro:+.2f}" if d.lucro is not None and d.resultado != "pendente" else ""
         linhas.append(f"{_ICONE_RESULTADO.get(d.resultado, '⏳')} {d.ts:%H:%M} {jogo} · {aposta}{fim}")
     return "\n".join(linhas)

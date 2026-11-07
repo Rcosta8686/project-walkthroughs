@@ -218,7 +218,7 @@ def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> i
     limite = desde or (agora_utc() - timedelta(days=3))
     ids: set[int] = {
         eid for r in alertas_enviados.carregar()
-        if r["tipo"] == "projeccao" and r["ts"] >= limite
+        if r["tipo"] != "alerta" and r["ts"] >= limite
         and (eid := alertas_enviados._int(r.get("event_id"))) is not None
     }
     with abrir_sessao() as s:

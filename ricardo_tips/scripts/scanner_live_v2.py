@@ -63,7 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
-from apostas.modelos import correcao_ritmo, priors_equipas  # noqa: E402
+from apostas.modelos import cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -230,7 +230,8 @@ def _carregar_cooldown_do_registo() -> int:
     for r in alertas_enviados.carregar():
         if r["ts"] < limite or not r.get("event_id") or not r.get("mercado"):
             continue
-        _cooldown[_chave_cooldown(r["event_id"], r["mercado"], r.get("lado"))] = r["ts"]
+        mercado = "cartoes_fim" if r["tipo"] == "cartoes_fim" else r["mercado"]
+        _cooldown[_chave_cooldown(r["event_id"], mercado, r.get("lado"))] = r["ts"]
         n += 1
     return n
 
@@ -1501,6 +1502,50 @@ def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo):
     return priors
 
 
+_historia_cartoes_cache: tuple[float, cartoes_finais.Historia] | None = None
+
+
+def _historia_cartoes_live() -> cartoes_finais.Historia:
+    """Taxas historicas de 'mais 1 cartao ate ao fim' (recalculadas a noite)."""
+    global _historia_cartoes_cache
+    agora = time.time()
+    if _historia_cartoes_cache is None or agora - _historia_cartoes_cache[0] >= _RITMO_TTL_S:
+        _historia_cartoes_cache = (agora, cartoes_finais.ler())
+    return _historia_cartoes_cache[1]
+
+
+def _alerta_cartoes_fim(estado, prev) -> bool:
+    """Envia o 'cartao no fim' uma vez por jogo quando modelo e historia concordam."""
+    if cartoes_finais.fase_de(int(estado.minuto or 0)) is None:
+        return False
+    if _em_cooldown(estado.event_id, "cartoes_fim", "over"):
+        return False
+    historia = _historia_cartoes_live()
+    if not historia.taxas:
+        return False
+    from apostas.modelos import referencias
+    try:
+        f_arb = referencias.fator_arbitro(estado.arbitro)
+        derbi = referencias.eh_derby(estado.home, estado.away)
+    except Exception:  # noqa: BLE001
+        f_arb, derbi = 1.0, False
+    sinal = cartoes_finais.avaliar(estado, prev, historia, fator_arbitro=f_arb, derbi=derbi)
+    if sinal is None:
+        return False
+    telegram_cliente().enviar(cartoes_finais.formatar_telegram(sinal, estado))
+    _marcar_enviado(estado.event_id, "cartoes_fim", "over")
+    log.info("Cartao no fim %s %s vs %s: OVER %.1f %.0f%% (historia %d jogos)",
+             estado.event_id, estado.home, estado.away, sinal.linha, sinal.p1 * 100,
+             sinal.n_historia)
+    try:
+        alertas_enviados.registar(tipo="cartoes_fim", event_id=estado.event_id,
+                                  mercado="cartoes", lado="over", linha=sinal.linha,
+                                  odd=sinal.odd_justa)
+    except OSError as exc:
+        log.warning("Registo do cartao no fim falhou: %s", exc)
+    return True
+
+
 def _sem_alertas_antes_do_ritmo(rows: list[dict],
                                 ritmo: correcao_ritmo.CorrecaoRitmo) -> list[dict]:
     """O calibrador nao aprende com alertas calculados antes de o ritmo ser
@@ -1975,6 +2020,13 @@ def _correr_ciclo(args) -> None:
                 print(f"    📊 {n_proj} projeccao(oes) enviadas ao Telegram.")
         except Exception as exc:  # noqa: BLE001
             log.warning("Falha enviar projeccao %s: %s", estado.event_id, exc)
+
+        # Cartao nos minutos finais (65'-82', jogo tenso, modelo + historia).
+        if args.telegram:
+            try:
+                _alerta_cartoes_fim(estado, prev)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Cartao no fim %s falhou: %s", estado.event_id, exc)
 
         # Odds API: so para computar EV (classico) — opcional.
         sport = _sport_da_liga(estado.liga)

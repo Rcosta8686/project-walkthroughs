@@ -118,7 +118,8 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
 
     def desde_append(d):
         desde.append(d)
-    from apostas.modelos import correcao_ritmo
+    from apostas.modelos import cartoes_finais, correcao_ritmo
+    monkeypatch.setattr(cartoes_finais, "recalcular_e_gravar", lambda s: cartoes_finais.Historia())
     recalculos = []
     monkeypatch.setattr(correcao_ritmo, "recalcular_e_gravar",
                         lambda s: recalculos.append(1) or correcao_ritmo.CorrecaoRitmo())
