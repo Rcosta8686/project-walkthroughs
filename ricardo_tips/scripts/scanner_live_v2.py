@@ -64,7 +64,7 @@ from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
-from apostas.relatorios import alertas_enviados, csv_live, prime  # noqa: E402
+from apostas.relatorios import alertas_enviados, csv_live, prime, vs_casa  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
 from apostas.ingestao import odds_live  # noqa: E402
@@ -316,6 +316,7 @@ def _gravar_novas(sugestoes_dicts, f: Path) -> int:
                     s["alert_id"] = aid_existente
                 continue
             s["alert_id"] = proximo_id
+            s["_novo"] = True
             proximo_id += 1
             # No CSV vai a prob bruta: e dela que o calibrador aprende. Em
             # memoria (Telegram, filtros) fica a calibrada.
@@ -1514,15 +1515,17 @@ _ODDS_TTL_S = 120
 _odds_cache: dict[int, tuple[float, dict]] = {}
 
 
-def _odd_real(event_id, mercado: str, lado: str, linha) -> float | None:
-    """Odd real ao vivo (Sofascore) desta linha; so pedida quando uma dica vai
-    sair (1 pedido por jogo de 2 em 2 min no maximo)."""
+_ODDS_CAPTURA_TTL_S = 300   # para medir nos vs casa: 1 pedido por jogo de 5 em 5 min
+
+
+def _odds_jogo(event_id, ttl_s: float = _ODDS_TTL_S) -> dict:
+    """Odds ao vivo (Sofascore) do jogo, com cache por jogo."""
     if not event_id:
-        return None
+        return {}
     eid = int(event_id)
     agora = time.time()
     hit = _odds_cache.get(eid)
-    if hit is None or agora - hit[0] >= _ODDS_TTL_S:
+    if hit is None or agora - hit[0] >= ttl_s:
         try:
             odds = odds_live.obter(eid)
         except Exception as exc:  # noqa: BLE001
@@ -1532,7 +1535,54 @@ def _odd_real(event_id, mercado: str, lado: str, linha) -> float | None:
             for k in sorted(_odds_cache, key=lambda k: _odds_cache[k][0])[:150]:
                 _odds_cache.pop(k, None)
         _odds_cache[eid] = hit = (agora, odds)
-    return odds_live.procurar(hit[1], mercado, lado, linha)
+    return hit[1]
+
+
+def _odd_real(event_id, mercado: str, lado: str, linha) -> float | None:
+    """Odd real ao vivo (Sofascore) desta linha; so pedida quando uma dica vai
+    sair (1 pedido por jogo de 2 em 2 min no maximo)."""
+    return odds_live.procurar(_odds_jogo(event_id), mercado, lado, linha)
+
+
+def _odds_casa_novas(sugestoes: list[dict]) -> int:
+    """Guarda a odd da casa ao lado de cada dica nova (nos vs casa)."""
+    if not sofascore_live.sofascore_disponivel():
+        return 0
+    por_jogo: dict[int, list[dict]] = {}
+    for s in sugestoes:
+        if s.get("_novo") and s.get("event_id") and s.get("prob_modelo") is not None:
+            por_jogo.setdefault(int(s["event_id"]), []).append(s)
+    com_odd = []
+    for eid, sugs in por_jogo.items():
+        odds = _odds_jogo(eid, _ODDS_CAPTURA_TTL_S)
+        com_odd += [s for s in sugs if odds and vs_casa.anexar_odds(s, odds)]
+    return vs_casa.registar(com_odd) if com_odd else 0
+
+
+_vs_casa_cache: tuple[float, vs_casa.VsCasa] | None = None
+
+
+def _vs_casa_live() -> vs_casa.VsCasa:
+    global _vs_casa_cache
+    agora = time.time()
+    if _vs_casa_cache is None or agora - _vs_casa_cache[0] >= _RITMO_TTL_S:
+        _vs_casa_cache = (agora, vs_casa.ler())
+    return _vs_casa_cache[1]
+
+
+def _texto_casa(s: dict, mercado: str) -> str:
+    """'Casa 1.85 (da 52%) · nos 68%' + historia; vazio sem odd da casa."""
+    if s.get("p_casa") is None or not s.get("odd_casa"):
+        return ""
+    v = s.get("prob_modelo")
+    try:
+        p_nos = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        p_nos = None
+    if p_nos is None:
+        return ""
+    return vs_casa.texto_alerta(_vs_casa_live(), mercado, float(s["odd_casa"]),
+                                float(s["p_casa"]), p_nos)
 
 
 def _texto_odd_real(odd_real: float | None) -> str:
@@ -1593,7 +1643,10 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
     odd_r = _odd_real(estado.event_id, "cartoes", "over", sinal.linha)
     texto = cartoes_finais.formatar_telegram(sinal, estado)
     if odd_r is not None:
-        texto += f"\n💶 {_texto_odd_real(odd_r)}"
+        s_casa = {"mercado": "cartoes", "lado": "over", "linha": sinal.linha,
+                  "prob_modelo": sinal.p1}
+        vs_casa.anexar_odds(s_casa, _odds_jogo(estado.event_id))
+        texto += f"\n💶 {_texto_casa(s_casa, 'cartoes') or _texto_odd_real(odd_r)}"
     telegram_cliente().enviar(texto)
     _marcar_enviado(estado.event_id, "cartoes_fim", "over")
     log.info("Cartao no fim %s %s vs %s: OVER %.1f %.0f%% (historia %d jogos)",
@@ -2135,6 +2188,12 @@ def _correr_ciclo(args) -> None:
     if todas_sugestoes:
         adic = _gravar_novas(todas_sugestoes, _ficheiro_csv())
         print(f"  → {adic} novas gravadas (de {len(todas_sugestoes)} totais)")
+        try:  # nos vs casa: a odd da casa ao lado de cada dica nova
+            n_casa = _odds_casa_novas(todas_sugestoes)
+            if n_casa:
+                print(f"  → {n_casa} com a odd da casa guardada (nos vs casa)")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Odds da casa falharam: %s", exc)
         # DEDUP entre ciclos: evita re-enviar notificacao do mesmo sinal
         # dentro de 15 minutos (user ja viu, nao precisa de repeticao).
         _purgar_cooldown()
@@ -2382,10 +2441,13 @@ def _correr_ciclo(args) -> None:
                 if s.get("casa") == "ANALISTA":
                     try:
                         odd_r = _odd_real(event_id, mercado, lado, linha)
+                        if odd_r is not None and s.get("p_casa") is None:
+                            vs_casa.anexar_odds(s, _odds_jogo(event_id))
                     except Exception:  # noqa: BLE001
                         odd_r = None
                     if odd_r is not None:
-                        s["odd_real"], s["odd_real_txt"] = odd_r, _texto_odd_real(odd_r)
+                        s["odd_real"] = odd_r
+                        s["odd_real_txt"] = _texto_casa(s, mercado) or _texto_odd_real(odd_r)
                 # 💎 PRIME: tipo de dica que ja provou dar lucro.
                 try:
                     g_prime = _prime_live().grupo_prime(

@@ -94,6 +94,12 @@ def main() -> None:
         print("\n" + prime.formatar(prime.recalcular_e_gravar()))
     except Exception as exc:  # noqa: BLE001
         log.warning("PRIME falhou: %s", exc)
+    # 5b. Nos vs casas: quem previu melhor, e o lucro quando discordamos.
+    try:
+        from apostas.relatorios import vs_casa
+        print("\n" + vs_casa.formatar(vs_casa.recalcular_e_gravar()))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Nos vs casas falhou: %s", exc)
     # 6. Copia de seguranca diaria (BD + dados/tracking, ultimos 7 dias).
     try:
         from apostas.utils.backup import fazer_backup

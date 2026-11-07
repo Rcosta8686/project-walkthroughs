@@ -38,6 +38,8 @@ def main() -> None:
     print("\n" + cartoes_finais.formatar_historia(hist))
     from apostas.relatorios import prime
     print("\n" + prime.formatar(prime.recalcular_e_gravar()))
+    from apostas.relatorios import vs_casa
+    print("\n" + vs_casa.formatar(vs_casa.recalcular_e_gravar()))
     from apostas.modelos import arbitros
     with abrir_sessao() as s:
         print("\n" + arbitros.formatar_ranking(arbitros.da_bd(s)))

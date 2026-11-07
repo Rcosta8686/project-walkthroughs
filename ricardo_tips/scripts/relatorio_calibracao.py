@@ -62,6 +62,8 @@ def main() -> None:
     texto += "\n\n" + cartoes_finais.formatar_historia(cartoes_finais.ler())
     from apostas.relatorios import prime
     texto += "\n\n" + prime.formatar(prime.ler())
+    from apostas.relatorios import vs_casa
+    texto += "\n\n" + vs_casa.formatar(vs_casa.ler())
     try:
         from apostas.modelos import arbitros
         from apostas.utils.db import abrir_sessao
