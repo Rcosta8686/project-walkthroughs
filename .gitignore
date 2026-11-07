@@ -1,5 +1,5 @@
 *.json
-!.claude/settings.json
+!.claude/**/*.json
 *.pickle
 .ipynb_checkpoints
 .idea
@@ -198,5 +198,6 @@ live/
 *.png
 Live*.ipynb
 *.html
+!.claude/**/*.html
 Live*
 .idea
