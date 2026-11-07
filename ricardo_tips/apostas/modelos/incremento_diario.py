@@ -96,6 +96,7 @@ class ResumoIncremento:
     linhas_jogadores: int = 0
     erros: int = 0
     interrompido: bool = False  # Sofascore a bloquear: parou para nao piorar
+    sem_tempo: bool = False     # acabou o prazo da noite: o resto fica para amanha
     equipas_fortes: int = 0     # >= 5 jogos na ficha
     equipas_total: int = 0
     por_liga: dict[str, int] = field(default_factory=dict)
@@ -116,6 +117,8 @@ class ResumoIncremento:
         if self.interrompido:
             linhas.append("  ⚠ Sofascore a bloquear: parei para nao piorar o bloqueio do "
                           "scanner; o resto fica para a proxima noite")
+        if self.sem_tempo:
+            linhas.append("  ⏱ Acabou o tempo da noite: o que ficou por buscar vem na proxima")
         return "\n".join(linhas)
 
 
@@ -140,8 +143,13 @@ def correr(dias: int = 3, agora: datetime | None = None) -> ResumoIncremento:
     desde_ts = int(desde.replace(tzinfo=timezone.utc).timestamp())
     from apostas.ingestao.sofascore_live import sofascore_disponivel
 
+    from apostas.utils import prazo
+
     resumo = ResumoIncremento()
     for tid, nome in sorted(ligas_alvo().items(), key=lambda x: x[1]):
+        if prazo.esgotado():
+            resumo.sem_tempo = True
+            break
         if not sofascore_disponivel():
             resumo.interrompido = True
             break
@@ -162,6 +170,9 @@ def correr(dias: int = 3, agora: datetime | None = None) -> ResumoIncremento:
             falta_eq, falta_jog = eid not in com_equipas, eid not in com_jogadores
             if not (falta_eq or falta_jog):
                 continue
+            if prazo.esgotado():
+                resumo.sem_tempo = True
+                break
             if not sofascore_disponivel():
                 resumo.interrompido = True
                 break

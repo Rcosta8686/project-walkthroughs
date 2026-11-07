@@ -139,9 +139,49 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["incremento_diario.py", "--dias", "2"])
     script.main()
     out = capsys.readouterr().out
-    assert recalculos == [1] and "Ritmo do resto do jogo" in out
+    # aprende logo (local) e outra vez depois, porque entraram 12 jogos novos
+    assert recalculos == [1, 1] and "Ritmo do resto do jogo" in out
+    assert out.index("Copia de seguranca") < out.index("24 ligas")   # a copia vem primeiro
     assert "Nos vs Casas" in out
     assert limpezas == [1] and "Fora: 2 jogos" in out
     assert copias == [1] and "Copia de seguranca: 5 ficheiros" in out
     assert "24 ligas · 60 jogos terminados · 12 novos" in out
     assert len(desde) == 1 and desde[0].hour == 0
+
+
+def test_prazo_da_noite_para_o_incremento(bd, sofascore, monkeypatch):
+    from apostas.modelos import historico_equipas, historico_jogadores
+    from apostas.utils import prazo
+    monkeypatch.setattr(historico_equipas, "gravar_jogo_terminado", lambda eid: 2)
+    monkeypatch.setattr(historico_jogadores, "gravar_jogadores_terminado", lambda eid: 10)
+    prazo.definir(datetime(2000, 1, 1))          # ja passou
+    try:
+        r = inc.correr(dias=3, agora=AGORA)
+    finally:
+        prazo.definir(None)
+    assert r.sem_tempo and r.jogos_novos == 0 and "Acabou o tempo da noite" in r.texto()
+    assert not prazo.esgotado()
+
+
+def test_resolver_para_quando_acaba_o_prazo(tmp_path, monkeypatch):
+    import csv as _csv
+    import resolver_sugestoes_live as rsl
+    from apostas.utils import prazo
+    f = tmp_path / "s.csv"
+    with f.open("w", encoding="utf-8", newline="") as fp:
+        w = _csv.DictWriter(fp, fieldnames=["alert_id", "ts_scan", "event_id", "mercado",
+                                            "lado", "linha", "odd", "resultado"])
+        w.writeheader()
+        w.writerow({"alert_id": "1", "ts_scan": "2026-11-06T20:00:00", "event_id": "5",
+                    "mercado": "golos", "lado": "over", "linha": "2.5", "odd": "1.9"})
+    monkeypatch.setattr(rsl, "CSV_PATH", f)
+    for nome in ("_stats_seguro", "_garantir_tabelas"):
+        monkeypatch.setattr(rsl, nome, lambda *a: None)
+    pedidos = []
+    monkeypatch.setattr(rsl, "_puxar_resultado_final", lambda eid: pedidos.append(eid))
+    prazo.definir(datetime(2000, 1, 1))
+    try:
+        rsl.resolver()
+    finally:
+        prazo.definir(None)
+    assert pedidos == []

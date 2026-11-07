@@ -266,8 +266,12 @@ def _stats_jogos_com_projeccao(desde: datetime | None, ja_feitos: set[int]) -> i
     if not faltam:
         return 0
     print(f"\nEstatisticas finais em falta para {len(faltam)} jogos com projeccao...")
+    from apostas.utils import prazo
     gravados = 0
     for eid in faltam:
+        if prazo.esgotado():
+            print("⏱ Acabou o tempo: as estatisticas em falta ficam para a proxima.")
+            break
         if not sofascore_live.sofascore_disponivel():
             print("⚠ Sofascore a bloquear: estatisticas em falta ficam para depois.")
             break
@@ -410,7 +414,11 @@ def resolver(desde: datetime | None = None) -> None:
     wl_por_alerta: dict[int, str] = {}
     jogos_terminados: set[int] = set()
     atualizacoes: dict[tuple, dict] = {}
+    from apostas.utils import prazo
     for eid, linhas_grupo in por_evento.items():
+        if prazo.esgotado():
+            print("⏱ Acabou o tempo: o resto fica para a proxima corrida.")
+            break
         # Sofascore a bloquear (circuit aberto): parar em vez de insistir —
         # centenas de pedidos seguidos so prolongam o bloqueio do scanner.
         if not sofascore_live.sofascore_disponivel():
