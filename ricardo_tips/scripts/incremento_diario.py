@@ -69,6 +69,14 @@ def main() -> None:
         print(f"\nA resolver alertas desde {inicio:%d/%m}...\n")
         resolver_sugestoes_live.resolver(desde=inicio)
 
+    # 2b. So jogos oficiais de clubes: tira amigaveis/seleccoes que tenham entrado.
+    try:
+        from apostas.utils.limpeza_competicoes import limpar
+        r_limpeza = limpar()
+        if not r_limpeza.vazio:
+            print("\n" + r_limpeza.texto())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Limpeza de amigaveis/seleccoes falhou: %s", exc)
     # 3. Ritmo do resto do jogo: reaprende com os jogos acabados (o scanner le
     #    o resultado na hora seguinte).
     try:

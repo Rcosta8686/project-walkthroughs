@@ -158,6 +158,11 @@ def gravar_jogadores_terminado(event_id: int) -> int:
     if event_json is None or "event" not in event_json:
         return 0
     ev = event_json["event"]
+    from apostas.dados_referencia.competicoes import motivo_exclusao
+    motivo = motivo_exclusao(ev)
+    if motivo:  # amigaveis / seleccoes / formacao: nem se guardam
+        log.debug("event %s ignorado (%s)", event_id, motivo)
+        return 0
     status = ev.get("status") or {}
     code = status.get("code") or 0
     desc_s = str(status.get("description") or "").lower()

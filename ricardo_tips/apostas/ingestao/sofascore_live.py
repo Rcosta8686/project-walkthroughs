@@ -446,7 +446,7 @@ def listar_jogos_do_dia(
         # (ja aconteceram, nao sao pre-match). Nao os incluimos.
         return False
 
-    eventos_filtrados_status = [e for e in eventos if _passa_status(e)]
+    eventos_filtrados_status = so_jogos_oficiais([e for e in eventos if _passa_status(e)])
     log.info("Pos filtro status: %d eventos (de %d brutos)",
              len(eventos_filtrados_status), len(eventos))
 
@@ -464,6 +464,12 @@ def listar_jogos_do_dia(
 
 
 ultima_listagem_live_ok = True
+
+
+def so_jogos_oficiais(eventos: list[dict]) -> list[dict]:
+    """Tira amigaveis, jogos de seleccoes e de formacao (nem se analisam)."""
+    from apostas.dados_referencia.competicoes import motivo_exclusao
+    return [e for e in eventos if motivo_exclusao(e) is None]
 
 
 def listar_jogos_live(
@@ -530,7 +536,7 @@ def listar_jogos_live(
         return []
     _circuit_registar(sucesso=True)
     ultima_listagem_live_ok = True
-    eventos = data.get("events", [])
+    eventos = so_jogos_oficiais(data.get("events", []))
     if ids_ligas:
         ids_set = set(ids_ligas)
         eventos = [
