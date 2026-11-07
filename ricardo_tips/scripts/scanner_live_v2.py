@@ -63,7 +63,7 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
-from apostas.modelos import correcao_ritmo  # noqa: E402
+from apostas.modelos import correcao_ritmo, priors_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -1116,8 +1116,10 @@ def _analisar_jogo(estado, odds_json: dict, ev_min: float, filtro_casas: tuple[s
     sugestoes = []
     exp_pre = _puxar_expectativa(estado)
     ajustes = _ajustes_cerebro_para(estado)
+    ritmo = _ritmo_live()
     prev = correcao_ritmo.prever_corrigido(
-        estado, _ritmo_live(), expectativa_pre=exp_pre, ajustes_cerebro=ajustes,
+        estado, ritmo, priors=_priors_jogo(estado, ritmo),
+        expectativa_pre=exp_pre, ajustes_cerebro=ajustes,
     )
 
     def _emit(mercado, lado, linha, casa, odd, prob):
@@ -1469,6 +1471,34 @@ def _ritmo_live() -> correcao_ritmo.CorrecaoRitmo:
             for m in sorted(c.mudados)))
     _ritmo_cache = (agora, c)
     return c
+
+
+_PRIORS_TTL_S = 6 * 3600
+_priors_cache: dict[int, tuple[float, "priors_equipas.PriorsJogo | None"]] = {}
+
+
+def _priors_jogo(estado, ritmo: correcao_ritmo.CorrecaoRitmo):
+    """O normal deste jogo segundo os mini-cerebros das duas equipas (uma vez
+    por jogo). So quando algum mercado usa a versao 'equipas' do modelo."""
+    if not ritmo.com_equipas or estado.home_id is None or estado.away_id is None:
+        return None
+    eid = int(estado.event_id)
+    agora = time.time()
+    hit = _priors_cache.get(eid)
+    if hit is not None and agora - hit[0] < _PRIORS_TTL_S:
+        return hit[1]
+    try:
+        with abrir_sessao() as s:
+            hist = priors_equipas.carregar_do_bd(s, [int(estado.home_id), int(estado.away_id)])
+            priors = hist.priors(int(estado.home_id), int(estado.away_id))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Priors %s falharam: %s", eid, exc)
+        priors = None
+    if len(_priors_cache) > 500:
+        for k in sorted(_priors_cache, key=lambda k: _priors_cache[k][0])[:250]:
+            _priors_cache.pop(k, None)
+    _priors_cache[eid] = (agora, priors)
+    return priors
 
 
 def _sem_alertas_antes_do_ritmo(rows: list[dict],
@@ -1928,7 +1958,8 @@ def _correr_ciclo(args) -> None:
         # que acerta mais). As projeccoes usam a bruta: tem a sua propria
         # correccao, aprendida sobre ela.
         ritmo = _ritmo_live()
-        prev = (correcao_ritmo.prever_corrigido(estado, ritmo, ajustes_cerebro=ajustes)
+        prev = (correcao_ritmo.prever_corrigido(estado, ritmo, priors=_priors_jogo(estado, ritmo),
+                                                ajustes_cerebro=ajustes)
                 if ritmo.mudados else prev_bruta)
         _imprimir_estado(estado, prev)
 

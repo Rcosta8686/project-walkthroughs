@@ -158,7 +158,7 @@ def test_gravar_ler_e_manter_a_data_de_activacao(tmp_path):
     cr.gravar(c, f)
     lido = cr.ler(f)
     assert lido.ativos == {"cartoes"} and lido.mult("cartoes", 60) == c.mult("cartoes", 60)
-    depois = cr.calcular(_pares("cartoes", 1.3, seed=5), anteriores=lido.datas_ativacao,
+    depois = cr.calcular(_pares("cartoes", 1.3, seed=5), anterior=lido,
                          agora=AGORA + timedelta(days=3))
     assert depois.datas_ativacao["cartoes"] == AGORA   # continua a contar desde a 1a vez
     assert "Ritmo do resto do jogo" in cr.formatar(depois) and "✅ ligado" in cr.formatar(depois)
@@ -234,6 +234,6 @@ def test_prever_corrigido_usa_o_ritmo_suavizado_ligado():
     from apostas.modelos import live_predictor
     est = _estado(minuto=30)
     est.yellow_cards_casa = est.yellow_cards_fora = 0
-    c = cr.CorrecaoRitmo(suavizados={"cartoes"})
+    c = cr.CorrecaoRitmo(bases={"cartoes": "suave"})
     assert cr.prever_corrigido(est, c).lam_cartoes_amarelos_restantes == pytest.approx(
         live_predictor.prever(est, ritmo_suavizado=("cartoes",)).lam_cartoes_amarelos_restantes)

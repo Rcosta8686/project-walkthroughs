@@ -304,6 +304,7 @@ def prever(
     expectativa_pre=None,
     ajustes_cerebro=None,
     ritmo_suavizado=(),
+    remates_pre: tuple[float, float] | None = None,
 ) -> PrevisaoLive:
     """Devolve previsao de eventos restantes para um jogo in-play.
 
@@ -404,6 +405,9 @@ def prever(
 
     # 6. Cantos: posse diferencial + shots blocked + chasing
     suave = set(ritmo_suavizado or ())
+    # Remates normais por equipa (por minuto): mini-cerebros se vierem, senao 12/90.
+    rem_pre_c = (remates_pre[0] if remates_pre else 12.0) / 90.0
+    rem_pre_f = (remates_pre[1] if remates_pre else 12.0) / 90.0
     cantos_actual = (estado.corners_casa or 0) + (estado.corners_fora or 0)
     if minuto > 10 and "cantos" in suave:
         cantos_rate = _ritmo_suave(cantos_actual, minuto, lam_cantos_pre / 90.0,
@@ -489,20 +493,21 @@ def prever(
         cantos_rate_f = cantos_f_act / minuto
         if "remates" in suave:
             p_sh = PESO_PRIOR_MIN["remates"]
-            shots_rate_c = _ritmo_suave(shots_c, minuto, 12.0 / 90.0, p_sh)
-            shots_rate_f = _ritmo_suave(shots_f, minuto, 12.0 / 90.0, p_sh)
+            shots_rate_c = _ritmo_suave(shots_c, minuto, rem_pre_c, p_sh)
+            shots_rate_f = _ritmo_suave(shots_f, minuto, rem_pre_f, p_sh)
         if "remates_a_baliza" in suave:
             p_sot = PESO_PRIOR_MIN["remates_a_baliza"]
-            prior_sot = (12.0 / 90.0) * _LIGA_SOT_RATIO
-            sot_rate_c = (sot_rate_c * minuto + prior_sot * p_sot) / (minuto + p_sot)
-            sot_rate_f = (sot_rate_f * minuto + prior_sot * p_sot) / (minuto + p_sot)
+            sot_rate_c = ((sot_rate_c * minuto + rem_pre_c * _LIGA_SOT_RATIO * p_sot)
+                          / (minuto + p_sot))
+            sot_rate_f = ((sot_rate_f * minuto + rem_pre_f * _LIGA_SOT_RATIO * p_sot)
+                          / (minuto + p_sot))
         if "cantos" in suave:
             p_ca = PESO_PRIOR_MIN["cantos"]
             cantos_rate_c = _ritmo_suave(cantos_c_act, minuto, lam_cantos_pre / 180.0, p_ca)
             cantos_rate_f = _ritmo_suave(cantos_f_act, minuto, lam_cantos_pre / 180.0, p_ca)
     else:
-        shots_rate_c = shots_rate_f = 12.0 / 90.0
-        sot_rate_c = sot_rate_f = (12.0 / 90.0) * _LIGA_SOT_RATIO
+        shots_rate_c, shots_rate_f = rem_pre_c, rem_pre_f
+        sot_rate_c, sot_rate_f = rem_pre_c * _LIGA_SOT_RATIO, rem_pre_f * _LIGA_SOT_RATIO
         cantos_rate_c = cantos_rate_f = 5.3 / 90.0
 
     # Multiplicadores por equipa (chasing + momentum)
