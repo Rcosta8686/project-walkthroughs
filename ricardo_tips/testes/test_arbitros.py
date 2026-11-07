@@ -52,6 +52,30 @@ def test_nome_do_live_encontra_o_da_bd():
     assert h.perfil("A &amp; B").n == 6     # live sem descodificar
 
 
+def _jogo_liga(ev, arbitro, cards, liga):
+    rows = _jogo(ev, arbitro, cards)
+    for r in rows:
+        r.liga = liga
+    return rows
+
+
+def test_arbitro_compara_com_a_liga_onde_apita():
+    """Eredivisie da 3 cartoes por jogo, Liga Portugal 6: um arbitro holandes
+    com 3 por jogo e normal, nao brando; um portugues com 6 tambem."""
+    linhas = []
+    for i in range(30):
+        linhas += _jogo_liga(i, f"NL{i % 3}", 3, "Eredivisie")
+        linhas += _jogo_liga(100 + i, f"PT{i % 3}", 6, "Liga Portugal")
+    linhas += [r for i in range(10) for r in _jogo_liga(200 + i, "Duro NL", 5, "Eredivisie")]
+    h = arb.HistoricoArbitros(linhas)
+    assert h.perfil("NL0").fator == pytest.approx(1.0, abs=0.12)
+    assert h.perfil("PT0").fator == pytest.approx(1.0, abs=0.12)
+    duro = h.perfil("Duro NL")
+    assert duro.fator > 1.15 and duro.media_liga < 4.0
+    assert "(a liga costuma dar" in duro.texto()
+    assert "Ligas: mais cartoes liga portugal" in arb.formatar_ranking(h)
+
+
 def test_poucos_jogos_nao_ha_perfil():
     h = arb.HistoricoArbitros(_base() + [r for i in range(arb.MIN_JOGOS - 1)
                                          for r in _jogo(i, "Novo", 9)])
@@ -88,7 +112,9 @@ def test_ranking_e_texto_do_relatorio():
     r = h.ranking()
     assert r[0].nome == "Duro" and r[-1].nome == "Brando"
     txt = arb.formatar_ranking(h)
-    assert "Mais cartoes: Duro 8.0 (10j)" in txt and "Menos cartoes: Brando 1.0 (10j)" in txt
+    assert "Mais cartoes que a liga: Duro +" in txt and "(8.0 vs liga 4.2, 10j)" in txt
+    assert "Menos cartoes que a liga: Brando -" in txt
+    assert txt.count("Duro") == 1                 # nao aparece nas duas listas
     assert "Ainda sem arbitros" in arb.formatar_ranking(arb.HistoricoArbitros([]))
 
 

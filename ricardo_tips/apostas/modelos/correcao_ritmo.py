@@ -113,7 +113,7 @@ def _estado_de_snapshot(sn):
 
 _COLUNAS_EEJ = ("sofascore_event_id", "sofascore_team_id", "data_jogo", "era_casa",
                 "golos_marcados", "golos_sofridos", "remates", "sot", "cantos", "cards_amarelos",
-                "arbitro")
+                "arbitro", "liga")
 _DIAS_HISTORICO = 150  # para os priors dos jogos mais antigos da janela
 
 
