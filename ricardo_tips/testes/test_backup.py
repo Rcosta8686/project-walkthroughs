@@ -43,3 +43,15 @@ def test_sem_bd_nao_rebenta(tmp_path):
     r = backup.fazer_backup(agora=datetime(2026, 11, 8), raiz=tmp_path,
                             bd=tmp_path / "nao_existe.db")
     assert r.ficheiros == 0
+
+
+def test_aviso_quando_o_incremento_nao_corre(tmp_path):
+    from datetime import datetime
+
+    from apostas.utils.backup import aviso_sem_copias
+    agora = datetime(2026, 11, 7, 20)
+    assert "nunca foi feita nenhuma" in aviso_sem_copias(agora, raiz=tmp_path)
+    (tmp_path / "dados" / "backups" / "2026-11-01").mkdir(parents=True)
+    assert "a ultima e de 01/11" in aviso_sem_copias(agora, raiz=tmp_path)
+    (tmp_path / "dados" / "backups" / "2026-11-07").mkdir()
+    assert aviso_sem_copias(agora, raiz=tmp_path) == ""

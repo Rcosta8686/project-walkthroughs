@@ -50,6 +50,10 @@ def main() -> None:
     with abrir_sessao() as s:
         print("\n" + arbitros.formatar_ranking(arbitros.da_bd(s)))
     print(f"\nGravado em {correcao_ritmo.caminho()} — o scanner usa-o na proxima hora.")
+    from apostas.utils.backup import aviso_sem_copias
+    aviso = aviso_sem_copias()
+    if aviso:
+        print("\n" + aviso)
 
 
 if __name__ == "__main__":

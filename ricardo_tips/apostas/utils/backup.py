@@ -52,6 +52,28 @@ def _copiar_bd(origem: Path, destino_zip: Path) -> None:
     tmp.unlink()
 
 
+def aviso_sem_copias(agora: datetime | None = None, raiz: Path | None = None) -> str:
+    """Texto de aviso se nao ha copia de seguranca das ultimas 2 noites: e
+    sinal de que o incremento das 00:15 nao esta a correr (nem a guardar os
+    jogos novos, nem a aprender)."""
+    from apostas.utils.config import project_root
+    agora = agora or datetime.now()
+    base = (raiz or project_root()) / "dados" / "backups"
+    dias = []
+    if base.exists():
+        for d in base.iterdir():
+            try:
+                dias.append(datetime.strptime(d.name, "%Y-%m-%d"))
+            except ValueError:
+                continue
+    if dias and (agora - max(dias)).days <= 2:
+        return ""
+    quando = f"a ultima e de {max(dias):%d/%m}" if dias else "nunca foi feita nenhuma"
+    return ("⚠ Copia de seguranca: " + quando + ". O incremento das 00:15 "
+            "(tarefa RicardoTips_IncrementoDiario) nao esta a correr: sem ele nao se guardam "
+            "os jogos novos nem se aprende de noite.")
+
+
 def fazer_backup(agora: datetime | None = None, raiz: Path | None = None,
                  bd: Path | None = None) -> ResultadoBackup:
     from apostas.utils.config import db_path, project_root
