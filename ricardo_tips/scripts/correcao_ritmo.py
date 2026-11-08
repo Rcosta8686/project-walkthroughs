@@ -47,6 +47,9 @@ def main() -> None:
         print("\n" + jogadores.formatar(jogadores.recalcular_e_gravar(s)))
     print("\n" + cartoes_finais.formatar_historia(hist))
     print("\n" + golos_finais.formatar_historia(hist_golos))
+    from apostas.relatorios import calibracao_especiais
+    with abrir_sessao() as s:
+        print("\n" + calibracao_especiais.formatar(calibracao_especiais.recalcular_e_gravar(s)))
     from apostas.relatorios import prime
     print("\n" + prime.formatar(prime.recalcular_e_gravar()))
     from apostas.relatorios import vs_casa

@@ -108,6 +108,12 @@ def _aprender() -> None:
     _passo("jogadores", jogadores_)
     _passo("cartao no fim", cartoes)
     _passo("mais golos", golos)
+
+    def especiais() -> None:
+        from apostas.relatorios import calibracao_especiais
+        with abrir_sessao() as s:
+            print("\n" + calibracao_especiais.formatar(calibracao_especiais.recalcular_e_gravar(s)))
+    _passo("cartao no fim e mais golos: o que ja acertaram", especiais)
     _passo("PRIME", prime_)
     _passo("nos vs casas", casas)
 

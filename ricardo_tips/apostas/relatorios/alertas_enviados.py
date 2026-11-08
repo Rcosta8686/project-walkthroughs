@@ -26,8 +26,10 @@ from apostas.utils.tempo import agora_utc
 
 # odd = odd indicada na dica (alvo/justa); odd_real = a que o mercado pagava
 # no momento do envio (Sofascore), quando havia. O lucro mede-se a odd real.
+# p_modelo: nos alertas que se corrigem sozinhos (cartao no fim, mais golos), a
+# probabilidade antes da correccao - aprende-se sempre sobre ela.
 CAMPOS = ["alert_id", "ts_envio", "tipo", "event_id", "mercado", "lado", "linha", "odd",
-          "odd_real"]
+          "odd_real", "p_modelo"]
 _NOME_MERCADO = {
     "remates": "💥 remates", "remates_a_baliza": "🎯 remates a baliza",
     "sot": "🎯 remates a baliza", "cantos": "🚩 cantos", "cartoes": "🟨 cartoes",
@@ -57,7 +59,7 @@ def _actualizar_cabecalho(p: Path) -> None:
 
 def registar(alert_id=None, ts: datetime | None = None, path: Path | None = None, *,
              tipo: str = "alerta", event_id=None, mercado: str = "", lado: str = "",
-             linha=None, odd=None, odd_real=None) -> None:
+             linha=None, odd=None, odd_real=None, p_modelo=None) -> None:
     if tipo == "alerta" and not alert_id:
         return
     p = path or caminho()
@@ -73,7 +75,8 @@ def registar(alert_id=None, ts: datetime | None = None, path: Path | None = None
                     tipo, event_id or "", mercado, lado,
                     "" if linha is None else linha,
                     "" if odd is None else round(float(odd), 3),
-                    "" if odd_real is None else round(float(odd_real), 3)])
+                    "" if odd_real is None else round(float(odd_real), 3),
+                    "" if p_modelo is None else round(float(p_modelo), 4)])
 
 
 def carregar(path: Path | None = None) -> list[dict]:

@@ -317,8 +317,10 @@ def _limpar_alertas_do_registo(registo: Path | None, carimbo: str) -> None:
         return
     cab = rows[0]
     i_tipo = cab.index("tipo") if "tipo" in cab else None
+    # So os alertas (resolvidos pelo alert_id do CSV refeito) saem; projeccoes,
+    # cartao no fim e mais golos resolvem-se pela BD e ficam.
     manter = [r for r in rows[1:] if i_tipo is not None and len(r) > i_tipo
-              and r[i_tipo] == "projeccao"]
+              and r[i_tipo] not in ("", "alerta")]
     shutil.copy2(registo, registo.with_name(f"{registo.stem}.backup-{carimbo}{registo.suffix}"))
     with registo.open("w", encoding="utf-8", newline="") as fp:
         csv.writer(fp).writerows([cab] + manter)

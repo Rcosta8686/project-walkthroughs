@@ -67,6 +67,7 @@ from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, golos_fina
 from apostas.modelos import priors_equipas  # noqa: E402
 from apostas.modelos import jogadores, perfil_treinador, precisao_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live, prime, vs_casa  # noqa: E402
+from apostas.relatorios import calibracao_especiais  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
 from apostas.ingestao import odds_live  # noqa: E402
@@ -1832,6 +1833,18 @@ def _ajuste_arbitro_cartoes(estado, fator_bd: float) -> float:
     return fator_bd / fixo
 
 
+_calib_especiais_cache: tuple[float, dict] | None = None
+
+
+def _calib_especiais_live() -> dict:
+    """O que o cartao no fim e o mais golos ja enviados acertaram (recalculado a noite)."""
+    global _calib_especiais_cache
+    agora = time.time()
+    if _calib_especiais_cache is None or agora - _calib_especiais_cache[0] >= _RITMO_TTL_S:
+        _calib_especiais_cache = (agora, calibracao_especiais.ler())
+    return _calib_especiais_cache[1]
+
+
 def _alerta_cartoes_fim(estado, prev) -> bool:
     """Envia o 'cartao no fim' uma vez por jogo quando modelo e historia concordam."""
     if cartoes_finais.fase_de(int(estado.minuto or 0)) is None:
@@ -1855,12 +1868,17 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
         derbi = referencias.eh_derby(estado.home, estado.away)
     except Exception:  # noqa: BLE001
         f_arb, derbi = 1.0, False
+    calib = _calib_especiais_live().get("cartoes_fim")
     sinal = cartoes_finais.avaliar(estado, prev, historia, fator_arbitro=f_arb, derbi=derbi,
-                                   arbitro_txt=arb_txt, ajuste_lam=ajuste)
+                                   arbitro_txt=arb_txt, ajuste_lam=ajuste,
+                                   ajuste_p=calib.ajuste if calib else 0.0)
     if sinal is None:
         return False
     odd_r = _odd_real(estado.event_id, "cartoes", "over", sinal.linha)
     texto = cartoes_finais.formatar_telegram(sinal, estado)
+    historial = calibracao_especiais.texto_alerta(calib)
+    if historial:
+        texto += "\n" + historial
     try:
         txt_equipas = _texto_equipas(estado, prev, "cartoes")
         if txt_equipas:
@@ -1880,7 +1898,7 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
     try:
         alertas_enviados.registar(tipo="cartoes_fim", event_id=estado.event_id,
                                   mercado="cartoes", lado="over", linha=sinal.linha,
-                                  odd=sinal.odd_justa, odd_real=odd_r)
+                                  odd=sinal.odd_justa, odd_real=odd_r, p_modelo=sinal.p1_bruto)
     except OSError as exc:
         log.warning("Registo do cartao no fim falhou: %s", exc)
     return True
@@ -1908,11 +1926,16 @@ def _alerta_mais_golos(estado, prev) -> bool:
     historia = _historia_golos_live()
     if not historia.taxas:
         return False
-    sinal = golos_finais.avaliar(estado, prev, historia)
+    calib = _calib_especiais_live().get("mais_golos")
+    sinal = golos_finais.avaliar(estado, prev, historia,
+                                 ajuste_p=calib.ajuste if calib else 0.0)
     if sinal is None:
         return False
     odd_r = _odd_real(estado.event_id, "golos", "over", sinal.linha)
     texto = golos_finais.formatar_telegram(sinal, estado)
+    historial = calibracao_especiais.texto_alerta(calib)
+    if historial:
+        texto += "\n" + historial
     try:
         txt_equipas = _texto_equipas(estado, prev, "golos")
         if txt_equipas:   # sem repetir a linha curta dos golos
@@ -1933,7 +1956,7 @@ def _alerta_mais_golos(estado, prev) -> bool:
     try:
         alertas_enviados.registar(tipo="mais_golos", event_id=estado.event_id,
                                   mercado="golos", lado="over", linha=sinal.linha,
-                                  odd=sinal.odd_justa, odd_real=odd_r)
+                                  odd=sinal.odd_justa, odd_real=odd_r, p_modelo=sinal.p1_bruto)
     except OSError as exc:
         log.warning("Registo do mais golos falhou: %s", exc)
     return True

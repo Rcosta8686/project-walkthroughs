@@ -122,6 +122,9 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
     monkeypatch.setattr(cartoes_finais, "recalcular_e_gravar", lambda s: cartoes_finais.Historia())
     from apostas.modelos import golos_finais
     monkeypatch.setattr(golos_finais, "recalcular_e_gravar", lambda s: golos_finais.Historia())
+    from apostas.relatorios import calibracao_especiais
+    monkeypatch.setattr(calibracao_especiais, "recalcular_e_gravar",
+                        lambda s: {"cartoes_fim": calibracao_especiais.Registo(30, 21, 22.5, -0.2)})
     from apostas.relatorios import prime
     from apostas.utils import backup
     monkeypatch.setattr(prime, "recalcular_e_gravar", lambda: prime.Prime())
@@ -151,6 +154,7 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
     assert out.index("Copia de seguranca") < out.index("24 ligas")   # a copia vem primeiro
     assert "Nos vs Casas" in out
     assert "Mais golos — historia" in out
+    assert "cartao no fim: 21/30 acertados (70%) · davamos 75%" in out
     assert limpezas == [1] and "Fora: 2 jogos" in out
     assert copias == [1] and "Copia de seguranca: 5 ficheiros" in out
     assert "24 ligas · 60 jogos terminados · 12 novos" in out

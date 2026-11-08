@@ -177,6 +177,7 @@ class SinalCartoesFim:
     equipa: str               # mais provavel levar o proximo cartao
     p_equipa: float
     garantido: float = 0.0    # pior caso estatistico (Wilson) da taxa historica
+    p1_bruto: float | None = None  # antes da correccao pelos alertas ja enviados
 
     @property
     def odd_justa(self) -> float:
@@ -189,10 +190,11 @@ class SinalCartoesFim:
 
 def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
             derbi: bool = False, arbitro_txt: str | None = None,
-            ajuste_lam: float = 1.0) -> SinalCartoesFim | None:
+            ajuste_lam: float = 1.0, ajuste_p: float = 0.0) -> SinalCartoesFim | None:
     """None se o momento nao serve (fora da janela, jogo decidido, pouca tensao
     ou as duas fontes nao concordam). ajuste_lam corrige os cartoes previstos
-    quando o arbitro real (nossos jogos) difere do que o modelo usou."""
+    quando o arbitro real (nossos jogos) difere do que o modelo usou; ajuste_p
+    e a correccao aprendida com os cartoes no fim ja enviados (logit)."""
     from apostas.relatorios.prime import wilson_inferior
     minuto = int(estado.minuto or 0)
     mc, mf = int(estado.marcador_casa or 0), int(estado.marcador_fora or 0)
@@ -231,7 +233,9 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
     if achado is None:
         return None
     chave, taxa = achado
-    p1 = min(p1_modelo, taxa.p1)
+    from apostas.relatorios.calibracao_especiais import ajustar
+    p1_bruto = min(p1_modelo, taxa.p1)
+    p1 = ajustar(p1_bruto, ajuste_p)
     if p1 < PROB_MIN:
         return None
 
@@ -251,7 +255,7 @@ def avaliar(estado, prev, historia: Historia, fator_arbitro: float = 1.0,
         minuto=minuto, amarelos=yc + yf, linha=yc + yf + 0.5, p1=p1, p1_modelo=p1_modelo,
         p1_historia=taxa.p1, p2=min(p2_modelo, taxa.p2), n_historia=taxa.n,
         situacao=descr.format(*chave), razoes=razoes, equipa=equipa, p_equipa=p_eq,
-        garantido=wilson_inferior(taxa.mais1, taxa.n))
+        garantido=wilson_inferior(taxa.mais1, taxa.n), p1_bruto=p1_bruto)
 
 
 def formatar_telegram(s: SinalCartoesFim, estado) -> str:

@@ -232,15 +232,17 @@ class SinalMaisGolos:
     equipa: str               # mais provavel marcar o proximo
     p_equipa: float
     garantido: float = 0.0    # pior caso estatistico (Wilson) da taxa historica
+    p1_bruto: float | None = None  # antes da correccao pelos alertas ja enviados
 
     @property
     def odd_justa(self) -> float:
         return round(1 / self.p1, 2)
 
 
-def avaliar(estado, prev, historia: Historia) -> SinalMaisGolos | None:
+def avaliar(estado, prev, historia: Historia, ajuste_p: float = 0.0) -> SinalMaisGolos | None:
     """None se o momento nao serve (fora da janela, sem pressao, ou as duas
-    fontes nao concordam em pelo menos PROB_MIN)."""
+    fontes nao concordam em pelo menos PROB_MIN). ajuste_p: correccao aprendida
+    com os 'mais golos' ja enviados (logit)."""
     from apostas.relatorios.prime import wilson_inferior
     minuto = int(estado.minuto or 0)
     if fase_de(minuto) is None:
@@ -255,7 +257,9 @@ def avaliar(estado, prev, historia: Historia) -> SinalMaisGolos | None:
     if achado is None:
         return None
     chave, taxa = achado
-    p1 = min(p1_modelo, taxa.p1)
+    from apostas.relatorios.calibracao_especiais import ajustar
+    p1_bruto = min(p1_modelo, taxa.p1)
+    p1 = ajustar(p1_bruto, ajuste_p)
     if p1 < PROB_MIN:
         return None
     equipa, p_eq = proximo_golo(estado, prev)
@@ -264,7 +268,7 @@ def avaliar(estado, prev, historia: Historia) -> SinalMaisGolos | None:
         minuto=minuto, golos=mc + mf, linha=mc + mf + 0.5, p1=p1, p1_modelo=p1_modelo,
         p1_historia=taxa.p1, p2=min(p2_modelo, taxa.p2), n_historia=taxa.n,
         situacao=descr.format(*chave), razoes=razoes, equipa=equipa, p_equipa=p_eq,
-        garantido=wilson_inferior(taxa.mais1, taxa.n))
+        garantido=wilson_inferior(taxa.mais1, taxa.n), p1_bruto=p1_bruto)
 
 
 def formatar_telegram(s: SinalMaisGolos, estado) -> str:

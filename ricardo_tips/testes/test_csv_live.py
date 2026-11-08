@@ -147,8 +147,13 @@ def test_registo_de_enviados_perde_os_alertas_e_guarda_as_projeccoes(tmp_path):
     ae.registar(4, datetime(2026, 11, 4, 23), reg)
     ae.registar(tipo="projeccao", ts=datetime(2026, 11, 4, 23), path=reg,
                 event_id=9, mercado="cantos", lado="over", linha=8.5, odd=1.5)
+    ae.registar(tipo="cartoes_fim", ts=datetime(2026, 11, 4, 23), path=reg,
+                event_id=9, mercado="cartoes", lado="over", linha=4.5, odd=1.3)
+    ae.registar(tipo="mais_golos", ts=datetime(2026, 11, 4, 23), path=reg,
+                event_id=9, mercado="golos", lado="over", linha=2.5, odd=1.35)
     cl.realinhar(f, registo_enviados=reg)
-    assert [r["tipo"] for r in ae.carregar(reg)] == ["projeccao"]
+    # os resolvidos pela BD ficam; so o alerta (alert_id do CSV refeito) sai
+    assert [r["tipo"] for r in ae.carregar(reg)] == ["projeccao", "cartoes_fim", "mais_golos"]
 
 
 def test_resolver_volta_a_ver_as_linhas_reparadas(tmp_path, monkeypatch):
