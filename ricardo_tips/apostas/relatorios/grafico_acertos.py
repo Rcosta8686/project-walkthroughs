@@ -24,6 +24,7 @@ from pathlib import Path
 from apostas.relatorios import alertas_enviados
 from apostas.relatorios.alertas_enviados import DicaEnviada
 from apostas.utils.config import project_root
+from apostas.utils.tempo import agora_utc
 
 PERIODOS = {"dia": 30, "semana": 12, "mes": 12}   # quantas barras
 _MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
@@ -43,6 +44,7 @@ class Balde:
     nulas: int = 0
     pendentes: int = 0
     lucro: float = 0.0
+    primeira: datetime | None = None   # hora da primeira dica nesta barra
 
     @property
     def decididas(self) -> int:
@@ -89,8 +91,11 @@ def _anterior(inicio: datetime, periodo: str) -> datetime:
 
 
 def _rotulo(inicio: datetime, periodo: str) -> str:
+    """Sem ambiguidades: 'nov 2026' (nao 'nov 26', que parece 26 de novembro)."""
     if periodo == "mes":
-        return f"{_MESES[inicio.month - 1]} {inicio:%y}"
+        return f"{_MESES[inicio.month - 1]} {inicio:%Y}"
+    if periodo == "semana":
+        return f"{inicio:%d/%m}–{inicio + timedelta(days=6):%d/%m}"
     return f"{inicio:%d/%m}"
 
 
@@ -122,16 +127,16 @@ def agrupar(dicas: list[DicaEnviada], periodo: str, ate: datetime,
         if not primeiro <= d.ts < ate:
             continue
         b = por_inicio.get(inicio_do_balde(d.ts, periodo))
-        if b is None:
-            continue
+        if b is None or d.resultado not in ("W", "L", "push", "pendente"):
+            continue                                  # SD: sem estatisticas
+        if b.primeira is None or d.ts < b.primeira:
+            b.primeira = d.ts
         if d.resultado == "pendente":
             b.pendentes += 1
             continue
         if d.resultado == "push":
             b.nulas += 1
             continue
-        if d.resultado not in ("W", "L"):
-            continue                                  # SD: sem estatisticas
         m = mercados.setdefault(d.grupo, Mercado(nome_limpo(d.grupo)))
         if d.resultado == "W":
             b.acertos += 1
@@ -143,6 +148,10 @@ def agrupar(dicas: list[DicaEnviada], periodo: str, ate: datetime,
             b.lucro += d.lucro
             m.lucro += d.lucro
     ordem = sorted(mercados.values(), key=lambda m: (-m.decididas, m.nome))
+    # Antes da primeira dica registada nao ha nada a mostrar: o grafico comeca ai.
+    while len(baldes) > 1 and not (baldes[0].decididas or baldes[0].nulas
+                                   or baldes[0].pendentes):
+        baldes.pop(0)
     return baldes, ordem
 
 
@@ -166,12 +175,26 @@ def _pct(x: float | None) -> str:
     return "—" if x is None else f"{x * 100:.0f}%"
 
 
-def _nome_ultimo(b: Balde, periodo: str) -> str:
+def _nome_ultimo(b: Balde, periodo: str, agora: datetime) -> str:
+    em_curso = b.inicio <= agora < b.fim
     if periodo == "mes":
-        return f"{_MESES_LONGOS[b.inicio.month - 1]} {b.inicio:%Y}"
+        nome = f"{_MESES_LONGOS[b.inicio.month - 1]} {b.inicio:%Y}"
+        return f"{nome} (ate agora)" if em_curso else nome
     if periodo == "semana":
-        return f"semana {b.inicio:%d/%m}–{b.fim - timedelta(days=1):%d/%m}"
-    return f"dia {b.inicio:%d/%m}"
+        datas = f"{b.inicio:%d/%m}–{b.fim - timedelta(days=1):%d/%m/%Y}"
+        return f"esta semana ({datas}, ate agora)" if em_curso else f"semana {datas}"
+    if em_curso:
+        return f"hoje ({b.inicio:%d/%m/%Y}, ate agora)"
+    if b.fim <= agora < b.fim + timedelta(days=1):
+        return f"ontem ({b.inicio:%d/%m/%Y})"
+    return f"dia {b.inicio:%d/%m/%Y}"
+
+
+def datas(baldes: list[Balde], agora: datetime) -> str:
+    """'09/10/2026 a 07/11/2026': do primeiro dia do grafico ao ultimo ja vivido."""
+    inicio = baldes[0].primeira or baldes[0].inicio      # a primeira dica, nao o dia 1
+    ultimo = min(baldes[-1].fim - timedelta(days=1), datetime(agora.year, agora.month, agora.day))
+    return f"{inicio:%d/%m/%Y} a {max(ultimo, inicio):%d/%m/%Y}"
 
 
 def _soma(baldes: list[Balde]) -> Balde:
@@ -191,14 +214,15 @@ def _linha_resumo(b: Balde) -> str:
             f"lucro {b.lucro:+.2f} un{extra}")
 
 
-def legenda(baldes: list[Balde], mercados: list[Mercado], periodo: str) -> str:
+def legenda(baldes: list[Balde], mercados: list[Mercado], periodo: str,
+            agora: datetime | None = None) -> str:
     """Texto curto que vai com o grafico (Telegram: max. 1024 letras)."""
+    agora = agora or agora_utc()
     ultimo, total = baldes[-1], _soma(baldes)
-    janela = {"dia": f"ultimos {len(baldes)} dias", "semana": f"ultimas {len(baldes)} semanas",
-              "mes": f"ultimos {len(baldes)} meses"}[periodo]
+    nome = _nome_ultimo(ultimo, periodo, agora)
     linhas = [f"*📊 Dicas enviadas {_NOME_PERIODO[periodo]}*",
-              f"*{_nome_ultimo(ultimo, periodo).capitalize()}:* {_linha_resumo(ultimo)}",
-              f"*{janela.capitalize()}:* {_linha_resumo(total)}"]
+              f"*{nome[:1].upper() + nome[1:]}:* {_linha_resumo(ultimo)}",
+              f"*{datas(baldes, agora)}:* {_linha_resumo(total)}"]
     com_volume = [m for m in mercados if m.decididas >= 5]
     if com_volume:
         melhor = max(com_volume, key=lambda m: (m.lucro, m.acertos / m.decididas))
@@ -213,7 +237,7 @@ def legenda(baldes: list[Balde], mercados: list[Mercado], periodo: str) -> str:
 
 
 def desenhar(baldes: list[Balde], mercados: list[Mercado], periodo: str,
-             max_mercados: int = 10) -> bytes:
+             max_mercados: int = 10, agora: datetime | None = None) -> bytes:
     """PNG com as barras (acertos/falhas + lucro acumulado) e os mercados."""
     import matplotlib
     matplotlib.use("Agg")
@@ -239,7 +263,9 @@ def desenhar(baldes: list[Balde], mercados: list[Mercado], periodo: str,
     ax.set_ylim(0, topo * (1.28 if len(baldes) > 16 else 1.18))
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xticks(x)
-    ax.set_xticklabels([b.rotulo for b in baldes], rotation=60 if len(baldes) > 16 else 0,
+    inclinar = len(baldes) > 16 or (periodo == "semana" and len(baldes) > 6)
+    ax.set_xticklabels([b.rotulo for b in baldes], rotation=60 if inclinar else 0,
+                       ha="right" if inclinar else "center",
                        fontsize=7 if len(baldes) > 16 else 9)
     ax.set_ylabel("dicas decididas")
     ax.spines[["top"]].set_visible(False)
@@ -266,7 +292,7 @@ def desenhar(baldes: list[Balde], mercados: list[Mercado], periodo: str,
     fig.suptitle(f"Dicas enviadas ao Telegram {_NOME_PERIODO[periodo]}", fontsize=15,
                  fontweight="bold", y=0.99)
     fig.text(0.5, 0.945,
-             f"{baldes[0].rotulo} a {baldes[-1].rotulo}: {total.acertos} acertos, "
+             f"{datas(baldes, agora or agora_utc())}: {total.acertos} acertos, "
              f"{total.falhas} falhas · acerto {_pct(total.taxa)} · lucro {total.lucro:+.2f} un"
              + (f" · {total.pendentes} por resolver" if total.pendentes else ""),
              ha="center", fontsize=10, color="#333333")
@@ -303,9 +329,10 @@ def desenhar(baldes: list[Balde], mercados: list[Mercado], periodo: str,
     return buf.getvalue()
 
 
-def texto(baldes: list[Balde], mercados: list[Mercado], periodo: str) -> str:
+def texto(baldes: list[Balde], mercados: list[Mercado], periodo: str,
+          agora: datetime | None = None) -> str:
     """O mesmo grafico em texto (sem matplotlib): 5 quadrados por barra."""
-    linhas = [legenda(baldes, mercados, periodo), ""]
+    linhas = [legenda(baldes, mercados, periodo, agora), ""]
     for b in baldes:
         if not b.decididas:
             continue
@@ -343,14 +370,16 @@ class Grafico:
 
 
 def gerar(periodo: str, ate: datetime, n: int | None = None,
-          dicas: list[DicaEnviada] | None = None, **kw) -> Grafico:
+          dicas: list[DicaEnviada] | None = None, agora: datetime | None = None,
+          **kw) -> Grafico:
+    agora = agora or agora_utc()
     vazios = baldes_vazios(periodo, ate, n)
     if dicas is None:
         dicas = dicas_do_periodo(vazios[0].inicio, ate, **kw)
     baldes, mercados = agrupar(dicas, periodo, ate, n)
-    png = desenhar(baldes, mercados, periodo) if tem_matplotlib() else None
-    return Grafico(periodo, baldes, mercados, png, legenda(baldes, mercados, periodo),
-                   texto(baldes, mercados, periodo))
+    png = desenhar(baldes, mercados, periodo, agora=agora) if tem_matplotlib() else None
+    return Grafico(periodo, baldes, mercados, png, legenda(baldes, mercados, periodo, agora),
+                   texto(baldes, mercados, periodo, agora))
 
 
 def periodos_da_noite(hoje: datetime) -> list[str]:

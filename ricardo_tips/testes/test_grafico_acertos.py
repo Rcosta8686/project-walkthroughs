@@ -25,7 +25,8 @@ def test_baldes_por_dia_semana_e_mes():
     assert semanas[-1].fim == datetime(2026, 11, 9)
     assert all(b.inicio.weekday() == 0 for b in semanas)
     meses = ga.baldes_vazios("mes", datetime(2026, 11, 1))   # dia 1: o mes que acabou
-    assert [b.rotulo for b in meses[-3:]] == ["ago 26", "set 26", "out 26"]
+    assert [b.rotulo for b in meses[-3:]] == ["ago 2026", "set 2026", "out 2026"]
+    assert semanas[-1].rotulo == "02/11–08/11"
     assert meses[0].inicio == datetime(2025, 11, 1)
     jan = ga.baldes_vazios("mes", datetime(2026, 2, 1), n=2)
     assert [b.inicio for b in jan] == [datetime(2025, 12, 1), datetime(2026, 1, 1)]
@@ -48,9 +49,11 @@ def test_agrupa_acertos_falhas_lucro_e_mercados():
     nomes = {m.nome: (m.acertos, m.falhas) for m in mercados}
     assert nomes == {"Cantos over": (1, 0), "Remates over": (0, 1),
                      "Cantos over (projecção)": (1, 0)}
-    leg = ga.legenda(baldes, mercados, "dia")
-    assert "*Dia 07/11:* 1✅ 1❌ · acerto 50% · lucro -0.10 un · 1 por resolver" in leg
-    assert "*Ultimos 30 dias:* 2✅ 1❌" in leg
+    assert [b.rotulo for b in baldes] == ["06/11", "07/11"]   # comeca na 1.a dica
+    leg = ga.legenda(baldes, mercados, "dia", agora=datetime(2026, 11, 8, 0, 15))
+    assert ("*Ontem (07/11/2026):* 1✅ 1❌ · acerto 50% · lucro -0.10 un · 1 por resolver"
+            in leg)
+    assert "*06/11/2026 a 07/11/2026:* 2✅ 1❌" in leg
 
 
 def test_melhor_e_pior_mercado_com_volume():
@@ -58,7 +61,7 @@ def test_melhor_e_pior_mercado_com_volume():
              + [_dica(datetime(2026, 11, d, 21), "L", -1.0, mercado="🟨 cartoes")
                 for d in range(1, 7)])
     baldes, mercados = ga.agrupar(dicas, "dia", ATE)
-    leg = ga.legenda(baldes, mercados, "dia")
+    leg = ga.legenda(baldes, mercados, "dia", agora=datetime(2026, 11, 8, 0, 15))
     assert "🟢 Melhor: Cantos over 6/6 · +5.40 un" in leg
     assert "🔴 Pior: Cartoes over 0/6 · -6.00 un" in leg
     txt = ga.texto(baldes, mercados, "dia")
@@ -147,3 +150,23 @@ def test_noite_envia_graficos_e_multiplas(tmp_path, monkeypatch):
         db_mod._SessionLocal = None
     assert enviados[:2] == ["dia", "semana"] and len(enviados) == 3
     assert "Multiplas de 08/11" in enviados[2] and "⏳" in enviados[2]
+
+
+def test_datas_sem_ambiguidade_e_em_curso():
+    """O 'dez 25' (dezembro de 2025) lia-se como 25 de dezembro: agora tudo com o ano."""
+    dicas = [_dica(datetime(2026, 10, 20, 20), "W", 0.9), _dica(datetime(2026, 11, 3, 20), "L", -1.0)]
+    agora = datetime(2026, 11, 4, 15)                    # quarta-feira, a meio do dia
+    ate = datetime(2026, 11, 5)                          # o script inclui hoje
+    meses, _ = ga.agrupar(dicas, "mes", ate)
+    assert [b.rotulo for b in meses] == ["out 2026", "nov 2026"]   # sem os meses vazios
+    assert ga.datas(meses, agora) == "20/10/2026 a 04/11/2026"     # 1.a dica ate hoje
+    assert "*Novembro 2026 (ate agora):* 0✅ 1❌" in ga.legenda(meses, [], "mes", agora)
+    semanas, _ = ga.agrupar(dicas, "semana", ate)
+    assert [b.rotulo for b in semanas] == ["19/10–25/10", "26/10–01/11", "02/11–08/11"]
+    assert "*Esta semana (02/11–08/11/2026, ate agora):*" in ga.legenda(semanas, [], "semana",
+                                                                          agora)
+    dias, _ = ga.agrupar(dicas, "dia", ate)
+    assert dias[-1].rotulo == "04/11"
+    assert "*Hoje (04/11/2026, ate agora):*" in ga.legenda(dias, [], "dia", agora)
+    nada, _ = ga.agrupar([], "mes", ate)
+    assert len(nada) == 1 and nada[0].rotulo == "nov 2026"

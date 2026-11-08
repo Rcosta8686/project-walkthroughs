@@ -9,11 +9,13 @@ Mostra tambem o balanco das multiplas enviadas.
 A tarefa da noite ja os envia sozinha (o do dia todas as noites, o da semana a
 segunda-feira, o do mes no dia 1). Este script e para os ver quando quiseres.
 
+O grafico comeca no primeiro dia com dicas registadas; datas sempre com o ano
+(dd/mm/aaaa, "nov 2026").
+
 Uso:
-  venv\\Scripts\\python.exe scripts\\grafico_acertos.py                 # grava e mostra
-  venv\\Scripts\\python.exe scripts\\grafico_acertos.py --abrir         # e abre as imagens
-  venv\\Scripts\\python.exe scripts\\grafico_acertos.py --telegram      # e envia
+  venv\\Scripts\\python.exe scripts\\grafico_acertos.py                 # envia os 3 ao Telegram
   venv\\Scripts\\python.exe scripts\\grafico_acertos.py --periodo semana
+  venv\\Scripts\\python.exe scripts\\grafico_acertos.py --so-ver --abrir # nao envia, abre no PC
 """
 from __future__ import annotations
 
@@ -40,9 +42,11 @@ from apostas.utils.tempo import agora_utc  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser(description="Graficos de acertos e falhas das dicas.")
     parser.add_argument("--periodo", choices=("dia", "semana", "mes", "todos"), default="todos")
-    parser.add_argument("--telegram", action="store_true", help="Envia para o Telegram")
+    parser.add_argument("--so-ver", action="store_true", help="Nao envia para o Telegram")
+    parser.add_argument("--telegram", action="store_true", help=argparse.SUPPRESS)  # antigo
     parser.add_argument("--abrir", action="store_true", help="Abre as imagens (Windows)")
     args = parser.parse_args()
+    enviar = not args.so_ver
 
     agora = agora_utc()
     ate = datetime(agora.year, agora.month, agora.day) + timedelta(days=1)  # inclui hoje
@@ -59,7 +63,7 @@ def main() -> None:
             abrir = getattr(os, "startfile", None)   # so existe no Windows
             if args.abrir and abrir is not None:
                 abrir(str(caminho))
-        if args.telegram:
+        if enviar:
             ga.enviar(g)
 
     try:
@@ -69,7 +73,7 @@ def main() -> None:
             print(multiplas.formatar(multiplas.carregar_resolvidas(s)))
     except Exception as exc:  # noqa: BLE001
         print(f"(multiplas: {exc})")
-    if args.telegram:
+    if enviar:
         print("\n[OK] Enviado para o Telegram.")
 
 
