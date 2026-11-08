@@ -51,7 +51,8 @@ def series(historia: list[dict]) -> dict[str, list[Ponto]]:
 
 def legenda(s: dict[str, list[Ponto]]) -> str:
     linhas = ["*📏 As previsoes por equipa estao a ficar mais certas?*",
-              "_\"Ate ao fim: Porto 10, Benfica 3\": em quantas equipas o final ficou a ±1._"]
+              "_\"Ate ao fim: Porto 10, Benfica 3\": em quantas equipas o final ficou a ±1. "
+              "Mede todos os jogos que o scanner segue, nao so as dicas enviadas._"]
     if not s:
         return "\n".join(linhas + ["Ainda sem noites medidas."])
     todas = sorted({p.data for pts in s.values() for p in pts})
@@ -67,7 +68,8 @@ def legenda(s: dict[str, list[Ponto]]) -> str:
             d = (u.dentro1 - pts[0].dentro1) * 100
             seta = "📈" if d >= 1 else ("📉" if d <= -1 else "➖")
             evol = f" · {seta} {d:+.0f}pp desde {pts[0].data:%d/%m}"
-        linhas.append(f"{NOMES[m]}: *{u.dentro1 * 100:.0f}%*{teto}{evol}")
+        nota = " _(numeros pequenos, ±1 e facil)_" if m == "golos" else ""
+        linhas.append(f"{NOMES[m]}: *{u.dentro1 * 100:.0f}%*{teto}{evol}{nota}")
     return "\n".join(linhas)[:1020]
 
 
@@ -125,8 +127,11 @@ def desenhar(s: dict[str, list[Ponto]]) -> bytes:
     h, l = quadros[0].get_legend_handles_labels()
     if h:
         info.legend(h, l, loc="upper left", frameon=False, fontsize=10)
-    info.text(0.0, 0.35, "Previsao 'ate ao fim' de cada equipa\nnos alertas, medida todas as\n"
-              "noites em jogos ja acabados.\nO objectivo: a linha cheia a\nencostar ao tracejado.",
+    info.text(0.0, 0.42, "Previsao 'ate ao fim' de cada equipa,\nmedida todas as noites em todos\n"
+              "os jogos que o scanner segue\n(nao so nas dicas enviadas).\n"
+              "Golos: numeros pequenos (0-3),\nficar a ±1 e facil; o que conta e\n"
+              "a distancia ao maximo possivel.\n"
+              "O objectivo: a linha cheia a\nencostar ao tracejado.",
               transform=info.transAxes, fontsize=9, color="#333333", va="top")
     titulo = "As previsoes por equipa estao a ficar mais certas?"
     fig.suptitle(titulo, fontsize=14, fontweight="bold", y=0.995)

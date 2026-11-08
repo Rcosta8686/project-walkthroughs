@@ -9,13 +9,16 @@ que acabou mesmo, todas as noites:
   - erro medio por equipa e vies (previa a mais / a menos);
   - curva de aprendizagem: como estes numeros mudam noite apos noite.
 
-E aprende sozinho, por cima do modelo, quatro camadas de cada equipa:
+E aprende sozinho, por cima do modelo, cinco camadas de cada equipa:
   1. situacao (a ganhar / empate / a perder): quem perde arrisca mais;
   2. treinador (perfil_treinador): o que ESTA equipa faz na 2a parte nessa
      situacao - recua para segurar ou continua a atacar;
   3. substituicoes: o treinador meteu gente para atacar ou para defender;
   4. a propria equipa: o erro que o modelo costuma ter com ela nos nossos
-     jogos ao vivo (ha equipas que acabam sempre mais fortes do que parece).
+     jogos ao vivo (ha equipas que acabam sempre mais fortes do que parece);
+  5. jogadores em campo: com um vermelho, a equipa com 10 remata e ganha
+     cantos menos e a outra mais (o total ja contava os vermelhos, a divisao
+     entre as equipas nao).
 Cada camada so fica ligada num mercado se errar menos nos momentos mais
 recentes, que nao usou para aprender. As que ainda nao tem dados esperam.
 
@@ -54,6 +57,7 @@ VERSOES = ("antigo", "suave", "equipas")
 _TOTAL_VERSAO = {"antigo": "previsto", "suave": "previsto_suave", "equipas": "previsto_equipas"}
 SITUACOES = ("a ganhar", "empate", "a perder")
 POSTURAS = ("ofensiva", "defensiva", "neutra")
+NUMEROS = ("com menos", "com mais")      # jogadores em campo vs o adversario
 K_ENCOLHIMENTO = 50
 K_EQUIPA = 20                  # momentos ficticios por equipa (camada 4)
 MULT_MIN, MULT_MAX = 0.6, 1.6
@@ -102,6 +106,15 @@ def situacao(marcador_equipa: float, marcador_outra: float) -> str:
     if marcador_equipa > marcador_outra:
         return "a ganhar"
     return "empate" if marcador_equipa == marcador_outra else "a perder"
+
+
+def em_campo(vermelhos_equipa, vermelhos_outra) -> str | None:
+    """'com menos' / 'com mais' jogadores que o adversario (None = iguais ou sem dados)."""
+    if vermelhos_equipa is None or vermelhos_outra is None:
+        return None
+    if vermelhos_equipa > vermelhos_outra:
+        return "com menos"
+    return "com mais" if vermelhos_outra > vermelhos_equipa else None
 
 
 def postura(ofensivas, defensivas) -> str | None:
@@ -161,6 +174,8 @@ class Precisao:
     ativos_postura: list[str] = field(default_factory=list)            # camada 3 ligada
     mults_equipa: dict[str, dict[str, float]] = field(default_factory=dict)  # mercado -> id
     ativos_equipa: list[str] = field(default_factory=list)             # camada 4 ligada
+    mults_numero: dict[str, dict[str, float]] = field(default_factory=dict)  # com menos/mais
+    ativos_numero: list[str] = field(default_factory=list)             # camada 5 ligada
     ganhos: dict[str, dict[str, float]] = field(default_factory=dict)  # mercado -> camada -> %
     diagnostico: dict[str, dict[str, float]] = field(default_factory=dict)  # todas, ligadas ou nao
     # Como dividir o que falta entre as duas equipas: a versao do modelo que
@@ -190,11 +205,16 @@ class Precisao:
             return 1.0
         return self.mults_equipa.get(mercado, {}).get(str(equipa), 1.0)
 
+    def mult_numero(self, mercado: str, num: str | None) -> float:
+        if mercado not in self.ativos_numero or num is None:
+            return 1.0
+        return self.mults_numero.get(mercado, {}).get(num, 1.0)
+
     def fator(self, mercado: str, sit: str, treinador: float = 1.0,
-              post: str | None = None, equipa=None) -> float:
+              post: str | None = None, equipa=None, num: str | None = None) -> float:
         t = treinador if mercado in self.ativos_treinador else 1.0
         return (self.mult(mercado, sit) * t * self.mult_postura(mercado, post)
-                * self.mult_equipa(mercado, equipa))
+                * self.mult_equipa(mercado, equipa) * self.mult_numero(mercado, num))
 
     def intervalo(self, mercado: str, minuto: int) -> tuple[float, float]:
         from apostas.modelos.correcao_ritmo import janela_de
@@ -246,6 +266,7 @@ def previsoes(pares: list[dict], ritmo, divisao: dict[str, str] | None = None) -
                 "resto": total * _quota(p, lado, versao_div),
                 "treinador": p.get(f"{lado}_treinador", 1.0) or 1.0,
                 "post": p.get(f"{lado}_postura"),
+                "num": em_campo(p.get(f"{lado}_vermelhos"), p.get(f"{outro}_vermelhos")),
                 "team": (str(p[f"{lado}_id"]) if p.get(f"{lado}_id") is not None else None),
                 "equipa": p.get("home" if lado == "c" else "away"),
                 "event_id": p.get("event_id"), "lado": lado})
@@ -399,6 +420,24 @@ def calcular(pares: list[dict], ritmo, anterior: Precisao | None = None,
             p.ativos_equipa.append(m)
             p.ganhos.setdefault(m, {})["equipa"] = round(g, 4)
 
+    def f4(r) -> float:
+        return f3(r) * (m4.get(r["mercado"], {}).get(r["team"] or "", 1.0)
+                        if r["mercado"] in p.ativos_equipa else 1.0)
+    # Camada 5: jogadores em campo (so os momentos com um vermelho a mais de um lado).
+    m5 = _treinar(treino, "num", f4)
+    com_num = [r for r in teste if r.get("num")]
+    base5 = _metricas(com_num, f4)
+    com5 = _metricas(com_num, lambda r: f4(r) * m5.get(r["mercado"], {}).get(r["num"], 1.0))
+    for m in MERCADOS:
+        g = _ganho(base5.get(m), com5.get(m))
+        if g is not None:
+            p.diagnostico.setdefault(m, {})["numero"] = round(g, 4)
+        p.diagnostico.setdefault(m, {})["numero_n"] = float(
+            sum(1 for r in com_num if r["mercado"] == m))
+        if g is not None and g > 0.01:
+            p.ativos_numero.append(m)
+            p.ganhos.setdefault(m, {})["numero"] = round(g, 4)
+
     # Multiplicadores finais com todos os dados, pela mesma ordem.
     p.mults = _treinar(regs, "sit", um)
     p.mults_postura = _treinar(regs, "post",
@@ -407,9 +446,14 @@ def calcular(pares: list[dict], ritmo, anterior: Precisao | None = None,
     p.mults_equipa = {m: v for m, v in _treinar(
         regs, "team", lambda r: p.fator(r["mercado"], r["sit"], r["treinador"], r["post"]),
         k=K_EQUIPA).items() if m in p.ativos_equipa}
+    p.mults_numero = {m: v for m, v in _treinar(
+        regs, "num",
+        lambda r: p.fator(r["mercado"], r["sit"], r["treinador"], r["post"], r["team"])).items()
+        if m in p.ativos_numero}
 
     def final(r) -> float:
-        return p.fator(r["mercado"], r["sit"], r["treinador"], r["post"], r["team"])
+        return p.fator(r["mercado"], r["sit"], r["treinador"], r["post"], r["team"],
+                       r.get("num"))
     p.teste = _metricas(teste, final)
     for r in teste:
         lam = r["resto"] * final(r)
@@ -485,8 +529,12 @@ def prever_final(estado, prev, precisao: Precisao, mercado: str,
             ("fora", 1, rf, situacao(mf, mc), getattr(estado, "away_id", None))):
         post = postura(getattr(estado, f"subs_ofensivas_{nome}", None),
                        getattr(estado, f"subs_defensivas_{nome}", None))
+        outro = "fora" if nome == "casa" else "casa"
+        num = em_campo(getattr(estado, f"red_cards_{nome}", None),
+                       getattr(estado, f"red_cards_{outro}", None))
         atual = _n(getattr(estado, ACTUAL[mercado][i], 0))
-        r = resto * precisao.fator(mercado, sit, treinador[i] if segunda else 1.0, post, equipa)
+        r = resto * precisao.fator(mercado, sit, treinador[i] if segunda else 1.0, post, equipa,
+                                   num)
         out[nome] = (atual + r, atual + max(0.0, r + lo), atual + max(0.0, r + hi))
     return out
 
@@ -507,8 +555,12 @@ def texto_equipas(estado, prev, precisao: Precisao, mercado: str,
     m = precisao.teste.get(mercado)
     fiab = (f" — acertamos ±1 em {m.taxa_dentro1 * 100:.0f}% das equipas"
             if m is not None and m.n >= MIN_TESTE else "")
+    vc, vf = int(_n(getattr(estado, "red_cards_casa", 0))), int(_n(getattr(estado, "red_cards_fora", 0)))
+    dez = ""
+    if vc != vf:   # quem joga com menos (a divisao entre as equipas ja o conta, se ajudar)
+        dez = f" · 🟥 {estado.home if vc > vf else estado.away} com {11 - abs(vc - vf)}"
     return (f"📏 Ate ao fim: {estado.home} {_intervalo_txt(*pf['casa'])} · {estado.away} "
-            f"{_intervalo_txt(*pf['fora'])} {NOMES[mercado]}{fiab}")
+            f"{_intervalo_txt(*pf['fora'])} {NOMES[mercado]}{fiab}{dez}")
 
 
 # ─── Guardar / ler / relatorio ─────────────────────────────────────────────
@@ -533,6 +585,7 @@ def ler(path: Path | None = None) -> Precisao:
             ativos_treinador=d.get("ativos_treinador", []),
             mults_postura=d.get("mults_postura", {}), ativos_postura=d.get("ativos_postura", []),
             mults_equipa=d.get("mults_equipa", {}), ativos_equipa=d.get("ativos_equipa", []),
+            mults_numero=d.get("mults_numero", {}), ativos_numero=d.get("ativos_numero", []),
             ganhos=d.get("ganhos", {}), diagnostico=d.get("diagnostico", {}),
             divisao=d.get("divisao", {}), ganho_divisao=d.get("ganho_divisao", {}),
             teste={m: Metricas(**x) for m, x in d.get("teste", {}).items()},
@@ -554,7 +607,8 @@ def recalcular_e_gravar(pares: list[dict], ritmo, path: Path | None = None) -> P
 _NOME_CAMADA = {"situacao": "situacao (a ganhar/empate/a perder)",
                 "treinador": "treinador de cada equipa na 2a parte",
                 "substituicoes": "substituicoes ofensivas/defensivas",
-                "equipa": "erro proprio de cada equipa"}
+                "equipa": "erro proprio de cada equipa",
+                "numero": "jogadores em campo (vermelhos)"}
 
 
 _NOME_VERSAO = {"antigo": "calculo antigo", "suave": "normal generico",
@@ -565,9 +619,13 @@ def _diagnostico_txt(p: Precisao, m: str) -> str:
     d = p.diagnostico.get(m, {})
     partes = []
     for camada, nome in (("situacao", "situacao"), ("treinador", "treinador"),
-                         ("substituicoes", "substituicoes"), ("equipa", "equipa")):
+                         ("substituicoes", "substituicoes"), ("equipa", "equipa"),
+                         ("numero", "vermelhos")):
         if camada == "substituicoes" and not d.get("substituicoes_n"):
             partes.append("substituicoes: a juntar dados")
+            continue
+        if camada == "numero" and d.get("numero") is None:
+            partes.append(f"vermelhos: a juntar dados ({d.get('numero_n', 0):.0f} momentos)")
             continue
         g = d.get(camada)
         if g is None:
@@ -621,6 +679,9 @@ def formatar(p: Precisao) -> str:
             elif camada == "equipa":
                 mm = p.mults_equipa.get(m, {})
                 extra = f" ({len(mm)} equipas aprendidas)"
+            elif camada == "numero":
+                mm = p.mults_numero.get(m, {})
+                extra = ": " + " ".join(f"{s} ×{mm[s]:.2f}" for s in NUMEROS if s in mm)
             linhas.append(f"      + {_NOME_CAMADA[camada]} (erro -{g * 100:.0f}%){extra}")
     linhas.append("  (por fase: acerto/maximo possivel. Camadas por ligar ficam a aprender: so "
                   "entram quando erram menos nos momentos que nao viram.)")

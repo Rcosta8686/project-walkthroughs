@@ -248,6 +248,8 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = JANELA_DIAS) ->
                                               getattr(sn, "subs_def_casa", None))
                 par["f_postura"] = pe.postura(getattr(sn, "subs_of_fora", None),
                                               getattr(sn, "subs_def_fora", None))
+                par["c_vermelhos"] = int(sn.red_casa or 0)   # jogadores em campo
+                par["f_vermelhos"] = int(sn.red_fora or 0)
             pares.append(par)
     return pares
 

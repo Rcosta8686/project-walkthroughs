@@ -269,6 +269,7 @@ def test_pares_tem_cada_equipa(bd):
     assert (sot["mc"], sot["mf"], sot["home"]) == (0, 1, "Porto")
     assert sot["c_postura"] == "ofensiva" and sot["f_postura"] == "defensiva"
     assert {"c_antigo", "f_suave", "c_equipas", "c_treinador"} <= sot.keys()
+    assert (sot["c_vermelhos"], sot["f_vermelhos"]) == (0, 0)
 
 
 def test_scanner_junta_equipas_treinador_e_substituicoes(monkeypatch):
@@ -421,3 +422,73 @@ def test_normal_de_casa_e_fora():
     em_casa = h.priors(1, 77).cantos_casa
     fora = h.priors(77, 1).cantos_fora
     assert em_casa > fora + 1.5
+
+
+def _pares_vermelhos(n=1200, seed=11):
+    """Em 1 de cada 3 momentos uma equipa esta com 10: faz 40% menos do que o
+    modelo diz e a outra 30% mais. Sem vermelho o modelo acerta."""
+    rnd = random.Random(seed)
+    out = []
+    for i in range(n):
+        vermelho = rnd.choice([None, None, "c", "f"])
+        par = {"mercado": "remates", "janela": 70, "event_id": i,
+               "data": AGORA - timedelta(hours=n - i), "mc": 0, "mf": 0,
+               "home": f"C{i}", "away": f"F{i}", "c_atual": 8.0, "f_atual": 6.0,
+               "c_vermelhos": int(vermelho == "c"), "f_vermelhos": int(vermelho == "f")}
+        for lado in ("c", "f"):
+            resto = rnd.uniform(2.0, 7.0)
+            ef = 1.0 if vermelho is None else (0.6 if vermelho == lado else 1.3)
+            par[f"{lado}_antigo"] = resto
+            par[f"{lado}_treinador"] = 1.0
+            par[f"{lado}_postura"] = None
+            par[f"{lado}_real"] = max(0.0, round(resto * ef + rnd.gauss(0, 0.5)))
+        out.append(par)
+    return out
+
+
+def test_em_campo():
+    assert pe.em_campo(1, 0) == "com menos" and pe.em_campo(0, 1) == "com mais"
+    assert pe.em_campo(1, 1) is None and pe.em_campo(None, 0) is None
+
+
+def test_aprende_o_efeito_dos_vermelhos_em_cada_equipa():
+    p = pe.calcular(_pares_vermelhos(), cr.CorrecaoRitmo(), agora=AGORA)
+    m = "remates"
+    assert m in p.ativos_numero and p.ganhos[m]["numero"] > 0.05
+    assert p.mults_numero[m]["com menos"] < 0.8 and p.mults_numero[m]["com mais"] > 1.15
+    assert p.teste[m].mae < p.teste_sem[m].mae
+    txt = pe.formatar(p)
+    assert "jogadores em campo (vermelhos)" in txt and "com menos ×0." in txt
+    # Gravado e lido de volta (e um ficheiro antigo sem a camada continua a ler)
+    import json
+    from dataclasses import asdict
+    d = asdict(p)
+    lido = pe.Precisao(**{k: v for k, v in d.items() if k not in ("teste", "teste_sem",
+                                                                    "por_fase")})
+    assert lido.mult_numero(m, "com menos") == p.mults_numero[m]["com menos"]
+    assert json.dumps(d)
+
+
+def test_sem_vermelhos_a_camada_espera():
+    p = pe.calcular(_pares(), cr.CorrecaoRitmo(), agora=AGORA)
+    assert p.ativos_numero == [] and "vermelhos: a juntar dados (0 momentos)" in pe.formatar(p)
+
+
+def test_ao_vivo_a_equipa_com_10_faz_menos():
+    p = pe.Precisao(ativos_numero=["remates"],
+                    mults_numero={"remates": {"com menos": 0.6, "com mais": 1.3}})
+    igual = pe.prever_final(_estado(), _prev(), p, "remates")
+    dez = pe.prever_final(_estado(red_cards_fora=1), _prev(), p, "remates")
+    assert igual is not None and dez is not None
+    assert dez["fora"][0] < igual["fora"][0] and dez["casa"][0] > igual["casa"][0]
+    txt = pe.texto_equipas(_estado(red_cards_fora=1), _prev(), p, "remates")
+    assert txt.endswith("🟥 Benfica com 10")
+    assert "🟥" not in pe.texto_equipas(_estado(), _prev(), p, "remates")
+
+
+def test_ficheiro_antigo_sem_camada_dos_vermelhos(tmp_path):
+    import json
+    f = tmp_path / "p.json"
+    f.write_text(json.dumps({"mults": {}, "ativos": ["cantos"]}), encoding="utf-8")
+    p = pe.ler(f)
+    assert p.ativos == ["cantos"] and p.ativos_numero == [] and p.mult_numero("cantos", "com menos") == 1.0
