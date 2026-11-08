@@ -54,6 +54,7 @@ class Selecao:
     mercado: str = ""
     linha: int = 1                 # k em "k+" (para se saber de noite se acertou)
     sujeito_id: int | None = None  # jogador, equipa ou (cartoes do jogo) o proprio jogo
+    p_modelo: float | None = None  # a do modelo, antes da correccao pelas anteriores
 
     @property
     def odd_justa(self) -> float:
@@ -237,6 +238,19 @@ def main() -> None:
                                     (int(casa["id"]), int(fora["id"])), jogo, eid)
     if sem_onze:
         print(f"({sem_onze} jogos ainda sem o onze no Sofascore: corre outra vez ~1h antes)\n")
+    # Aprende com as multiplas ja enviadas: o tipo de selecao que tem falhado mais
+    # do que o modelo dizia fica com a probabilidade corrigida (e vice-versa).
+    nota_ajuste = ""
+    try:
+        from apostas.relatorios import multiplas
+        with abrir_sessao() as s:
+            aj = multiplas.ajustes(multiplas.carregar_resolvidas(s))
+        for c in cands:
+            c.p_modelo = c.p
+            c.p = multiplas.ajustar_p(c.p, aj.get(c.mercado, 0.0))
+        nota_ajuste = multiplas.texto_ajustes(aj)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Ajuste pelas multiplas anteriores falhou: %s", exc)
     # Segura: provaveis mas nao triviais (65-85%; "1+ remate" a 95% nao paga nada).
     segura = montar(cands, n=4, p_min=0.65, p_max=0.85)
     # Maluca: linhas que pagam mais (40-65%), outros jogadores, mercados misturados.
@@ -250,7 +264,7 @@ def main() -> None:
                          texto_multipla("🎰 Multipla maluca (uns centimos)", maluca),
                          "_Probabilidades do modelo; odd justa = 1/p. Se a casa pagar acima, "
                          "ha valor. Selecoes do mesmo jogo nao sao independentes (max. 2 "
-                         "por jogo)._"])
+                         "por jogo)._"] + ([nota_ajuste] if nota_ajuste else []))
     print(texto)
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

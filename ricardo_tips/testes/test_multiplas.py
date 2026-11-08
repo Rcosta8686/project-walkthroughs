@@ -127,3 +127,41 @@ def test_selecoes_da_multipla_levam_linha_e_sujeito():
     assert all(s.descricao.startswith(f"{s.linha}+") for s in cantos_porto)
     jogo = [s for s in sel if s.mercado == "cartoes_jogo"]
     assert jogo and all(s.sujeito_id == 7 for s in jogo)
+
+
+def _resolvidas(mercado, p, resultados, p_modelo=None):
+    return [mp.MultiplaResolvida(f"m{i}", "segura", ENVIO, [mp.SelecaoResolvida(
+        "j", "s", mercado, "", 1, p, r, p_modelo=p_modelo)]) for i, r in enumerate(resultados)]
+
+
+def test_ajuste_aprende_quando_o_modelo_e_optimista():
+    # o modelo dava 80% e so 60% aconteceram em 30 selecoes
+    ms = _resolvidas("remates", 0.8, ["W"] * 18 + ["L"] * 12)
+    aj = mp.ajustes(ms)
+    assert -1.0 < aj["remates"] < -0.5
+    assert 0.6 < mp.ajustar_p(0.8, aj["remates"]) < 0.7
+    assert "remates do jogador 80%→6" in mp.texto_ajustes(aj)
+
+
+def test_ajuste_so_com_selecoes_suficientes_e_sem_se_desfazer():
+    assert mp.ajustes(_resolvidas("cantos_equipa", 0.8, ["L"] * 14)) == {}   # 14 < 15
+    # enviadas ja corrigidas (p=0.65) mas o modelo dava 0.8: aprende sobre 0.8
+    ms = _resolvidas("remates", 0.65, ["W"] * 18 + ["L"] * 12, p_modelo=0.8)
+    assert mp.ajustes(ms)["remates"] < -0.5
+    assert mp.ajustar_p(0.8, 0.0) == 0.8
+    assert 0 < mp.ajustar_p(0.8, -5) < 0.8 and mp.ajustar_p(1.0, -1) == 1.0
+
+
+def test_cabecalho_antigo_e_actualizado(tmp_path):
+    import csv
+    f = tmp_path / "multiplas.csv"
+    antigos = mp.CAMPOS[:-1]
+    with f.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.writer(fp)
+        w.writerow(antigos)
+        w.writerow(["a-segura", "2026-11-07T16:00:00", "segura", 7, "A–B", "remates", 1, "X",
+                    2, 0.7, "2+ remates"])
+    mp.registar("maluca", [_sel("Y", "sot", 1, 0.5, sujeito_id=2)], ENVIO, f)
+    linhas = mp.carregar(f)
+    assert [r["multipla_id"] for r in linhas] == ["a-segura", "20261107163000-maluca"]
+    assert linhas[0]["p_modelo"] == "" and linhas[1]["p_modelo"] == "0.5"

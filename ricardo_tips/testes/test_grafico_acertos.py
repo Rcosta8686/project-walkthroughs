@@ -132,7 +132,9 @@ def test_noite_envia_graficos_e_multiplas(tmp_path, monkeypatch):
     enviados = []
     monkeypatch.setattr(ga, "dicas_do_periodo", lambda inicio, fim, **kw: [
         _dica(datetime(2026, 11, 8, 20), "W", 0.9)])
-    monkeypatch.setattr(ga, "enviar", lambda g: enviados.append(g.periodo))
+    monkeypatch.setattr(ga, "enviar", lambda g: enviados.append(getattr(g, "periodo", "precisao")))
+    from apostas.relatorios import grafico_precisao as gp
+    monkeypatch.setattr(gp, "gerar", lambda: gp.GraficoPrecisao(b"png", "legenda", "texto", False))
 
     class _Cliente:
         def enviar(self, texto):
@@ -148,8 +150,9 @@ def test_noite_envia_graficos_e_multiplas(tmp_path, monkeypatch):
     finally:
         db_mod._engine = None
         db_mod._SessionLocal = None
-    assert enviados[:2] == ["dia", "semana"] and len(enviados) == 3
-    assert "Multiplas de 08/11" in enviados[2] and "⏳" in enviados[2]
+    # segunda: o do dia, o da semana e a curva de aprendizagem; depois as multiplas
+    assert enviados[:3] == ["dia", "semana", "precisao"] and len(enviados) == 4
+    assert "Multiplas de 08/11" in enviados[3] and "⏳" in enviados[3]
 
 
 def test_datas_sem_ambiguidade_e_em_curso():

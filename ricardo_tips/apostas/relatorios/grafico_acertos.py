@@ -396,16 +396,21 @@ def caminho_png(periodo: str) -> Path:
     return project_root() / "dados" / "graficos" / f"acertos_{periodo}.png"
 
 
-def gravar(g: Grafico) -> Path | None:
-    if g.png is None:
+def gravar_png(png: bytes | None, nome: str) -> Path | None:
+    if png is None:
         return None
-    p = caminho_png(g.periodo)
+    p = caminho_png(nome)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(g.png)
+    p.write_bytes(png)
     return p
 
 
-def enviar(g: Grafico) -> None:
+def gravar(g: Grafico) -> Path | None:
+    return gravar_png(g.png, g.periodo)
+
+
+def enviar(g) -> None:
+    """Envia um grafico (este ou o da precisao: png, legenda, texto)."""
     from apostas.alertas.telegram_cliente import cliente
     c = cliente()
     if g.png is not None:

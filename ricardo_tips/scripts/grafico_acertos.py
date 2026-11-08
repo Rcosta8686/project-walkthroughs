@@ -1,9 +1,11 @@
 """Graficos do que as dicas enviadas ao Telegram acertaram e falharam.
 
 Tres graficos: por dia (ultimos 30 dias), por semana (ultimas 12) e por mes
-(ultimos 12). Cada um tem as barras verdes/vermelhas, a percentagem de acerto,
+(ultimos 12), e um quarto com a curva de aprendizagem das previsoes por equipa
+("Porto acaba com 10, Benfica 3": a ±1 em quantas equipas, noite a noite). Cada um tem as barras verdes/vermelhas, a percentagem de acerto,
 o lucro acumulado e, em baixo, o acerto de cada mercado. Ficam gravados em
-dados\\graficos\\ (acertos_dia.png, acertos_semana.png, acertos_mes.png).
+dados\\graficos\\ (acertos_dia.png, acertos_semana.png, acertos_mes.png,
+acertos_precisao.png).
 Mostra tambem o balanco das multiplas enviadas.
 
 A tarefa da noite ja os envia sozinha (o do dia todas as noites, o da semana a
@@ -41,7 +43,8 @@ from apostas.utils.tempo import agora_utc  # noqa: E402
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Graficos de acertos e falhas das dicas.")
-    parser.add_argument("--periodo", choices=("dia", "semana", "mes", "todos"), default="todos")
+    parser.add_argument("--periodo", choices=("dia", "semana", "mes", "precisao", "todos"),
+                        default="todos")
     parser.add_argument("--so-ver", action="store_true", help="Nao envia para o Telegram")
     parser.add_argument("--telegram", action="store_true", help=argparse.SUPPRESS)  # antigo
     parser.add_argument("--abrir", action="store_true", help="Abre as imagens (Windows)")
@@ -50,14 +53,19 @@ def main() -> None:
 
     agora = agora_utc()
     ate = datetime(agora.year, agora.month, agora.day) + timedelta(days=1)  # inclui hoje
-    periodos = ["dia", "semana", "mes"] if args.periodo == "todos" else [args.periodo]
+    periodos = (["dia", "semana", "mes", "precisao"] if args.periodo == "todos"
+                else [args.periodo])
     if not ga.tem_matplotlib():
         print("⚠ Sem o matplotlib nao ha imagem, so texto. Para a imagem:\n"
               "   venv\\Scripts\\pip install matplotlib\n")
     for periodo in periodos:
-        g = ga.gerar(periodo, ate)
+        if periodo == "precisao":
+            from apostas.relatorios import grafico_precisao
+            g = grafico_precisao.gerar()
+        else:
+            g = ga.gerar(periodo, ate)
         print(g.texto + "\n")
-        caminho = ga.gravar(g)
+        caminho = ga.gravar_png(g.png, periodo)
         if caminho is not None:
             print(f"🖼  {caminho}\n")
             abrir = getattr(os, "startfile", None)   # so existe no Windows

@@ -24,8 +24,10 @@ from pathlib import Path
 from apostas.utils.config import project_root
 from apostas.utils.tempo import agora_utc
 
+# p = probabilidade enviada (ja corrigida); p_modelo = a do modelo antes da correccao
+# (a correccao aprende-se sempre sobre p_modelo, para nao se desfazer a si propria).
 CAMPOS = ["multipla_id", "ts_envio", "tipo", "event_id", "jogo", "mercado",
-          "sujeito_id", "sujeito", "linha", "p", "descricao"]
+          "sujeito_id", "sujeito", "linha", "p", "descricao", "p_modelo"]
 DIAS_SEM_DADOS = 3   # jogo que ao fim de 3 dias continua sem estatisticas: SD
 
 NOME_MERCADO = {
@@ -56,6 +58,8 @@ def registar(tipo: str, selecoes: list, ts: datetime | None = None,
     p = path or caminho()
     p.parent.mkdir(parents=True, exist_ok=True)
     novo = not p.exists()
+    if not novo:
+        _actualizar_cabecalho(p)
     with p.open("a", encoding="utf-8", newline="") as fp:
         w = csv.writer(fp)
         if novo:
@@ -64,10 +68,28 @@ def registar(tipo: str, selecoes: list, ts: datetime | None = None,
             sujeito_id = getattr(s, "sujeito_id", None)
             if sujeito_id is None:
                 sujeito_id = s.player_id
+            p_modelo = getattr(s, "p_modelo", None)
             w.writerow([mid, ts.isoformat(timespec="seconds"), tipo, s.event_id, s.jogo,
                         s.mercado, sujeito_id, s.jogador, getattr(s, "linha", 1),
-                        round(float(s.p), 4), s.descricao])
+                        round(float(s.p), 4), s.descricao,
+                        round(float(p_modelo if p_modelo is not None else s.p), 4)])
     return mid
+
+
+def _actualizar_cabecalho(p: Path) -> None:
+    """Ficheiro com o cabecalho antigo: reescreve com o actual (as colunas novas
+    ficam vazias nas linhas antigas), para as novas nao ficarem desalinhadas."""
+    with p.open(encoding="utf-8", newline="") as fp:
+        r = csv.DictReader(fp)
+        if list(r.fieldnames or []) == CAMPOS:
+            return
+        linhas = list(r)
+    tmp = p.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=CAMPOS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(linhas)
+    tmp.replace(p)
 
 
 def _int(x) -> int | None:
@@ -170,6 +192,7 @@ class SelecaoResolvida:
     p: float
     resultado: str              # W | L | nula | pendente | SD
     valor: float | None = None
+    p_modelo: float | None = None   # antes da correccao (None = igual a p)
 
 
 @dataclass
@@ -225,7 +248,8 @@ def resolver(linhas: list[dict], dados: DadosJogos,
         m.selecoes.append(SelecaoResolvida(
             jogo=r.get("jogo") or "", sujeito=r.get("sujeito") or "",
             mercado=r.get("mercado") or "", descricao=r.get("descricao") or "",
-            linha=linha, p=_float(r.get("p")) or 0.0, resultado=res, valor=valor))
+            linha=linha, p=_float(r.get("p")) or 0.0, resultado=res, valor=valor,
+            p_modelo=_float(r.get("p_modelo"))))
     return sorted(por_id.values(), key=lambda m: m.ts)
 
 
@@ -329,4 +353,48 @@ def formatar(mults: list[MultiplaResolvida]) -> str:
                           f"{c.esperado * 100:.0f}% → {c.real * 100:.0f}% ({c.acertos}/{c.n})")
         linhas.append("  _🟢 certo · 🔴 optimista demais · 🔵 pessimista demais · "
                       "⚪ ainda poucas (menos de 10)_")
+        aj = texto_ajustes(ajustes(mults))
+        if aj:
+            linhas.append("  " + aj)
     return "\n".join(linhas)
+
+
+# --- Aprender com o que aconteceu: corrigir as probabilidades por tipo ----------
+K_AJUSTE = 3.0      # prudencia: com poucas selecoes o ajuste fica perto de zero
+MIN_AJUSTE = 15     # so ajusta um tipo com pelo menos 15 selecoes decididas
+MAX_AJUSTE = 1.0    # em logit (80% nunca passa abaixo de ~60% nem acima de ~92%)
+
+
+def ajustes(mults: list[MultiplaResolvida]) -> dict[str, float]:
+    """Por tipo de selecao, quanto o modelo tem dado a mais (negativo) ou a menos
+    (positivo), em logit: um passo de regressao logistica a partir de zero,
+    encolhido para zero com K_AJUSTE."""
+    soma: dict[str, list[float]] = {}
+    for m in mults:
+        for s in m.selecoes:
+            p = s.p_modelo if s.p_modelo is not None else s.p
+            if s.resultado not in ("W", "L") or not 0 < p < 1:
+                continue
+            a = soma.setdefault(s.mercado, [0.0, 0.0, 0])
+            a[0] += (s.resultado == "W") - p
+            a[1] += p * (1 - p)
+            a[2] += 1
+    return {m: max(-MAX_AJUSTE, min(MAX_AJUSTE, num / (den + K_AJUSTE)))
+            for m, (num, den, n) in soma.items() if n >= MIN_AJUSTE}
+
+
+def ajustar_p(p: float, ajuste: float) -> float:
+    import math
+    if not ajuste or not 0 < p < 1:
+        return p
+    return 1 / (1 + math.exp(-(math.log(p / (1 - p)) + ajuste)))
+
+
+def texto_ajustes(aj: dict[str, float]) -> str:
+    """'remates do jogador 80%→70%': o que a correccao faz a uma selecao de 80%."""
+    if not aj:
+        return ""
+    partes = [f"{NOME_MERCADO.get(m, m)} 80%→{ajustar_p(0.8, b) * 100:.0f}%"
+              for m, b in sorted(aj.items(), key=lambda kv: kv[1]) if abs(b) >= 0.05]
+    return ("_Corrigido pelo que aconteceu nas multiplas anteriores: " + ", ".join(partes)
+            + "._") if partes else ""

@@ -13,8 +13,9 @@ feito mesmo que a internet demore), depois o que vai ao Sofascore, com prazo:
 5. Resolver dos alertas desses dias (tambem com o prazo).
 6. Se entraram jogos novos e ainda ha tempo, aprende outra vez com eles.
 7. Graficos para o Telegram do que as dicas acertaram e falharam: o do dia
-   todas as noites, o da semana a segunda, o do mes no dia 1 (cada um uma vez
-   so), e as multiplas de ontem selecao a selecao.
+   todas as noites, o da semana a segunda (com a curva de aprendizagem das
+   previsoes por equipa), o do mes no dia 1 (cada um uma vez so), e as
+   multiplas de ontem selecao a selecao.
 
 Cada passo fica no log (logs/ricardo_tips.log) com a hora, para se ver ate
 onde chegou.
@@ -121,6 +122,14 @@ def _graficos(agora: datetime) -> None:
         if not g.vazio:
             ga.enviar(g)
             ga.marcar_enviado(periodo, ate)
+    # A segunda, com o da semana: a curva de aprendizagem das previsoes por equipa.
+    if ate.weekday() == 0 and not ga.ja_enviado("precisao", ate):
+        from apostas.relatorios import grafico_precisao
+        gp = grafico_precisao.gerar()
+        print("\n" + gp.texto)
+        if not gp.vazio:
+            ga.enviar(gp)
+            ga.marcar_enviado("precisao", ate)
     if ga.ja_enviado("multiplas", ate):
         return
     with abrir_sessao() as s:
