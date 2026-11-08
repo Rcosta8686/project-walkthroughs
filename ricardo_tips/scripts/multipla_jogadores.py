@@ -46,6 +46,7 @@ class Selecao:
     player_id: int
     descricao: str
     p: float
+    mercado: str = ""
 
     @property
     def odd_justa(self) -> float:
@@ -56,37 +57,46 @@ class Selecao:
                 f"· odd justa {self.odd_justa:.2f}")
 
 
+_LINHAS = {"remates": (3, 2, 1), "sot": (2, 1), "cartao": (1,)}
+_NOME_M = {"remates": "remates", "sot": "remates a baliza", "cartao": "amarelo"}
+
+
 def candidatas(prevs: list[jogadores.PrevJogador], jogo: str, event_id: int,
-               p_min: float = 0.45, p_max: float = 0.93) -> list[Selecao]:
-    """Para cada jogador e mercado, a linha mais exigente que ainda tem p >= p_min."""
+               p_min: float = 0.30, p_max: float = 0.93) -> list[Selecao]:
+    """Todas as linhas de cada jogador e mercado com p entre p_min e p_max
+    (a segura escolhe as mais provaveis; a maluca as que pagam mais)."""
     out = []
-    linhas = {"remates": (3, 2, 1), "sot": (2, 1), "cartao": (1,)}
-    nome_m = {"remates": "remates", "sot": "remates a baliza", "cartao": "amarelo"}
     for pj in prevs:
-        for alvo in linhas[pj.mercado]:
+        for alvo in _LINHAS[pj.mercado]:
             p = pj.p_total(alvo)
             if p_min <= p <= p_max:
-                desc = "ve amarelo" if pj.mercado == "cartao" else f"{alvo}+ {nome_m[pj.mercado]}"
-                out.append(Selecao(jogo, event_id, pj.nome, pj.id, desc, p))
-                break
+                desc = ("ve amarelo" if pj.mercado == "cartao"
+                        else f"{alvo}+ {_NOME_M[pj.mercado]}")
+                out.append(Selecao(jogo, event_id, pj.nome, pj.id, desc, p, pj.mercado))
     return out
 
 
 def montar(cands: list[Selecao], n: int, p_min: float, p_max: float = 1.0,
-           por_jogo: int = 2) -> list[Selecao]:
-    """As mais provaveis entre p_min e p_max, um jogador uma vez e no maximo
-    `por_jogo` selecoes do mesmo jogo (jogos diferentes = menos dependencia)."""
+           por_jogo: int = 2, por_mercado: int | None = None,
+           sem_jogadores: set[int] | None = None) -> list[Selecao]:
+    """As mais provaveis entre p_min e p_max: cada jogador uma vez, no maximo
+    `por_jogo` do mesmo jogo (menos dependencia) e `por_mercado` do mesmo
+    mercado (variedade); `sem_jogadores` ficam de fora."""
     escolhidas: list[Selecao] = []
-    jogadores_usados: set[int] = set()
+    jogadores_usados: set[int] = set(sem_jogadores or ())
     por_evento: dict[int, int] = {}
+    por_m: dict[str, int] = {}
     for c in sorted(cands, key=lambda c: -c.p):
         if not p_min <= c.p <= p_max or c.player_id in jogadores_usados:
             continue
         if por_evento.get(c.event_id, 0) >= por_jogo:
             continue
+        if por_mercado is not None and por_m.get(c.mercado, 0) >= por_mercado:
+            continue
         escolhidas.append(c)
         jogadores_usados.add(c.player_id)
         por_evento[c.event_id] = por_evento.get(c.event_id, 0) + 1
+        por_m[c.mercado] = por_m.get(c.mercado, 0) + 1
         if len(escolhidas) >= n:
             break
     return escolhidas
@@ -164,8 +174,11 @@ def main() -> None:
         cands += candidatas(prevs, jogo, eid)
     if sem_onze:
         print(f"({sem_onze} jogos ainda sem o onze no Sofascore: corre outra vez ~1h antes)\n")
-    segura = montar(cands, n=4, p_min=0.65)
-    maluca = montar(cands, n=8, p_min=0.45, p_max=0.75)
+    # Segura: provaveis mas nao triviais (65-85%; "1+ remate" a 95% nao paga nada).
+    segura = montar(cands, n=4, p_min=0.65, p_max=0.85)
+    # Maluca: linhas que pagam mais (40-65%), outros jogadores, mercados misturados.
+    maluca = montar(cands, n=8, p_min=0.40, p_max=0.65, por_mercado=3,
+                    sem_jogadores={s.player_id for s in segura})
     texto = "\n\n".join([texto_multipla("🎯 Multipla segura de jogadores", segura),
                          texto_multipla("🎰 Multipla maluca (uns centimos)", maluca),
                          "_Probabilidades do modelo; odd justa = 1/p. Se a casa pagar acima, "

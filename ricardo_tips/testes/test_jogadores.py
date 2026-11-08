@@ -251,9 +251,13 @@ def test_multipla_de_jogadores():
              jg.PrevJogador(3, "C", "fora", "M", "sot", 0, 0.1)]
     cands = mj.candidatas(prevs, "X–Y 20:00", 7)
     descr = {(c.jogador, c.descricao) for c in cands}
-    assert ("A", "3+ remates") not in descr and ("A", "2+ remates") in descr
+    assert ("A", "3+ remates") in descr and ("A", "2+ remates") in descr   # 38% e 65%
     assert ("B", "ve amarelo") in descr and not [c for c in cands if c.jogador == "C"]
     sel = mj.montar(cands, n=4, p_min=0.45)
     assert len({s.player_id for s in sel}) == len(sel) <= 2      # 1 por jogador, 2 por jogo
+    maluca = mj.montar(cands, n=8, p_min=0.30, p_max=0.65, por_mercado=1,
+                       sem_jogadores={sel[0].player_id})
+    assert sel[0].player_id not in {s.player_id for s in maluca}
+    assert len({s.mercado for s in maluca}) == len(maluca)        # 1 por mercado aqui
     txt = mj.texto_multipla("Teste", sel)
     assert "odd justa" in txt and txt.startswith("*Teste* (2 selecoes")
