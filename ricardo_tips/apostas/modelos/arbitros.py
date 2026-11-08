@@ -128,6 +128,24 @@ def perfil_live(nome: str | None) -> PerfilArbitro | None:
     return _cache[1].perfil(nome)
 
 
+def fator_jogo(nome: str | None) -> tuple[float, str | None]:
+    """(fator, texto) do arbitro deste jogo: dos nossos jogos (comparado com a
+    liga) quando ja ha jogos dele; senao a lista fixa; texto so se fugir do normal."""
+    if not nome:
+        return 1.0, None
+    try:
+        p = perfil_live(nome)
+    except Exception:  # noqa: BLE001 — sem BD: lista fixa
+        p = None
+    if p is not None:
+        return p.fator, (p.texto() if abs(p.fator - 1) >= 0.05 else None)
+    from apostas.modelos.referencias import fator_arbitro, rate_arbitro
+    f = fator_arbitro(nome)
+    if abs(f - 1) < 0.05:
+        return 1.0, None
+    return f, f"arbitro {nome} ({rate_arbitro(nome):.1f} cartoes/jogo, lista fixa)"
+
+
 def formatar_ranking(h: HistoricoArbitros, n: int = 5) -> str:
     r = h.ranking()
     linhas = [f"*🧑‍⚖️ Arbitros* (dos nossos jogos, comparados com a liga onde apitam; "

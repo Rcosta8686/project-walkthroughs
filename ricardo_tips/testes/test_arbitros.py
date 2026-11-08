@@ -259,3 +259,34 @@ def test_medicao_usa_o_arbitro_com_os_jogos_dele_de_antes(bd, monkeypatch):
     sem_arbitro = cartoes()
     assert com_arbitro["previsto_equipas"] > sem_arbitro["previsto_equipas"] * 1.2
     assert com_arbitro["previsto_suave"] == sem_arbitro["previsto_suave"]   # so a versao equipas
+
+
+def test_fator_do_jogo_usa_os_nossos_jogos_antes_da_lista_fixa(monkeypatch):
+    perfil = arb.PerfilArbitro(nome="Joey Kooij", n=8, media=3.8, fator=1.06, media_liga=3.4)
+    monkeypatch.setattr(arb, "perfil_live", lambda nome: perfil if nome == "Joey Kooij" else None)
+    f, txt = arb.fator_jogo("Joey Kooij")
+    assert f == 1.06 and "nos nossos 8 jogos (a liga costuma dar 3.4)" in txt
+    assert arb.fator_jogo("Ninguem Conhecido") == (1.0, None)
+    assert arb.fator_jogo(None) == (1.0, None)
+
+
+def _sinais_fim_de_jogo(monkeypatch, perfil):
+    from apostas.alertas import analista
+    from apostas.ingestao.sofascore_live import EstadoLive
+    monkeypatch.setattr(arb, "perfil_live", lambda nome: perfil)
+    e = EstadoLive(event_id=1, home="A", away="B", liga="L", minuto=75, estado="2H",
+                   marcador_casa=1, marcador_fora=0, shots_total_casa=8, shots_total_fora=6,
+                   shots_on_target_casa=3, shots_on_target_fora=2, corners_casa=4,
+                   corners_fora=3, yellow_cards_casa=2, yellow_cards_fora=0, arbitro="X Y")
+    sinais = analista.gerar_sinais(e, live_predictor.prever(e), prob_minima=0.5)
+    return [r for s in sinais if s.mercado == "cartoes" and s.lado == "under"
+            for r in s.racional]
+
+
+def test_so_diz_arbitro_brando_quando_e_mesmo(monkeypatch):
+    normal = arb.PerfilArbitro(nome="X Y", n=10, media=4.0, fator=1.0, media_liga=4.0)
+    razoes = _sinais_fim_de_jogo(monkeypatch, normal)
+    assert razoes and not [r for r in razoes if "brando" in r or "X Y" in r]
+    brando = arb.PerfilArbitro(nome="X Y", n=10, media=2.9, fator=0.85, media_liga=3.6)
+    razoes = _sinais_fim_de_jogo(monkeypatch, brando)
+    assert any("2.9 amarelos/jogo nos nossos 10 jogos" in r for r in razoes)

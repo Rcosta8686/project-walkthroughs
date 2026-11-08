@@ -800,12 +800,14 @@ def _construir_contexto(estado, prev) -> dict:
         elif estado.possession_casa <= 0.38:
             ctx["posse_dominante"] = f"{estado.away} com {(1-estado.possession_casa)*100:.0f}% posse"
 
-    # Arbitro severo
+    # Arbitro: dos nossos jogos (comparado com a liga), senao a lista fixa.
     try:
-        from apostas.modelos.referencias import fator_arbitro, rate_arbitro, eh_derby
-        arb_sev = fator_arbitro(estado.arbitro) if estado.arbitro else 1.0
-        if arb_sev > 1.1:
-            ctx["arbitro_severo"] = f"Arbitro {estado.arbitro} ({rate_arbitro(estado.arbitro):.1f} cards/jogo)"
+        from apostas.modelos.arbitros import fator_jogo
+        from apostas.modelos.referencias import eh_derby
+        arb_sev, arb_txt = fator_jogo(estado.arbitro)
+        ctx["_arbitro"] = (arb_sev, arb_txt)
+        if arb_sev > 1.1 and arb_txt:
+            ctx["arbitro_severo"] = arb_txt
         if eh_derby(estado.home, estado.away):
             ctx["derby"] = "⚡DERBY — tensao extra"
     except Exception:  # noqa: BLE001
@@ -1329,12 +1331,11 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
             _add(out, "cards_over", "cartoes", "over", linha, p_over, racional, titulo, estado=estado, prev=prev)
 
         # UNDER cartoes: so late no jogo e sem contexto de agressividade
+        arb_sev, arb_txt = ctx.get("_arbitro", (1.0, None))
         try:
-            from apostas.modelos.referencias import fator_arbitro, eh_derby
-            arb_sev = fator_arbitro(estado.arbitro) if estado.arbitro else 1.0
+            from apostas.modelos.referencias import eh_derby
             is_derby = eh_derby(estado.home, estado.away)
         except Exception:  # noqa: BLE001
-            arb_sev = 1.0
             is_derby = False
         if (p_under >= prob_min and prev.minutos_restantes <= 25
                 and arb_sev < 1.05 and not is_derby):
@@ -1342,8 +1343,8 @@ def _sinal_cartoes(estado, prev, ctx, out, prob_min) -> None:
             titulo = f"Under {linha} cartoes amarelos"
             if "jogo_a_fechar" in ctx:
                 racional.append(ctx["jogo_a_fechar"])
-            if estado.arbitro:
-                racional.append(f"arbitro {estado.arbitro} brando")
+            if arb_sev <= 0.92 and arb_txt:   # so quando e mesmo brando
+                racional.append(arb_txt)
             if not racional:
                 racional.append(f"so {amarelos} amarelos ao min {estado.minuto}")
             _add(out, "cards_under", "cartoes", "under", linha, p_under, racional, titulo, estado=estado, prev=prev)

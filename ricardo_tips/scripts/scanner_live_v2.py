@@ -1399,9 +1399,9 @@ def _imprimir_estado(estado, prev) -> None:
         corners_s = f" | C {estado.corners_casa}-{estado.corners_fora}"
     arb = f" | arb: {estado.arbitro}" if estado.arbitro else ""
     try:
-        from apostas.modelos.referencias import eh_derby, fator_arbitro
+        from apostas.modelos.referencias import eh_derby
         derby = " ⚡DERBY" if eh_derby(estado.home, estado.away) else ""
-        arb_mult = fator_arbitro(estado.arbitro) if estado.arbitro else 1.0
+        arb_mult, _ = arbitros.fator_jogo(estado.arbitro)
         arb_tag = f" (x{arb_mult:.2f})" if abs(arb_mult - 1.0) > 0.05 else ""
     except Exception:  # noqa: BLE001
         derby = ""
