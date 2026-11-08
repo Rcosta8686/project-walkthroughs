@@ -57,6 +57,28 @@ class ClienteTelegram:
         ))
         log.info("Telegram → chat %s (%d chars)", destino, len(texto))
 
+    def enviar_foto(self, png: bytes, legenda: str = "", chat_id: int | None = None) -> None:
+        """Envia uma imagem (ex: grafico) com legenda. Em dev grava o PNG em
+        dados/telegram_fotos e regista-o no outbox."""
+        legenda = legenda[:1024]   # limite do Telegram para legendas
+        if self.modo == "desenvolvimento":
+            pasta = _config.project_root() / "dados" / "telegram_fotos"
+            pasta.mkdir(parents=True, exist_ok=True)
+            ficheiro = pasta / f"{agora_utc():%Y%m%d_%H%M%S_%f}.png"
+            ficheiro.write_bytes(png)
+            self._gravar_mock(f"[foto {ficheiro.name}]\n{legenda}", chat_id)
+            return
+
+        destino = chat_id if chat_id is not None else self._chat_id()
+        bot = self._criar_bot()
+        asyncio.run(bot.send_photo(
+            chat_id=destino,
+            photo=png,
+            caption=legenda or None,
+            parse_mode="Markdown",
+        ))
+        log.info("Telegram → chat %s (foto %d KB)", destino, len(png) // 1024)
+
     def _gravar_mock(self, texto: str, chat_id: int | None) -> None:
         p = caminho_outbox()
         p.parent.mkdir(parents=True, exist_ok=True)

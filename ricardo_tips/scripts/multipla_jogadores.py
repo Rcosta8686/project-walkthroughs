@@ -52,6 +52,8 @@ class Selecao:
     descricao: str
     p: float
     mercado: str = ""
+    linha: int = 1                 # k em "k+" (para se saber de noite se acertou)
+    sujeito_id: int | None = None  # jogador, equipa ou (cartoes do jogo) o proprio jogo
 
     @property
     def odd_justa(self) -> float:
@@ -77,7 +79,8 @@ def candidatas(prevs: list[jogadores.PrevJogador], jogo: str, event_id: int,
             if p_min <= p <= p_max:
                 desc = ("ve amarelo" if pj.mercado == "cartao"
                         else f"{alvo}+ {_NOME_M[pj.mercado]}")
-                out.append(Selecao(jogo, event_id, pj.nome, pj.id, desc, p, pj.mercado))
+                out.append(Selecao(jogo, event_id, pj.nome, pj.id, desc, p, pj.mercado,
+                                   alvo, pj.id))
     return out
 
 
@@ -122,14 +125,14 @@ def candidatas_equipas(pr, nomes: tuple[str, str], ids: tuple[int, int], jogo: s
                     break
                 if p <= p_max:
                     out.append(Selecao(jogo, event_id, nomes[i], -(ids[i] * 10 + codigo),
-                                       f"{k}+ {_NOMES_EQ[m]}", p, f"{m}_equipa"))
+                                       f"{k}+ {_NOMES_EQ[m]}", p, f"{m}_equipa", k, ids[i]))
     for k in range(1, 15):
         p = p_pelo_menos(pr.cartoes, k, DISPERSAO["cartoes"])
         if p < p_min:
             break
         if p <= p_max:
             out.append(Selecao(jogo, event_id, "Jogo", -(event_id * 10 + 9),
-                               f"{k}+ amarelos (as 2 equipas)", p, "cartoes_jogo"))
+                               f"{k}+ amarelos (as 2 equipas)", p, "cartoes_jogo", k, event_id))
     return out
 
 
@@ -251,8 +254,15 @@ def main() -> None:
     print(texto)
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente
+        from apostas.relatorios import multiplas
         cliente().enviar(texto)
         print("\n[OK] Enviado para o Telegram.")
+        # So as enviadas ficam no registo: de noite ve-se se acertaram.
+        for tipo, sel in (("segura", segura), ("maluca", maluca)):
+            try:
+                multiplas.registar(tipo, sel)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Registo da multipla %s falhou: %s", tipo, exc)
 
 
 if __name__ == "__main__":

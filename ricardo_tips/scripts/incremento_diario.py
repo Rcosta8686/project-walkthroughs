@@ -12,6 +12,9 @@ feito mesmo que a internet demore), depois o que vai ao Sofascore, com prazo:
    na BD e saltado. Para quando acaba o prazo (--horas, default 3).
 5. Resolver dos alertas desses dias (tambem com o prazo).
 6. Se entraram jogos novos e ainda ha tempo, aprende outra vez com eles.
+7. Graficos para o Telegram do que as dicas acertaram e falharam: o do dia
+   todas as noites, o da semana a segunda, o do mes no dia 1 (cada um uma vez
+   so), e as multiplas de ontem selecao a selecao.
 
 Cada passo fica no log (logs/ricardo_tips.log) com a hora, para se ver ate
 onde chegou.
@@ -102,6 +105,35 @@ def _aprender() -> None:
     _passo("nos vs casas", casas)
 
 
+def _graficos(agora: datetime) -> None:
+    """Grafico(s) de acertos/falhas e as multiplas de ontem, para o Telegram."""
+    from apostas.alertas.telegram_cliente import cliente
+    from apostas.relatorios import grafico_acertos as ga
+    from apostas.relatorios import multiplas
+    from apostas.utils.db import abrir_sessao
+    ate = datetime(agora.year, agora.month, agora.day)
+    for periodo in ga.periodos_da_noite(ate):
+        if ga.ja_enviado(periodo, ate):
+            continue
+        g = ga.gerar(periodo, ate)
+        ga.gravar(g)
+        print("\n" + g.texto)
+        if not g.vazio:
+            ga.enviar(g)
+            ga.marcar_enviado(periodo, ate)
+    if ga.ja_enviado("multiplas", ate):
+        return
+    with abrir_sessao() as s:
+        ontem = multiplas.carregar_resolvidas(s, ate - timedelta(days=1), ate)
+        todas = multiplas.carregar_resolvidas(s) if ontem else []
+    if ontem:
+        texto = "\n\n".join([multiplas.texto_multiplas(
+            ontem, f"🎰 Multiplas de {ate - timedelta(days=1):%d/%m}"), multiplas.formatar(todas)])
+        print("\n" + texto)
+        cliente().enviar(texto)
+        ga.marcar_enviado("multiplas", ate)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Incremento diario dos mini-cerebros.")
     parser.add_argument("--dias", type=int, default=3)
@@ -109,6 +141,8 @@ def main() -> None:
                         help="Tempo maximo para ir ao Sofascore (o Windows corta as 4h)")
     parser.add_argument("--sem-resolver", action="store_true")
     parser.add_argument("--telegram", action="store_true", help="Envia o resumo")
+    parser.add_argument("--sem-graficos", action="store_true",
+                        help="Nao envia os graficos de acertos/falhas")
     args = parser.parse_args()
 
     import time as _time
@@ -155,6 +189,10 @@ def main() -> None:
     if novos and not prazo.esgotado():
         _aprender()
     prazo.definir(None)
+
+    # 7. Local e rapido: os graficos saem mesmo que o Sofascore tenha falhado.
+    if not args.sem_graficos:
+        _passo("graficos de acertos", lambda: _graficos(agora_utc()))
     log.info("Noite: terminou em %.0f min", (_time.monotonic() - t0) / 60)
 
     if args.telegram and texto:

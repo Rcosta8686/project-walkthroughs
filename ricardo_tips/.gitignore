@@ -11,6 +11,8 @@ dados/tracking/
 dados/cache/
 dados/estado_bot.json
 dados/telegram_outbox.log
+dados/telegram_fotos/
+dados/graficos/
 !dados/.gitkeep
 
 # Dashboard gerado

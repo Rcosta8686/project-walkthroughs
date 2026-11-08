@@ -26,6 +26,7 @@ python-telegram-bot>=20.7
 # Dashboard
 Jinja2>=3.1
 plotly>=5.18
+matplotlib>=3.8   # graficos de acertos para o Telegram
 
 # CLI e utilidades
 click>=8.1

@@ -148,8 +148,15 @@ def _popular_liga(liga: LigaPrioritaria, n_jogos: int) -> dict:
     equipas = _equipas_da_liga(liga.sofascore_id, season_id)
     print(f"  → {len(equipas)} equipas encontradas na classificacao")
 
-    stats = {"equipas": len(equipas), "jogos_novos": 0, "eventos_processados": 0}
+    from apostas.modelos.incremento_diario import ja_guardados
+    from apostas.utils import prazo
+    from apostas.utils.db import abrir_sessao
+    stats = {"equipas": len(equipas), "jogos_novos": 0, "eventos_processados": 0,
+             "ja_tinha": 0}
     for i, (team_id, team_nome) in enumerate(equipas, 1):
+        if prazo.esgotado():
+            print("  ⏱ Acabou o tempo: o resto fica para a proxima semana.")
+            break
         print(f"  [{i}/{len(equipas)}] {team_nome} (id={team_id})")
         try:
             event_ids = _ultimos_eventos_equipa(team_id, n_jogos)
@@ -159,7 +166,14 @@ def _popular_liga(liga: LigaPrioritaria, n_jogos: int) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("team %s events falhou: %s", team_id, exc)
             continue
-        for eid in event_ids:
+        # Jogos ja guardados nao se pedem outra vez (antes: 2-3 pedidos por cada um
+        # dos ~9000 jogos, e o Windows cortava a tarefa as 4 horas).
+        with abrir_sessao() as s:
+            com_equipas, _ = ja_guardados(s, list(event_ids))
+        stats["ja_tinha"] += len([e for e in event_ids if e in com_equipas])
+        for eid in [e for e in event_ids if e not in com_equipas]:
+            if prazo.esgotado():
+                break
             try:
                 n_add = historico_equipas.gravar_jogo_terminado(eid)
                 stats["jogos_novos"] += n_add
@@ -173,7 +187,7 @@ def _popular_liga(liga: LigaPrioritaria, n_jogos: int) -> dict:
         time.sleep(0.8)  # entre equipas
 
     print(f"  ✓ {liga.nome}: {stats['eventos_processados']} eventos processados, "
-          f"+{stats['jogos_novos']} linhas novas")
+          f"+{stats['jogos_novos']} linhas novas ({stats['ja_tinha']} ja guardados)")
     return stats
 
 
@@ -185,7 +199,13 @@ def main() -> None:
                         help="So ligas desta prioridade (1=foco, 2=secundario).")
     parser.add_argument("--liga", default=None,
                         help="So esta liga (nome exacto, ex: 'Serie A (ITA)').")
+    parser.add_argument("--horas", type=float, default=3.5,
+                        help="Tempo maximo (o Windows corta a tarefa as 4 horas).")
     args = parser.parse_args()
+    from datetime import datetime, timedelta
+
+    from apostas.utils import prazo
+    prazo.definir(datetime.now() + timedelta(hours=args.horas))
 
     if args.liga:
         alvos = [l for l in LIGAS_PRIORITARIAS if l.nome == args.liga]
@@ -209,6 +229,9 @@ def main() -> None:
     # bloqueou — nao vale a pena martelar as restantes a consumir cooldown.
     falhas_consecutivas = 0
     for liga in alvos:
+        if prazo.esgotado():
+            print("\n⏱ Acabou o tempo: as ligas que faltam ficam para a proxima semana.")
+            break
         try:
             s = _popular_liga(liga, args.n)
         except FlaresolverrIndisponivel:
