@@ -132,3 +132,17 @@ def test_limpeza_apaga_da_bd_e_do_csv(bd, tmp_path):
     guardadas = (tracking / "removidas_amigaveis_selecoes.csv").read_text(encoding="utf-8")
     assert "Club Friendly Games" in guardadas
     assert limpar(tracking=tracking).vazio            # a segunda vez nao ha nada
+
+
+def test_jogos_do_dia_guardados_3h(tmp_path, monkeypatch):
+    from apostas.ingestao import sofascore_live as sl
+    from apostas.utils import config as config_mod
+    monkeypatch.setattr(config_mod, "project_root", lambda: tmp_path)
+    pedidos = []
+    monkeypatch.setattr(sl, "_listar_jogos_do_dia_sofascore",
+                        lambda d, ids=None, live=False: pedidos.append(d) or [{"id": 1}])
+    assert sl.listar_jogos_do_dia("2026-11-08", ids_ligas=(17, 8)) == [{"id": 1}]
+    assert sl.listar_jogos_do_dia("2026-11-08", ids_ligas=(8, 17)) == [{"id": 1}]
+    assert pedidos == ["2026-11-08"]                          # o segundo veio do disco
+    sl.listar_jogos_do_dia("2026-11-08", ids_ligas=(17, 8), incluir_live=True)
+    assert len(pedidos) == 2                                  # com jogos ao vivo: sem cache

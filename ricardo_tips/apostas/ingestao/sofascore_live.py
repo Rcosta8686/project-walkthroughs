@@ -23,6 +23,8 @@ pagar o custo de ter o docker a correr para evitar os 403.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -282,7 +284,45 @@ LIGAS_SOFASCORE_IDS = {
 }
 
 
+CACHE_DIA_TTL_S = 3 * 3600
+
+
+def _cache_dia(data_iso: str, ids_ligas: tuple[int, ...] | None) -> Path:
+    import hashlib
+
+    from apostas.utils.config import project_root
+    chave = hashlib.md5(repr(sorted(ids_ligas or ())).encode()).hexdigest()[:8]
+    return project_root() / "dados" / "cache" / f"jogos_dia_{data_iso}_{chave}.json"
+
+
 def listar_jogos_do_dia(
+    data_iso: str,
+    ids_ligas: tuple[int, ...] | None = None,
+    incluir_live: bool = False,
+) -> list[dict]:
+    """Jogos do dia, guardados 3h no disco: quando a lista do Sofascore esta
+    bloqueada vai liga a liga (~50 pedidos), e a multipla, o preview e o
+    pre-live pediam-na cada um. Com incluir_live os estados mudam: sem cache."""
+    import json as _json
+    import time as _time
+    f = _cache_dia(data_iso, ids_ligas)
+    if not incluir_live:
+        try:
+            if f.exists() and _time.time() - f.stat().st_mtime < CACHE_DIA_TTL_S:
+                return _json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    eventos = _listar_jogos_do_dia_sofascore(data_iso, ids_ligas, incluir_live)
+    if eventos and not incluir_live:
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(_json.dumps(eventos), encoding="utf-8")
+        except OSError as exc:
+            log.debug("Cache dos jogos do dia falhou: %s", exc)
+    return eventos
+
+
+def _listar_jogos_do_dia_sofascore(
     data_iso: str,
     ids_ligas: tuple[int, ...] | None = None,
     incluir_live: bool = False,
