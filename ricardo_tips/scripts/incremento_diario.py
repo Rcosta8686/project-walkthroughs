@@ -6,7 +6,7 @@ feito mesmo que a internet demore), depois o que vai ao Sofascore, com prazo:
 1. Copia de seguranca da BD e de dados/tracking (dados/backups, 7 dias).
 2. Tira amigaveis/seleccoes que tenham entrado.
 3. Aprendizagem com o que ja esta na BD: ritmo do resto do jogo, precisao por
-   equipa, cartao no fim, PRIME, nos vs casas.
+   equipa, cartao no fim, mais golos, PRIME, nos vs casas.
 4. Para cada liga que o scanner segue, grava estatisticas de equipa e de
    jogadores dos jogos terminados nos ultimos --dias (default 3). O que ja esta
    na BD e saltado. Para quando acaba o prazo (--horas, default 3).
@@ -88,6 +88,11 @@ def _aprender() -> None:
         with abrir_sessao() as s:
             print("\n" + cartoes_finais.formatar_historia(cartoes_finais.recalcular_e_gravar(s)))
 
+    def golos() -> None:
+        from apostas.modelos import golos_finais
+        with abrir_sessao() as s:
+            print("\n" + golos_finais.formatar_historia(golos_finais.recalcular_e_gravar(s)))
+
     def prime_() -> None:
         from apostas.relatorios import prime
         print("\n" + prime.formatar(prime.recalcular_e_gravar()))
@@ -102,6 +107,7 @@ def _aprender() -> None:
     _passo("ritmo e precisao por equipa", ritmo)
     _passo("jogadores", jogadores_)
     _passo("cartao no fim", cartoes)
+    _passo("mais golos", golos)
     _passo("PRIME", prime_)
     _passo("nos vs casas", casas)
 

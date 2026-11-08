@@ -63,7 +63,8 @@ from apostas.utils.db import abrir_sessao  # noqa: E402
 from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
-from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
+from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, golos_finais  # noqa: E402
+from apostas.modelos import priors_equipas  # noqa: E402
 from apostas.modelos import jogadores, perfil_treinador, precisao_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live, prime, vs_casa  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
@@ -232,7 +233,7 @@ def _carregar_cooldown_do_registo() -> int:
     for r in alertas_enviados.carregar():
         if r["ts"] < limite or not r.get("event_id") or not r.get("mercado"):
             continue
-        mercado = "cartoes_fim" if r["tipo"] == "cartoes_fim" else r["mercado"]
+        mercado = r["tipo"] if r["tipo"] in ("cartoes_fim", "mais_golos") else r["mercado"]
         _cooldown[_chave_cooldown(r["event_id"], mercado, r.get("lado"))] = r["ts"]
         n += 1
     return n
@@ -1782,7 +1783,7 @@ def _texto_equipas(estado, prev, mercado: str) -> str:
     txt_jog = jogadores.texto_live(_jogadores_prev(estado, prev), mj) if mj else ""
     linhas = [precisao_equipas.texto_equipas(estado, prev, precisao, m,
                                              (fatores[0], fatores[1]), versoes),
-              txt_jog, *razoes, _texto_subs(estado)]
+              txt_jog, *razoes, _texto_subs(estado), golos_finais.linha_mais_golos(estado, prev)]
     return "\n".join(x for x in linhas if x)
 
 
@@ -1882,6 +1883,59 @@ def _alerta_cartoes_fim(estado, prev) -> bool:
                                   odd=sinal.odd_justa, odd_real=odd_r)
     except OSError as exc:
         log.warning("Registo do cartao no fim falhou: %s", exc)
+    return True
+
+
+_historia_golos_cache: tuple[float, golos_finais.Historia] | None = None
+
+
+def _historia_golos_live() -> golos_finais.Historia:
+    """Taxas historicas de 'mais 1 golo ate ao fim' (recalculadas a noite)."""
+    global _historia_golos_cache
+    agora = time.time()
+    if _historia_golos_cache is None or agora - _historia_golos_cache[0] >= _RITMO_TTL_S:
+        _historia_golos_cache = (agora, golos_finais.ler())
+    return _historia_golos_cache[1]
+
+
+def _alerta_mais_golos(estado, prev) -> bool:
+    """Envia o 'vao sair mais golos' uma vez por jogo quando modelo e historia
+    concordam (55'-80', jogo com pressao)."""
+    if golos_finais.fase_de(int(estado.minuto or 0)) is None:
+        return False
+    if _em_cooldown(estado.event_id, "mais_golos", "over"):
+        return False
+    historia = _historia_golos_live()
+    if not historia.taxas:
+        return False
+    sinal = golos_finais.avaliar(estado, prev, historia)
+    if sinal is None:
+        return False
+    odd_r = _odd_real(estado.event_id, "golos", "over", sinal.linha)
+    texto = golos_finais.formatar_telegram(sinal, estado)
+    try:
+        txt_equipas = _texto_equipas(estado, prev, "golos")
+        if txt_equipas:   # sem repetir a linha curta dos golos
+            texto += "\n" + "\n".join(l for l in txt_equipas.splitlines()
+                                       if not l.startswith("⚽ Mais golos"))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Previsao por equipa falhou: %s", exc)
+    if odd_r is not None:
+        s_casa = {"mercado": "golos", "lado": "over", "linha": sinal.linha,
+                  "prob_modelo": sinal.p1}
+        vs_casa.anexar_odds(s_casa, _odds_jogo(estado.event_id))
+        texto += f"\n💶 {_texto_casa(s_casa, 'golos') or _texto_odd_real(odd_r)}"
+    telegram_cliente().enviar(texto)
+    _marcar_enviado(estado.event_id, "mais_golos", "over")
+    log.info("Mais golos %s %s vs %s: OVER %.1f %.0f%% (historia %d jogos)",
+             estado.event_id, estado.home, estado.away, sinal.linha, sinal.p1 * 100,
+             sinal.n_historia)
+    try:
+        alertas_enviados.registar(tipo="mais_golos", event_id=estado.event_id,
+                                  mercado="golos", lado="over", linha=sinal.linha,
+                                  odd=sinal.odd_justa, odd_real=odd_r)
+    except OSError as exc:
+        log.warning("Registo do mais golos falhou: %s", exc)
     return True
 
 
@@ -2377,6 +2431,11 @@ def _correr_ciclo(args) -> None:
                 _alerta_cartoes_fim(estado, prev)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Cartao no fim %s falhou: %s", estado.event_id, exc)
+            # Vao sair mais golos (55'-80', jogo com pressao, modelo + historia).
+            try:
+                _alerta_mais_golos(estado, prev)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Mais golos %s falhou: %s", estado.event_id, exc)
 
         # Odds API: so para computar EV (classico) — opcional.
         sport = _sport_da_liga(estado.liga)

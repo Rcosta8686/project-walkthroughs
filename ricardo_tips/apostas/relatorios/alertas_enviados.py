@@ -9,6 +9,8 @@ Aqui fica uma linha por mensagem enviada:
 - tipo "projeccao": projeccao 40'/55'/70'; regista-se a linha e o lado da
   conclusao do mega-cerebro e a odd justa dessa linha. O resultado sai do
   total final das 2 equipas na BD (EstatisticaEquipaJogo).
+- tipos "cartoes_fim" (cartao no fim) e "mais_golos" (vao sair mais golos):
+  resolvidos da mesma maneira, pelo total final na BD.
 
 Lucro sempre a 1 unidade, a odd indicada na mensagem.
 """
@@ -121,7 +123,7 @@ def totais_finais_bd(sess, chaves: set[tuple[int, str]]) -> dict[tuple[int, str]
 
     out: dict[tuple[int, str], float] = {}
     for mercado in {m for _, m in chaves}:
-        coluna = _COLUNA.get(mercado)
+        coluna = EEJ.golos_marcados if mercado == "golos" else _COLUNA.get(mercado)
         ids = [e for e, m in chaves if m == mercado]
         if coluna is None or not ids:
             continue
@@ -196,7 +198,8 @@ class DicaEnviada:
 
     @property
     def grupo(self) -> str:
-        sufixo = {"projeccao": " (projecção)", "cartoes_fim": " (cartão no fim)"}
+        sufixo = {"projeccao": " (projecção)", "cartoes_fim": " (cartão no fim)",
+                  "mais_golos": " (mais golos)"}
         return f"{self.mercado} {self.lado}" + sufixo.get(self.tipo, "")
 
 
@@ -246,7 +249,7 @@ def listar(inicio: datetime, fim: datetime, csv_sugestoes: Path,
                 linha=(row.get("linha") or "").strip(), odd=odd_real or _float(row.get("odd")),
                 resultado=resultado, lucro=lucro,
                 home=row.get("home") or "", away=row.get("away") or "", odd_real=odd_real))
-        else:  # projeccao, cartoes_fim: resolvidos pelo total final na BD
+        else:  # projeccao, cartoes_fim, mais_golos: resolvidos pelo total final na BD
             m = (r.get("mercado") or "?").lower()
             res, lucro = _resultado_projeccao(r, totais_proj or {})
             dicas.append(DicaEnviada(
@@ -315,6 +318,8 @@ def formatar_lista(dicas: list[DicaEnviada],
             aposta += " (proj.)"
         elif d.tipo == "cartoes_fim":
             aposta += " (fim)"
+        elif d.tipo == "mais_golos":
+            aposta += " (mais golos)"
         fim = f" → {d.lucro:+.2f}" if d.lucro is not None and d.resultado != "pendente" else ""
         linhas.append(f"{_ICONE_RESULTADO.get(d.resultado, '⏳')} {d.ts:%H:%M} {jogo} · {aposta}{fim}")
     return "\n".join(linhas)
