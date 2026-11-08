@@ -1,9 +1,14 @@
-"""Multipla de jogadores antes do jogo (remates, remates a baliza, amarelo).
+"""Multiplas antes do jogo: jogadores, equipas e cartoes do jogo misturados.
 
-Para os jogos das proximas horas com o onze ja conhecido no Sofascore: o
-mini-cerebro de cada titular (a parte dele nos remates da equipa, amarelos por
-90') x o normal das equipas (mini-cerebros) x os minutos que se espera que
-jogue. Escolhe as selecoes mais provaveis e monta duas multiplas:
+Para os jogos das proximas horas com o onze ja conhecido no Sofascore:
+  - jogadores: o mini-cerebro de cada titular (a parte dele nos remates da
+    equipa, amarelos por 90') x o normal das equipas x os minutos esperados;
+  - equipas: cantos, remates e remates a baliza de cada equipa (o normal dela
+    cruzado com o que o adversario deixa fazer, mini-cerebros);
+  - jogo: amarelos das duas equipas.
+Cantos, remates e cartoes variam mais do que um Poisson diz (jogos de 2 e de
+15 cantos): as probabilidades usam uma distribuicao mais larga.
+Escolhe as selecoes e monta duas multiplas:
 
   - segura: poucas selecoes, todas com probabilidade alta;
   - maluca: mais selecoes, odd grande, para uns centimos.
@@ -73,6 +78,58 @@ def candidatas(prevs: list[jogadores.PrevJogador], jogo: str, event_id: int,
                 desc = ("ve amarelo" if pj.mercado == "cartao"
                         else f"{alvo}+ {_NOME_M[pj.mercado]}")
                 out.append(Selecao(jogo, event_id, pj.nome, pj.id, desc, p, pj.mercado))
+    return out
+
+
+# Variancia / media de cada contagem (mais do que 1 = mais espalhado que Poisson).
+DISPERSAO = {"cantos": 1.4, "remates": 1.6, "sot": 1.3, "cartoes": 1.3}
+_NOMES_EQ = {"cantos": "cantos", "remates": "remates", "sot": "remates a baliza"}
+
+
+def p_pelo_menos(media: float, k: int, dispersao: float = 1.0) -> float:
+    """P(X >= k) com a media dada; dispersao > 1 = binomial negativa (mais larga)."""
+    import math
+    if k <= 0:
+        return 1.0
+    if media <= 0:
+        return 0.0
+    if dispersao <= 1.0001:
+        return jogadores._poisson_ge(media, k)
+    r = media / (dispersao - 1)          # binomial negativa com var = dispersao x media
+    q = 1 / dispersao
+    acc = 0.0
+    for x in range(k):
+        acc += math.exp(math.lgamma(x + r) - math.lgamma(r) - math.lgamma(x + 1)
+                        + r * math.log(q) + x * math.log(1 - q))
+    return max(0.0, min(1.0, 1 - acc))
+
+
+def candidatas_equipas(pr, nomes: tuple[str, str], ids: tuple[int, int], jogo: str,
+                       event_id: int, p_min: float = 0.30, p_max: float = 0.93) -> list[Selecao]:
+    """Cantos/remates/a baliza de cada equipa e amarelos do jogo, as linhas em que
+    a probabilidade fica entre p_min e p_max."""
+    if pr is None:
+        return []
+    out: list[Selecao] = []
+    medias = {"cantos": (pr.cantos_casa or pr.cantos / 2, pr.cantos_fora or pr.cantos / 2),
+              "remates": (pr.remates_casa, pr.remates_fora),
+              "sot": (pr.sot_casa or 4.2, pr.sot_fora or 4.2)}
+    for codigo, (m, (mc, mf)) in enumerate(medias.items(), start=1):
+        for i, media in enumerate((mc, mf)):
+            for k in range(1, 40):
+                p = p_pelo_menos(media, k, DISPERSAO[m])
+                if p < p_min:
+                    break
+                if p <= p_max:
+                    out.append(Selecao(jogo, event_id, nomes[i], -(ids[i] * 10 + codigo),
+                                       f"{k}+ {_NOMES_EQ[m]}", p, f"{m}_equipa"))
+    for k in range(1, 15):
+        p = p_pelo_menos(pr.cartoes, k, DISPERSAO["cartoes"])
+        if p < p_min:
+            break
+        if p <= p_max:
+            out.append(Selecao(jogo, event_id, "Jogo", -(event_id * 10 + 9),
+                               f"{k}+ amarelos (as 2 equipas)", p, "cartoes_jogo"))
     return out
 
 
@@ -172,6 +229,9 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             log.debug("Registo das previsoes de %s falhou: %s", eid, exc)
         cands += candidatas(prevs, jogo, eid)
+        cands += candidatas_equipas(pr, (casa.get("shortName") or casa.get("name") or "Casa",
+                                         fora.get("shortName") or fora.get("name") or "Fora"),
+                                    (int(casa["id"]), int(fora["id"])), jogo, eid)
     if sem_onze:
         print(f"({sem_onze} jogos ainda sem o onze no Sofascore: corre outra vez ~1h antes)\n")
     # Segura: provaveis mas nao triviais (65-85%; "1+ remate" a 95% nao paga nada).
@@ -179,10 +239,15 @@ def main() -> None:
     # Maluca: linhas que pagam mais (40-65%), outros jogadores, mercados misturados.
     maluca = montar(cands, n=8, p_min=0.40, p_max=0.65, por_mercado=3,
                     sem_jogadores={s.player_id for s in segura})
-    texto = "\n\n".join([texto_multipla("🎯 Multipla segura de jogadores", segura),
+    if len(maluca) < 8:  # poucos mercados com linhas nesta faixa: completa sem o limite
+        mais = montar(cands, n=8 - len(maluca), p_min=0.40, p_max=0.65,
+                      sem_jogadores={s.player_id for s in segura + maluca})
+        maluca += mais
+    texto = "\n\n".join([texto_multipla("🎯 Multipla segura", segura),
                          texto_multipla("🎰 Multipla maluca (uns centimos)", maluca),
                          "_Probabilidades do modelo; odd justa = 1/p. Se a casa pagar acima, "
-                         "ha valor. Selecoes de jogadores no mesmo jogo nao sao independentes._"])
+                         "ha valor. Selecoes do mesmo jogo nao sao independentes (max. 2 "
+                         "por jogo)._"])
     print(texto)
     if args.telegram:
         from apostas.alertas.telegram_cliente import cliente

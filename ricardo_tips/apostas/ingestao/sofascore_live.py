@@ -1045,6 +1045,16 @@ def _int0(v) -> int:
         return 0
 
 
+def remates_jogador(s: dict) -> int:
+    """Remates de um jogador nas estatisticas do Sofascore: nao ha total, vem em
+    tres partes (a baliza, para fora, bloqueados). So poe as que nao sao 0."""
+    for chave in ("totalShots", "totalScoringAttempts", "shotsTotal"):
+        if s.get(chave) is not None:
+            return _int0(s.get(chave))
+    return (_int0(s.get("onTargetScoringAttempt")) + _int0(s.get("shotOffTarget"))
+            + _int0(s.get("blockedScoringAttempt")))
+
+
 def jogadores_das_lineups(lineups_payload: dict) -> list[dict]:
     """Cada jogador que ja jogou (titular ou suplente que entrou) com os numeros
     dele neste jogo. O Sofascore so poe as estatisticas que nao sao 0."""
@@ -1064,7 +1074,7 @@ def jogadores_das_lineups(lineups_payload: dict) -> list[dict]:
                 "id": int(pid), "nome": pl.get("name") or "?", "lado": nome_lado,
                 "pos": str(p.get("position") or pl.get("position") or "")[:1].upper(),
                 "titular": titular, "minutos": minutos,
-                "remates": _int0(s.get("totalScoringAttempts") or s.get("shotsTotal")),
+                "remates": remates_jogador(s),
                 "sot": _int0(s.get("onTargetScoringAttempt") or s.get("shotsOnTarget")),
                 "faltas": _int0(s.get("fouls")), "sofridas": _int0(s.get("wasFouled")),
                 "amarelo": _int0(s.get("yellowCards")) > 0, "em_campo": not saiu})

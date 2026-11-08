@@ -42,6 +42,11 @@ def _int(v: Any) -> int | None:
         return None
 
 
+def _remates(s: dict) -> int:
+    from apostas.ingestao.sofascore_live import remates_jogador
+    return remates_jogador(s)
+
+
 def _float(v: Any) -> float | None:
     if v is None:
         return None
@@ -126,8 +131,11 @@ def _criar_registo_jogador(
         rating=_float(s.get("rating")),
         golos=_int(s.get("goals")),
         assistencias=_int(s.get("goalAssist")),
-        remates=_int(s.get("totalScoringAttempts")) or _int(s.get("shotsTotal")),
-        sot=_int(s.get("onTargetScoringAttempt")) or _int(s.get("shotsOnTarget")),
+        # O Sofascore nao tem total de remates do jogador e nao poe os 0: quem
+        # jogou fica com numeros (0 incluido), para nao se confundir com "sem dados".
+        remates=_remates(s) if s else None,
+        sot=(_int(s.get("onTargetScoringAttempt")) or _int(s.get("shotsOnTarget")) or 0)
+        if s else None,
         grandes_oportunidades=_int(s.get("bigChanceCreated")),
         grandes_oportunidades_falhadas=_int(s.get("bigChanceMissed")),
         passes=_int(s.get("totalPass")),
@@ -142,7 +150,9 @@ def _criar_registo_jogador(
         dribles_sucesso=_int(s.get("wonContest")),
         fouls_committed=_int(s.get("fouls")),
         fouls_drawn=_int(s.get("wasFouled")),
-        cards_amarelos=_int(s.get("yellowCards")),
+        # amarelo: das estatisticas se vier, senao dos incidentes do jogo
+        cards_amarelos=(_int(s.get("yellowCards")) or (1 if min_am is not None else 0))
+        if s else None,
         cards_vermelhos=_int(s.get("redCards")),
         minuto_amarelo=min_am,
         minuto_vermelho=min_vm,

@@ -261,3 +261,67 @@ def test_multipla_de_jogadores():
     assert len({s.mercado for s in maluca}) == len(maluca)        # 1 por mercado aqui
     txt = mj.texto_multipla("Teste", sel)
     assert "odd justa" in txt and txt.startswith("*Teste* (2 selecoes")
+
+
+def test_remates_do_jogador_somam_as_tres_partes():
+    assert sl.remates_jogador({"onTargetScoringAttempt": 2, "shotOffTarget": 1,
+                               "blockedScoringAttempt": 1}) == 4
+    assert sl.remates_jogador({"totalShots": 5, "onTargetScoringAttempt": 2}) == 5
+    assert sl.remates_jogador({"fouls": 2}) == 0
+    js = sl.jogadores_das_lineups({"home": {"players": [
+        {"player": {"id": 9, "name": "P"}, "position": "F", "substitute": False,
+         "statistics": {"minutesPlayed": 70, "onTargetScoringAttempt": 1, "shotOffTarget": 2}}]}})
+    assert js[0]["remates"] == 3 and js[0]["sot"] == 1
+
+
+def test_gravar_jogador_com_remates_e_amarelo_dos_incidentes():
+    from apostas.modelos import historico_jogadores as hj
+    reg = hj._criar_registo_jogador(
+        {"player": {"id": 9, "name": "P", "position": "F"},
+         "statistics": {"minutesPlayed": 90, "onTargetScoringAttempt": 1, "shotOffTarget": 2,
+                        "blockedScoringAttempt": 1}},
+        event_id=5, team_id=1, data_jogo=AGORA, era_casa=True, liga="L",
+        incidents_json={"incidents": [{"incidentType": "card", "incidentClass": "yellow",
+                                       "player": {"id": 9}, "time": 60}]},
+        foi_titular=True)
+    assert reg is not None
+    assert (reg.remates, reg.sot, reg.cards_amarelos, reg.minuto_amarelo) == (4, 1, 1, 60)
+    sem = hj._criar_registo_jogador(
+        {"player": {"id": 8, "name": "Q"}, "statistics": {"minutesPlayed": 90}},
+        event_id=5, team_id=1, data_jogo=AGORA, era_casa=True, liga="L",
+        incidents_json=None, foi_titular=True)
+    assert (sem.remates, sem.sot, sem.cards_amarelos) == (0, 0, 0)    # jogou: 0, nao vazio
+
+
+def test_jogos_antigos_sem_remates_estimados_pela_pontaria():
+    r = _ejj(1, 1, 1, "ST", 90, None, 2, cart=0)
+    assert jg._remates_jogador(r, (12, 4, 2)) == pytest.approx(6.0)   # 2 a baliza x 12/4
+    r.minuto_amarelo = 70
+    assert jg._amarelo(r) == 1.0
+    linhas, totais = [], {}
+    for i in range(10):     # remates antigos vazios: a parte vem da baliza
+        totais[(2000 + i, 100)] = (12, 4, 2)
+        linhas.append(_ejj(7, 2000 + i, i + 1, "ST", 90, None, 2))
+    pf = jg.HistoricoJogadores(linhas, totais).perfil(7)
+    assert pf.quota_remates > 0.35
+
+
+def test_multipla_com_equipas_e_cartoes_do_jogo():
+    import multipla_jogadores as mj
+    from apostas.modelos.priors_equipas import PriorsJogo
+    # mais espalhado do que Poisson: menos certeza abaixo da media
+    assert mj.p_pelo_menos(6.0, 4, 1.4) < mj.p_pelo_menos(6.0, 4, 1.0)
+    assert mj.p_pelo_menos(6.0, 4, 1.0) == pytest.approx(jg._poisson_ge(6.0, 4))
+    assert mj.p_pelo_menos(0.0, 1) == 0.0 and mj.p_pelo_menos(3.0, 0) == 1.0
+    pr = PriorsJogo(golos=2.6, cantos=10.5, cartoes=4.6, remates_casa=15.0, remates_fora=9.0,
+                    n_casa=20, n_fora=20, cantos_casa=6.5, cantos_fora=4.0,
+                    sot_casa=5.5, sot_fora=3.0)
+    cands = mj.candidatas_equipas(pr, ("Porto", "Arouca"), (1, 2), "Porto–Arouca 20:30", 7)
+    descr = {(c.jogador, c.descricao, c.mercado) for c in cands}
+    assert ("Porto", "6+ cantos", "cantos_equipa") in descr
+    assert any(c.mercado == "cartoes_jogo" and "amarelos (as 2 equipas)" in c.descricao
+               for c in cands)
+    assert all(0.30 <= c.p <= 0.93 for c in cands)
+    seg = mj.montar(cands, n=4, p_min=0.65, p_max=0.85)
+    assert len(seg) <= 2 and len({s.player_id for s in seg}) == len(seg)   # 2 por jogo
+    assert mj.candidatas_equipas(None, ("A", "B"), (1, 2), "x", 1) == []

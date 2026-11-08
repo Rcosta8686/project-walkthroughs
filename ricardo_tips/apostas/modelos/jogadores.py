@@ -75,6 +75,23 @@ def _poisson_ge(lam: float, k: int) -> float:
     return max(0.0, min(1.0, 1.0 - acc))
 
 
+def _amarelo(r) -> float:
+    """Viu amarelo? (as estatisticas antigas nao o tinham: vem dos incidentes)."""
+    if _n(getattr(r, "cards_amarelos", 0)) > 0 or getattr(r, "minuto_amarelo", None) is not None:
+        return 1.0
+    return 0.0
+
+
+def _remates_jogador(r, tot) -> float:
+    """Remates do jogador nesse jogo. Os jogos guardados antes de 08/11 nao os
+    tem (o Sofascore nao da o total): estima-se pelos remates a baliza dele e
+    pela pontaria da equipa nesse jogo."""
+    if r.remates is not None:
+        return _n(r.remates)
+    sot, rem_eq, sot_eq = _n(r.sot), _n(tot[0]), _n(tot[1])
+    return sot * rem_eq / sot_eq if sot_eq > 0 else sot / 0.35
+
+
 @dataclass
 class PerfilJogador:
     id: int
@@ -102,11 +119,11 @@ class HistoricoJogadores:
             acc = somas.setdefault(pos_letra(r.posicao), [0.0] * 9)
             f90 = r.minutos / 90.0
             acc[8] += 1
-            acc[4] += _n(r.cards_amarelos)
+            acc[4] += _amarelo(r)
             acc[5] += f90
             acc[6] += _n(r.fouls_committed)
             if tot is not None and tot[0]:
-                acc[0] += _n(r.remates)
+                acc[0] += _remates_jogador(r, tot)
                 acc[1] += _n(tot[0]) * f90
             if tot is not None and tot[1]:
                 acc[2] += _n(r.sot)
@@ -139,11 +156,11 @@ class HistoricoJogadores:
         for r in jogos:
             f90 = r.minutos / 90.0
             n90 += f90
-            cartoes += _n(r.cards_amarelos)
+            cartoes += _amarelo(r)
             faltas += _n(r.fouls_committed)
             tot = self._totais.get((int(r.sofascore_event_id), int(r.sofascore_team_id)))
             if tot is not None and tot[0]:
-                num_r += _n(r.remates)          # o Sofascore nao poe os 0: vazio = 0
+                num_r += _remates_jogador(r, tot)
                 den_r += _n(tot[0]) * f90
             if tot is not None and tot[1]:
                 num_s += _n(r.sot)
@@ -165,10 +182,14 @@ def priors_da_bd(sess, dias: int = 365) -> dict[str, tuple[float, float, float, 
     from apostas.utils.schema import EstatisticaEquipaJogo as EEJ
     from apostas.utils.schema import EstatisticaJogadorJogo as EJJ
     from apostas.utils.tempo import agora_utc
+    from sqlalchemy import case, or_
     f90 = EJJ.minutos / 90.0
-    q = (select(EJJ.posicao, func.count(), func.sum(func.coalesce(EJJ.remates, 0)),
-                func.sum(EEJ.remates * f90), func.sum(func.coalesce(EJJ.sot, 0)),
-                func.sum(EEJ.sot * f90), func.sum(func.coalesce(EJJ.cards_amarelos, 0)),
+    tem_rem = EJJ.remates.is_not(None)
+    amarelo = case((or_(EJJ.cards_amarelos > 0, EJJ.minuto_amarelo.is_not(None)), 1), else_=0)
+    q = (select(EJJ.posicao, func.count(), func.sum(case((tem_rem, EJJ.remates), else_=0)),
+                func.sum(case((tem_rem, EEJ.remates * f90), else_=0)),
+                func.sum(func.coalesce(EJJ.sot, 0)),
+                func.sum(EEJ.sot * f90), func.sum(amarelo),
                 func.sum(func.coalesce(EJJ.fouls_committed, 0)), func.sum(f90))
          .join(EEJ, and_(EEJ.sofascore_event_id == EJJ.sofascore_event_id,
                          EEJ.sofascore_team_id == EJJ.sofascore_team_id))
@@ -187,8 +208,11 @@ def priors_da_bd(sess, dias: int = 365) -> dict[str, tuple[float, float, float, 
         if a[0] < MIN_POS or not n90:
             continue
         base = PRIOR_POS.get(pos, PRIOR_POS["M"])
-        out[pos] = (a[1] / a[2] if a[2] else base[0], a[3] / a[4] if a[4] else base[1],
-                    a[5] / n90, a[6] / n90)
+        # remates: jogos antigos nao os tem; sem dados suficientes, a parte dos
+        # remates segue a parte dos remates a baliza (a pontaria e parecida)
+        quota_sot = a[3] / a[4] if a[4] else base[1]
+        quota_rem = a[1] / a[2] if a[2] > 200 else quota_sot
+        out[pos] = (quota_rem, quota_sot, a[5] / n90, a[6] / n90)
     return out
 
 
@@ -204,7 +228,7 @@ def carregar_do_bd(sess, jogadores: list[int] | None = None, dias: int = 365,
     desde = agora_utc() - timedelta(days=dias)
     cols = [EJJ.sofascore_player_id, EJJ.sofascore_event_id, EJJ.sofascore_team_id,
             EJJ.nome_jogador, EJJ.posicao, EJJ.data_jogo, EJJ.minutos, EJJ.remates, EJJ.sot,
-            EJJ.cards_amarelos, EJJ.fouls_committed]
+            EJJ.cards_amarelos, EJJ.minuto_amarelo, EJJ.fouls_committed]
     q = select(*cols).where(EJJ.data_jogo >= desde)
     linhas = []
     if jogadores:
@@ -474,6 +498,8 @@ def pares_da_bd(sess, agora: datetime | None = None, dias: int = 60) -> list[dic
             if p.atual:
                 continue
         else:
+            if p.mercado == "remates" and f.remates is None:
+                continue  # jogo guardado sem remates do jogador: nao se sabe
             total = _n(f.remates if p.mercado == "remates" else f.sot)
             real = max(0.0, total - p.atual)
         out.append({"mercado": p.mercado, "janela": p.janela, "lam": float(p.lam), "real": real,
