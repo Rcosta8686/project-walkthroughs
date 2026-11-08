@@ -125,6 +125,8 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
     monkeypatch.setattr(prime, "recalcular_e_gravar", lambda: prime.Prime())
     from apostas.relatorios import vs_casa
     monkeypatch.setattr(vs_casa, "recalcular_e_gravar", lambda: vs_casa.VsCasa())
+    from apostas.modelos import jogadores
+    monkeypatch.setattr(jogadores, "recalcular_e_gravar", lambda s: jogadores.Medicao())
     from apostas.utils import limpeza_competicoes
     limpezas = []
     monkeypatch.setattr(limpeza_competicoes, "limpar", lambda: limpezas.append(1) or

@@ -91,7 +91,12 @@ def _aprender() -> None:
     def casas() -> None:
         from apostas.relatorios import vs_casa
         print("\n" + vs_casa.formatar(vs_casa.recalcular_e_gravar()))
+    def jogadores_() -> None:
+        from apostas.modelos import jogadores
+        with abrir_sessao() as s:
+            print("\n" + jogadores.formatar(jogadores.recalcular_e_gravar(s)))
     _passo("ritmo e precisao por equipa", ritmo)
+    _passo("jogadores", jogadores_)
     _passo("cartao no fim", cartoes)
     _passo("PRIME", prime_)
     _passo("nos vs casas", casas)

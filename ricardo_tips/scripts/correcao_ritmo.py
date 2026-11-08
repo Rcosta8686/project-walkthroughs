@@ -41,6 +41,9 @@ def main() -> None:
     print(correcao_ritmo.formatar(c))
     from apostas.modelos import precisao_equipas
     print("\n" + precisao_equipas.formatar(precisao_equipas.ler()))
+    from apostas.modelos import jogadores
+    with abrir_sessao() as s:
+        print("\n" + jogadores.formatar(jogadores.recalcular_e_gravar(s)))
     print("\n" + cartoes_finais.formatar_historia(hist))
     from apostas.relatorios import prime
     print("\n" + prime.formatar(prime.recalcular_e_gravar()))

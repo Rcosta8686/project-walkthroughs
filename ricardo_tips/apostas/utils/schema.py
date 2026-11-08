@@ -565,6 +565,32 @@ class EstatisticaJogadorJogo(Base):
     )
 
 
+class PrevisaoJogadorLive(Base):
+    """O que o mini-cerebro de cada jogador previa num momento ao vivo (uma vez
+    por jogo, fase, jogador e mercado). A noite compara com o que ele fez no
+    jogo (EstatisticaJogadorJogo) e aprende."""
+
+    __tablename__ = "previsao_jogador_live"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    player_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    nome: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    equipa: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    pos: Mapped[str] = mapped_column(String(2), nullable=False, default="")
+    ts: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=agora_utc, index=True)
+    minuto: Mapped[int] = mapped_column(Integer, nullable=False)
+    janela: Mapped[int] = mapped_column(Integer, nullable=False)
+    mercado: Mapped[str] = mapped_column(String(20), nullable=False)   # remates/sot/cartao
+    atual: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lam: Mapped[float] = mapped_column(Float, nullable=False)          # o que ainda faz
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "player_id", "janela", "mercado",
+                         name="uq_previsao_jogador"),
+    )
+
+
 class ProjecaoLive(Base):
     """Projecao enviada ao Telegram num minuto X de um jogo.
 

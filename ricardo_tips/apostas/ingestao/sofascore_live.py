@@ -207,6 +207,9 @@ class EstadoLive:
     rating_gr_fora: float | None = None
     substituicoes_casa: int = 0                 # subs ja feitas
     substituicoes_fora: int = 0
+    # Cada jogador que ja jogou: {id, nome, lado, pos, minutos, remates, sot,
+    # faltas, sofridas, amarelo, em_campo} (das lineups ao vivo).
+    jogadores: list[dict] = field(default_factory=list)
     # Entra mais avancado do que sai (avancado por defesa) = ofensiva.
     subs_ofensivas_casa: int = 0
     subs_ofensivas_fora: int = 0
@@ -989,9 +992,43 @@ def _preencher_cartoes(estado: EstadoLive, incidents_payload: dict) -> None:
         estado.cartoes_detalhe.append({
             "minuto": inc.get("time"),
             "jogador": jogador,
+            "player_id": (inc.get("player") or {}).get("id"),
             "equipa": "casa" if is_home else "fora",
             "classe": "red" if classe != "yellow" else "yellow",
         })
+
+
+def _int0(v) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def jogadores_das_lineups(lineups_payload: dict) -> list[dict]:
+    """Cada jogador que ja jogou (titular ou suplente que entrou) com os numeros
+    dele neste jogo. O Sofascore so poe as estatisticas que nao sao 0."""
+    out = []
+    for lado, nome_lado in (("home", "casa"), ("away", "fora")):
+        for p in (lineups_payload.get(lado) or {}).get("players", []) or []:
+            pl = p.get("player") or {}
+            s = p.get("statistics") or {}
+            pid = pl.get("id")
+            minutos = _int0(s.get("minutesPlayed"))
+            titular = not p.get("substitute")
+            if not pid or (not titular and minutos <= 0):
+                continue
+            saiu = bool(s.get("substitutionOut") or s.get("substitutedOut")
+                        or p.get("substitutedOut"))
+            out.append({
+                "id": int(pid), "nome": pl.get("name") or "?", "lado": nome_lado,
+                "pos": str(p.get("position") or pl.get("position") or "")[:1].upper(),
+                "titular": titular, "minutos": minutos,
+                "remates": _int0(s.get("totalScoringAttempts") or s.get("shotsTotal")),
+                "sot": _int0(s.get("onTargetScoringAttempt") or s.get("shotsOnTarget")),
+                "faltas": _int0(s.get("fouls")), "sofridas": _int0(s.get("wasFouled")),
+                "amarelo": _int0(s.get("yellowCards")) > 0, "em_campo": not saiu})
+    return out
 
 
 def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
@@ -1066,6 +1103,15 @@ def _preencher_lineups(estado: EstadoLive, lineups_payload: dict) -> None:
             estado.jogador_chave_fora = jogador_top
             estado.rating_gr_fora = rating_gr
             estado.lineup_titulares_fora = titulares
+    estado.jogadores = jogadores_das_lineups(lineups_payload)
+    # O cartao sai nos incidentes antes de chegar as estatisticas do jogador.
+    com_amarelo = {c.get("player_id") for c in estado.cartoes_detalhe
+                   if c.get("player_id") and c.get("classe") == "yellow"}
+    for j in estado.jogadores:
+        j["amarelo"] = j["amarelo"] or j["id"] in com_amarelo
+        if any(c.get("player_id") == j["id"] and c.get("classe") == "red"
+               for c in estado.cartoes_detalhe):
+            j["em_campo"] = False
 
 
 _POSICAO = {"G": 0, "D": 1, "M": 2, "F": 3}

@@ -64,7 +64,7 @@ from apostas.utils.logger import get_logger  # noqa: E402
 from apostas.utils.schema import Equipa, EstadoLiveSnapshot, Liga, ProjecaoLive  # noqa: E402
 from apostas.modelos.calibrador_mercado import Calibrador, treinar  # noqa: E402
 from apostas.modelos import arbitros, cartoes_finais, correcao_ritmo, priors_equipas  # noqa: E402
-from apostas.modelos import perfil_treinador, precisao_equipas  # noqa: E402
+from apostas.modelos import jogadores, perfil_treinador, precisao_equipas  # noqa: E402
 from apostas.relatorios import alertas_enviados, csv_live, prime, vs_casa  # noqa: E402
 from apostas.alertas import corte_mercados  # noqa: E402
 from apostas.dados_referencia import mercados_casa  # noqa: E402
@@ -1646,6 +1646,113 @@ def _versoes_divisao(estado, versao: str | None) -> dict:
         return {}
 
 
+_JOGADORES_TTL_S = 6 * 3600
+_priors_pos_cache: tuple[float, dict] | None = None
+_hist_jogadores_cache: dict[int, tuple[float, jogadores.HistoricoJogadores]] = {}
+_medicao_jog_cache: tuple[float, jogadores.Medicao] | None = None
+_prevs_jog_cache: dict[tuple[int, int], list] = {}
+_MERCADO_JOGADOR = {"remates": "remates", "remates_a_baliza": "sot", "sot": "sot",
+                    "cartoes": "cartao", "cards": "cartao"}
+LIMIAR_ALERTA_JOGADOR = {"remates": 0.80, "sot": 0.75, "cartao": 0.45}
+
+
+def _medicao_jogadores_live() -> jogadores.Medicao:
+    global _medicao_jog_cache
+    agora = time.time()
+    if _medicao_jog_cache is None or agora - _medicao_jog_cache[0] >= _RITMO_TTL_S:
+        _medicao_jog_cache = (agora, jogadores.ler())
+    return _medicao_jog_cache[1]
+
+
+def _hist_jogadores(estado) -> jogadores.HistoricoJogadores:
+    """Os jogos dos jogadores deste jogo (uma vez por jogo de 6 em 6 horas)."""
+    global _priors_pos_cache
+    agora = time.time()
+    eid = int(estado.event_id)
+    hit = _hist_jogadores_cache.get(eid)
+    ids = sorted(j["id"] for j in getattr(estado, "jogadores", []) or [])
+    if hit is not None and agora - hit[0] < _JOGADORES_TTL_S and all(
+            i in hit[1]._jogos or i in getattr(hit[1], "_vistos", set()) for i in ids):
+        return hit[1]
+    with abrir_sessao() as s:
+        if _priors_pos_cache is None or agora - _priors_pos_cache[0] >= _JOGADORES_TTL_S:
+            _priors_pos_cache = (agora, jogadores.priors_da_bd(s))
+        hist = jogadores.carregar_do_bd(s, ids, prior=_priors_pos_cache[1])
+    setattr(hist, "_vistos", set(ids))
+    if len(_hist_jogadores_cache) > 200:
+        for k in sorted(_hist_jogadores_cache, key=lambda k: _hist_jogadores_cache[k][0])[:100]:
+            _hist_jogadores_cache.pop(k, None)
+    _hist_jogadores_cache[eid] = (agora, hist)
+    return hist
+
+
+def _jogadores_prev(estado, prev) -> list:
+    """Previsao de cada jogador em campo (uma vez por jogo e minuto)."""
+    if prev is None or not getattr(estado, "jogadores", None):
+        return []
+    chave = (int(estado.event_id), int(estado.minuto or 0))
+    if chave in _prevs_jog_cache:
+        return _prevs_jog_cache[chave]
+    try:
+        prevs = jogadores.prever_live(estado, prev, {}, _hist_jogadores(estado),
+                                      precisao=_precisao_live(),
+                                      medicao=_medicao_jogadores_live())
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Previsao dos jogadores falhou %s: %s", estado.event_id, exc)
+        prevs = []
+    if len(_prevs_jog_cache) > 400:
+        _prevs_jog_cache.clear()
+    _prevs_jog_cache[chave] = prevs
+    return prevs
+
+
+def _registar_jogadores(estado, prevs: list) -> None:
+    """Guarda o que se previa para cada jogador (a noite compara com o que fez)."""
+    if not prevs or int(estado.minuto or 0) < jogadores.JANELAS[0]:
+        return
+    with abrir_sessao() as s:
+        jogadores.registar(s, int(estado.event_id), int(estado.minuto or 0), prevs,
+                           {"casa": estado.home, "fora": estado.away})
+
+
+def _alerta_jogadores(estado, prevs: list) -> int:
+    """Alerta so de jogador, nos mercados em que a medicao ja provou que acerta."""
+    minuto = int(estado.minuto or 0)
+    if not prevs or not 30 <= minuto <= 80:
+        return 0
+    med = _medicao_jogadores_live()
+    enviados = 0
+    for m, limiar in LIMIAR_ALERTA_JOGADOR.items():
+        if not med.confiavel(m):
+            continue
+        for pj in sorted((x for x in prevs if x.mercado == m), key=lambda x: -x.p_mais(1)):
+            p1 = pj.p_mais(1)
+            if p1 < limiar:
+                break
+            chave = f"jogador:{pj.id}:{m}"
+            if _em_cooldown(estado.event_id, chave, "over"):
+                continue
+            equipa = estado.home if pj.lado == "casa" else estado.away
+            alvo = {"remates": "remate", "sot": "remate a baliza", "cartao": "amarelo"}[m]
+            linhas = [f"👤 *JOGADOR* · {pj.nome} ({equipa})",
+                      f"🏆 {estado.liga} · {minuto}' · {estado.home} {estado.marcador_casa}-"
+                      f"{estado.marcador_fora} {estado.away}", "",
+                      f"🎯 *+1 {alvo} ate ao fim* · *{p1 * 100:.0f}%*"]
+            if m != "cartao":
+                linhas.append(f"   ja tem {pj.atual} · {pj.atual + 2}+ no total: "
+                              f"{pj.p_total(pj.atual + 2) * 100:.0f}%")
+            elif pj.faltas:
+                linhas.append(f"   {pj.faltas} faltas neste jogo")
+            linhas.append("🧠 medido nos nossos jogos: acerta o que promete nas "
+                          "probabilidades altas")
+            telegram_cliente().enviar("\n".join(linhas))
+            _marcar_enviado(estado.event_id, chave, "over")
+            log.info("Jogador %s %s: +1 %s %.0f%%", estado.event_id, pj.nome, m, p1 * 100)
+            enviados += 1
+            break   # um por mercado e por ciclo
+    return enviados
+
+
 def _texto_equipas(estado, prev, mercado: str) -> str:
     """Quanto cada equipa vai acabar (com o treinador de cada uma na 2a parte)
     + o que o treinador costuma fazer + as substituicoes que ja fez."""
@@ -1671,9 +1778,11 @@ def _texto_equipas(estado, prev, mercado: str) -> str:
                 if frase:
                     razoes.append(f"🧑‍🏫 {frase}")
     versoes = _versoes_divisao(estado, precisao.divisao.get(m))
+    mj = _MERCADO_JOGADOR.get(m)
+    txt_jog = jogadores.texto_live(_jogadores_prev(estado, prev), mj) if mj else ""
     linhas = [precisao_equipas.texto_equipas(estado, prev, precisao, m,
                                              (fatores[0], fatores[1]), versoes),
-              *razoes, _texto_subs(estado)]
+              txt_jog, *razoes, _texto_subs(estado)]
     return "\n".join(x for x in linhas if x)
 
 
@@ -2238,6 +2347,16 @@ def _correr_ciclo(args) -> None:
                                                 ajustes_cerebro=ajustes)
                 if ritmo.mudados else prev_bruta)
         _imprimir_estado(estado, prev)
+
+        # Mini-cerebro de cada jogador: guarda o que preve (a noite mede) e, nos
+        # mercados ja provados, alerta so de jogador.
+        try:
+            prevs_jog = _jogadores_prev(estado, prev)
+            _registar_jogadores(estado, prevs_jog)
+            if args.telegram:
+                _alerta_jogadores(estado, prevs_jog)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Jogadores %s falharam: %s", estado.event_id, exc)
 
         # PROJECCOES aos 40'/55'/70': substituem sinais "faceis" de
         # remates/SOT/cantos. Mostram projeccao final + odd justa por linha,
