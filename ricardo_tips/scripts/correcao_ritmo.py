@@ -24,7 +24,7 @@ for _stream in (sys.stdout, sys.stderr):  # consola Windows: emojis sem crash
         except OSError:
             pass
 
-from apostas.modelos import cartoes_finais, correcao_ritmo  # noqa: E402
+from apostas.modelos import cartoes_finais, correcao_ritmo, golos_finais  # noqa: E402
 from apostas.utils.db import abrir_sessao, criar_schema  # noqa: E402
 
 
@@ -36,6 +36,7 @@ def main() -> None:
     with abrir_sessao() as s:
         c = correcao_ritmo.recalcular_e_gravar(s)
         hist = cartoes_finais.recalcular_e_gravar(s)
+        hist_golos = golos_finais.recalcular_e_gravar(s)
     for m, d in correcao_ritmo.RECUPERADAS.items():
         print(f"📅 {m}: recuperei a data do modelo (desde {d:%d/%m}) da copia de seguranca")
     print(correcao_ritmo.formatar(c))
@@ -45,6 +46,7 @@ def main() -> None:
     with abrir_sessao() as s:
         print("\n" + jogadores.formatar(jogadores.recalcular_e_gravar(s)))
     print("\n" + cartoes_finais.formatar_historia(hist))
+    print("\n" + golos_finais.formatar_historia(hist_golos))
     from apostas.relatorios import prime
     print("\n" + prime.formatar(prime.recalcular_e_gravar()))
     from apostas.relatorios import vs_casa
