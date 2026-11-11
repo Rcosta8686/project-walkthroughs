@@ -72,7 +72,8 @@ def test_conta_o_que_entrou_por_dia_e_o_total(bd, tmp_path):
     assert "10/11     2 ·      6 ·      5 ·   1" in txt
     assert "Total guardado: 6 jogos · 18 fichas de jogadores · 15 momentos ao vivo" in txt
     assert "✅ O historico esta a crescer." in txt
-    assert "📡 Scanner: ultimo momento ao vivo guardado 10/11 20:00 UTC" in txt
+    assert "📡 Ultimo momento ao vivo guardado: 10/11 20:00 UTC" in txt
+    assert "Scanner: ultimo ciclo" not in txt                     # ainda sem marca
     assert ontem.jogados == 2
 
 
@@ -148,3 +149,17 @@ def test_noite_manda_a_saude_uma_vez(bd, tmp_path, monkeypatch):
     script._saude(AGORA)
     script._saude(AGORA + timedelta(minutes=10))
     assert len(enviadas) == 1 and enviadas[0].startswith("*🩺 Saude dos dados* (11/11/2026)")
+
+
+def test_marca_do_scanner(tmp_path, bd):
+    from apostas.utils.db import abrir_sessao
+    assert sd.ler_scanner_vivo(tmp_path) is None
+    sd.marcar_scanner_vivo(3, AGORA - timedelta(minutes=3), raiz=tmp_path)
+    assert sd.ler_scanner_vivo(tmp_path) == AGORA - timedelta(minutes=3)
+    with abrir_sessao() as s:
+        r = sd.calcular(s, AGORA, enviados=tmp_path / "nada.csv", raiz=tmp_path)
+    assert "✅ Scanner: ultimo ciclo 11/11 00:37 UTC" in sd.formatar(r)
+    sd.marcar_scanner_vivo(0, AGORA - timedelta(hours=2), raiz=tmp_path)
+    with abrir_sessao() as s:
+        r = sd.calcular(s, AGORA, enviados=tmp_path / "nada.csv", raiz=tmp_path)
+    assert "⚠ Scanner: ultimo ciclo 10/11 22:40 UTC" in sd.formatar(r)

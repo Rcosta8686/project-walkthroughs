@@ -229,3 +229,33 @@ def test_fichas_check_ignora_ligas_obscuras(tmp_path, monkeypatch):
     assert det["fichas_fracas"] == 0
     db_mod._engine = None
     db_mod._SessionLocal = None
+
+
+def test_scanner_vivo_sem_jogos_nao_e_parado(tmp_path, monkeypatch):
+    """Sem jogos ao vivo (pausa das seleccoes) o CSV nao muda: o health check
+    dizia 'scanner pode estar parado'. Agora ve a marca de cada ciclo."""
+    import os
+    from datetime import datetime, timedelta
+    from apostas.alertas import health_check as hc
+    from apostas.relatorios import saude_dados as sd
+    from apostas.utils import config as config_mod
+    monkeypatch.setattr(config_mod, "project_root", lambda: tmp_path)
+    agora = datetime(2026, 11, 11, 21, 0)
+    assert hc._check_scanner_vivo(agora=agora)[0] is None          # scanner antigo: sem marca
+    sd.marcar_scanner_vivo(0, agora - timedelta(minutes=4))
+    ok, erro, det = hc._check_scanner_vivo(agora=agora)
+    assert ok is True and det["minutos_desde_ciclo"] == 4.0
+    # CSV de sugestoes parado ha horas, mas o scanner correu ha 4 min: tudo bem
+    csv = tmp_path / "sug.csv"
+    csv.write_text("x", encoding="utf-8")
+    velho = (agora - timedelta(hours=5)).timestamp()
+    os.utime(csv, (velho, velho))
+    monkeypatch.setattr(hc, "_check_flaresolverr", lambda: (True, ""))
+    monkeypatch.setattr(hc, "_check_fichas_desactualizadas", lambda: (True, "", {}))
+    monkeypatch.setattr(hc, "_check_bd", lambda p: (True, ""))
+    r = hc.correr_health_check(csv_path=csv, agora=agora)
+    assert r.tudo_ok and not r.problemas
+    # Scanner sem ciclos ha 50 min: parado de verdade
+    sd.marcar_scanner_vivo(0, agora - timedelta(minutes=50))
+    r = hc.correr_health_check(csv_path=csv, agora=agora)
+    assert not r.tudo_ok and "Scanner parado: ultimo ciclo ha 50 min" in r.problemas[0]

@@ -42,6 +42,7 @@ class Saude:
     ultima_noite: dict | None = None
     ultima_copia: date | None = None
     ultimo_momento: datetime | None = None   # ultimo momento ao vivo que o scanner guardou
+    ultimo_ciclo: datetime | None = None     # ultima vez que o scanner correu (com ou sem jogos)
 
     def noite_atrasada(self) -> bool:
         fim = _quando(self.ultima_noite)
@@ -127,6 +128,7 @@ def calcular(sess, agora: datetime | None = None, dias: int = DIAS,
     s.total_jogadores = int(sess.scalar(select(func.count()).select_from(EJJ)) or 0)
     s.total_momentos = int(sess.scalar(select(func.count()).select_from(Snap)) or 0)
     s.ultimo_momento = sess.scalar(select(func.max(Snap.ts)))
+    s.ultimo_ciclo = ler_scanner_vivo(raiz)
     s.ultima_noite = ler_noite(raiz)
     s.ultima_copia = ultima_copia(raiz)
     return s
@@ -154,6 +156,32 @@ def ler_noite(raiz: Path | None = None) -> dict | None:
     try:
         return json.loads(caminho_noite(raiz).read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+
+
+# ─── O scanner esta vivo? (marca de cada ciclo, mesmo sem jogos) ─────────────
+
+def caminho_scanner(raiz: Path | None = None) -> Path:
+    from apostas.utils.config import project_root
+    return (raiz or project_root()) / "dados" / "tracking" / "scanner_vivo.json"
+
+
+def marcar_scanner_vivo(jogos: int = 0, agora: datetime | None = None,
+                        raiz: Path | None = None) -> None:
+    """Chamado pelo scanner no fim de cada ciclo: sem jogos ao vivo o CSV nao
+    muda, e o health check achava que o scanner estava parado."""
+    from apostas.utils.tempo import agora_utc
+    p = caminho_scanner(raiz)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"ts": (agora or agora_utc()).isoformat(timespec="seconds"),
+                             "jogos": jogos}), encoding="utf-8")
+
+
+def ler_scanner_vivo(raiz: Path | None = None) -> datetime | None:
+    try:
+        d = json.loads(caminho_scanner(raiz).read_text(encoding="utf-8"))
+        return datetime.fromisoformat(str(d.get("ts"))[:19])
+    except (OSError, ValueError, AttributeError):
         return None
 
 
@@ -187,8 +215,11 @@ def formatar(s: Saude) -> str:
     if s.ultima_copia is not None:
         icone = "✅" if (s.agora.date() - s.ultima_copia).days <= 2 else "⚠"
         linhas.append(f"{icone} Copia de seguranca: {s.ultima_copia:%d/%m/%Y}")
+    if s.ultimo_ciclo is not None:
+        icone = "✅" if s.agora - s.ultimo_ciclo <= timedelta(minutes=30) else "⚠"
+        linhas.append(f"{icone} Scanner: ultimo ciclo {s.ultimo_ciclo:%d/%m %H:%M} UTC")
     if s.ultimo_momento is not None:
-        linhas.append(f"📡 Scanner: ultimo momento ao vivo guardado {s.ultimo_momento:%d/%m %H:%M} UTC")
+        linhas.append(f"📡 Ultimo momento ao vivo guardado: {s.ultimo_momento:%d/%m %H:%M} UTC")
     linhas.append("Entrou por dia (jogos · jogadores · momentos ao vivo · dicas):")
     tabela = [f"{d.data:%d/%m}  {d.jogos:>4} · {_mil(d.jogadores):>6} · "
               f"{_mil(d.momentos):>6} · {d.dicas:>3}" for d in s.dias]

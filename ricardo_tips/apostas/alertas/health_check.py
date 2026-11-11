@@ -80,6 +80,24 @@ def _check_csv_vivo(
     return True, "", detalhes
 
 
+def _check_scanner_vivo(minutos_limite: int = MINUTOS_SEM_CSV_ALERTA,
+                        agora: datetime | None = None,
+                        raiz: Path | None = None) -> tuple[bool | None, str, dict]:
+    """O scanner correu um ciclo nos ultimos N minutos? None = sem marca ainda."""
+    from apostas.relatorios.saude_dados import ler_scanner_vivo
+    ultimo = ler_scanner_vivo(raiz)
+    if ultimo is None:
+        return None, "", {}
+    agora = agora or agora_utc()
+    delta_min = (agora - ultimo).total_seconds() / 60
+    det = {"scanner_ultimo_ciclo": ultimo.isoformat(timespec="seconds"),
+           "minutos_desde_ciclo": round(delta_min, 1)}
+    if delta_min > minutos_limite:
+        return (False, f"Scanner parado: ultimo ciclo ha {delta_min:.0f} min "
+                       f"(>{minutos_limite})", det)
+    return True, "", det
+
+
 def _check_bd(db_path: Path) -> tuple[bool, str]:
     """Query trivial ao sqlite para detectar corrupcao."""
     if not db_path.exists():
@@ -197,8 +215,11 @@ def correr_health_check(
         r.tudo_ok = False
         r.problemas.append(f"❌ Flaresolverr: {erro}")
 
-    # 2. CSV vivo
-    ok, erro, det = _check_csv_vivo(csv_path, agora=agora)
+    # 2. Scanner vivo: a marca de cada ciclo (mesmo sem jogos ao vivo). Sem
+    # marca (scanner antigo), o CSV de sugestoes - que so muda com jogos.
+    ok, erro, det = _check_scanner_vivo(agora=agora)
+    if ok is None:
+        ok, erro, det = _check_csv_vivo(csv_path, agora=agora)
     r.detalhes.update(det)
     if not ok:
         r.tudo_ok = False

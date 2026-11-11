@@ -2930,6 +2930,11 @@ def main() -> None:
                     ciclo, duracao,
                 )
                 print(f"    ⚠ Ciclo {ciclo} demorou {duracao:.0f}s")
+            try:   # "estou vivo" mesmo sem jogos (o health check ve isto)
+                from apostas.relatorios import saude_dados
+                saude_dados.marcar_scanner_vivo()
+            except OSError as exc:
+                log.debug("Marca de scanner vivo falhou: %s", exc)
             try:
                 _vigiar_noite()
             except Exception as exc:  # noqa: BLE001
