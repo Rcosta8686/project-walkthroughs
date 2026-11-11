@@ -2793,6 +2793,26 @@ def _correr_ciclo(args) -> None:
                       f"(top {max_por_ciclo} do ranking)")
 
 
+_vigia_noite: dict[str, float] = {"visto": 0.0, "avisado": 0.0}
+
+
+def _vigiar_noite() -> bool:
+    """De hora a hora ve se a tarefa da noite correu; se falhou (30h sem
+    correr), avisa no Telegram, no maximo de 12 em 12 horas."""
+    from apostas.relatorios import saude_dados
+    agora = time.time()
+    if agora - _vigia_noite["visto"] < 3600:
+        return False
+    _vigia_noite["visto"] = agora
+    aviso = saude_dados.aviso_noite()
+    if not aviso or agora - _vigia_noite["avisado"] < 12 * 3600:
+        return False
+    telegram_cliente().enviar(aviso)
+    _vigia_noite["avisado"] = agora
+    log.warning("Tarefa da noite atrasada: aviso enviado")
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scanner LIVE v2 com modelo preditivo + odds live.",
@@ -2910,6 +2930,10 @@ def main() -> None:
                     ciclo, duracao,
                 )
                 print(f"    ⚠ Ciclo {ciclo} demorou {duracao:.0f}s")
+            try:
+                _vigiar_noite()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Vigia da noite falhou: %s", exc)
             if args.ciclos and ciclo >= args.ciclos:
                 break
             time.sleep(args.intervalo_s)

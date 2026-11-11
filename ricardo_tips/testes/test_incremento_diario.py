@@ -145,10 +145,15 @@ def test_script_corre_incremento_e_resolver(monkeypatch, capsys):
                         lambda s: recalculos.append(1) or correcao_ritmo.CorrecaoRitmo())
     graficos = []
     monkeypatch.setattr(script, "_graficos", lambda agora: graficos.append(agora))
+    monkeypatch.setattr(script, "_saude", lambda agora: graficos.append("saude"))
+    from apostas.relatorios import saude_dados
+    noites = []
+    monkeypatch.setattr(saude_dados, "gravar_noite", lambda *a, **k: noites.append(a))
     monkeypatch.setattr(sys, "argv", ["incremento_diario.py", "--dias", "2"])
     script.main()
     out = capsys.readouterr().out
-    assert len(graficos) == 1          # os graficos saem no fim da noite
+    assert len(graficos) == 2 and graficos[1] == "saude"   # graficos e saude no fim
+    assert len(noites) == 1 and noites[0][2] == 12         # registo da noite: 12 jogos novos
     # aprende logo (local) e outra vez depois, porque entraram 12 jogos novos
     assert recalculos == [1, 1] and "Ritmo do resto do jogo" in out
     assert out.index("Copia de seguranca") < out.index("24 ligas")   # a copia vem primeiro

@@ -16,6 +16,9 @@ feito mesmo que a internet demore), depois o que vai ao Sofascore, com prazo:
    todas as noites, o da semana a segunda (com a curva de aprendizagem das
    previsoes por equipa), o do mes no dia 1 (cada um uma vez so), e as
    multiplas de ontem selecao a selecao.
+8. Regista quando acabou (dados/tracking/ultima_noite.json) e manda para o
+   Telegram a saude dos dados: o que entrou por dia, total guardado, copia de
+   seguranca. Se esta mensagem nao chegar de manha, a noite nao correu.
 
 Cada passo fica no log (logs/ricardo_tips.log) com a hora, para se ver ate
 onde chegou.
@@ -145,14 +148,29 @@ def _graficos(agora: datetime) -> None:
     if ga.ja_enviado("multiplas", ate):
         return
     with abrir_sessao() as s:
-        ontem = multiplas.carregar_resolvidas(s, ate - timedelta(days=1), ate)
-        todas = multiplas.carregar_resolvidas(s) if ontem else []
+        ontem = multiplas.carregar_resolvidas(s, ate - timedelta(days=1), ate, agora=agora)
+        todas = multiplas.carregar_resolvidas(s, agora=agora) if ontem else []
     if ontem:
         texto = "\n\n".join([multiplas.texto_multiplas(
             ontem, f"🎰 Multiplas de {ate - timedelta(days=1):%d/%m}"), multiplas.formatar(todas)])
         print("\n" + texto)
         cliente().enviar(texto)
         ga.marcar_enviado("multiplas", ate)
+
+
+def _saude(agora: datetime) -> None:
+    """O historico esta a crescer? Para o Telegram, uma vez por noite."""
+    from apostas.alertas.telegram_cliente import cliente
+    from apostas.relatorios import grafico_acertos as ga
+    from apostas.relatorios import saude_dados
+    from apostas.utils.db import abrir_sessao
+    hoje = datetime(agora.year, agora.month, agora.day)
+    with abrir_sessao() as s:
+        texto = saude_dados.formatar(saude_dados.calcular(s, agora))
+    print("\n" + texto)
+    if not ga.ja_enviado("saude", hoje):
+        cliente().enviar(texto)
+        ga.marcar_enviado("saude", hoje)
 
 
 def main() -> None:
@@ -172,6 +190,7 @@ def main() -> None:
     from apostas.utils.db import criar_schema
     from apostas.utils.versao import versao_codigo
     t0 = _time.monotonic()
+    inicio_noite = agora_utc()
     log.info("Noite: arrancou (versao %s)", versao_codigo())
     criar_schema()
 
@@ -215,6 +234,15 @@ def main() -> None:
     if not args.sem_graficos:
         _passo("graficos de acertos", lambda: _graficos(agora_utc()))
     log.info("Noite: terminou em %.0f min", (_time.monotonic() - t0) / 60)
+
+    # 8. Fica registado que a noite correu, e a saude dos dados vai para o Telegram.
+    try:
+        from apostas.relatorios import saude_dados
+        saude_dados.gravar_noite(inicio_noite, agora_utc(), novos, versao_codigo())
+    except OSError as exc:
+        log.warning("Noite: registo da noite falhou: %s", exc)
+    if not args.sem_graficos:
+        _passo("saude dos dados", lambda: _saude(agora_utc()))
 
     if args.telegram and texto:
         from apostas.alertas.telegram_cliente import cliente
