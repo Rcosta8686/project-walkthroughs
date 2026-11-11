@@ -1,6 +1,6 @@
 """Saude dos dados: o historico esta mesmo a crescer?
 
-Por dia (UTC), o que entrou na BD e nos registos:
+Por dia (UTC), o que entrou na BD e nos registos (as horas mostradas sao as do PC):
   - jogos: jogos terminados guardados (fichas das equipas, EstatisticaEquipaJogo);
   - jogadores: fichas de jogadores guardadas (EstatisticaJogadorJogo);
   - momentos: momentos ao vivo guardados pelo scanner (EstadoLiveSnapshot);
@@ -200,6 +200,16 @@ def ultima_copia(raiz: Path | None = None) -> date | None:
 
 # ─── Texto ─────────────────────────────────────────────────────────────────
 
+def _offset() -> timedelta:
+    """Diferenca entre a hora do PC e UTC (os registos guardam UTC)."""
+    return datetime.now().astimezone().utcoffset() or timedelta(0)
+
+
+def local(dt: datetime) -> datetime:
+    """Hora UTC dos registos -> hora do relogio do PC (o que o Ricardo ve)."""
+    return dt + _offset()
+
+
 def _mil(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
@@ -209,7 +219,8 @@ def formatar(s: Saude) -> str:
     fim = _quando(s.ultima_noite)
     if fim is not None and s.ultima_noite is not None:
         icone = "⚠" if s.noite_atrasada() else "✅"
-        linhas.append(f"{icone} Noite: correu {fim:%d/%m} as {fim:%H:%M} UTC "
+        fim_l = local(fim)
+        linhas.append(f"{icone} Noite: correu {fim_l:%d/%m} as {fim_l:%H:%M} "
                       f"({s.ultima_noite.get('minutos', '?')} min, "
                       f"+{s.ultima_noite.get('jogos_novos', 0)} jogos novos)")
     if s.ultima_copia is not None:
@@ -217,9 +228,9 @@ def formatar(s: Saude) -> str:
         linhas.append(f"{icone} Copia de seguranca: {s.ultima_copia:%d/%m/%Y}")
     if s.ultimo_ciclo is not None:
         icone = "✅" if s.agora - s.ultimo_ciclo <= timedelta(minutes=30) else "⚠"
-        linhas.append(f"{icone} Scanner: ultimo ciclo {s.ultimo_ciclo:%d/%m %H:%M} UTC")
+        linhas.append(f"{icone} Scanner: ultimo ciclo {local(s.ultimo_ciclo):%d/%m %H:%M}")
     if s.ultimo_momento is not None:
-        linhas.append(f"📡 Ultimo momento ao vivo guardado: {s.ultimo_momento:%d/%m %H:%M} UTC")
+        linhas.append(f"📡 Ultimo momento ao vivo guardado: {local(s.ultimo_momento):%d/%m %H:%M}")
     linhas.append("Entrou por dia (jogos · jogadores · momentos ao vivo · dicas):")
     tabela = [f"{d.data:%d/%m}  {d.jogos:>4} · {_mil(d.jogadores):>6} · "
               f"{_mil(d.momentos):>6} · {d.dicas:>3}" for d in s.dias]
@@ -246,7 +257,7 @@ def aviso_noite(agora: datetime | None = None, raiz: Path | None = None) -> str:
     fim = _quando(ler_noite(raiz))
     if fim is None or agora - fim <= timedelta(hours=HORAS_NOITE_ATRASADA):
         return ""
-    return (f"⚠ *A tarefa da noite nao corre desde {fim:%d/%m %H:%M} UTC.* Os jogos novos nao "
+    return (f"⚠ *A tarefa da noite nao corre desde {local(fim):%d/%m %H:%M}.* Os jogos novos nao "
             "estao a ser guardados (nem as fichas dos jogadores) e o sistema nao aprende.\n"
             "No PC, numa janela PowerShell:\n"
             "`Start-ScheduledTask -TaskName \"RicardoTips_IncrementoDiario\"`")

@@ -15,6 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 AGORA = datetime(2026, 11, 11, 0, 40)
 
 
+@pytest.fixture(autouse=True)
+def _pc_em_utc(monkeypatch):
+    """Os testes correm com o relogio do PC em UTC (as horas mostradas = registos)."""
+    monkeypatch.setattr(sd, "_offset", lambda: timedelta(0))
+
+
 @pytest.fixture
 def bd(tmp_path, monkeypatch):
     from apostas.utils import config as config_mod, db as db_mod
@@ -67,12 +73,12 @@ def test_conta_o_que_entrou_por_dia_e_o_total(bd, tmp_path):
     assert (r.total_jogos, r.total_jogadores, r.total_momentos) == (6, 18, 15)
     assert r.problemas() == []
     txt = sd.formatar(r)
-    assert "✅ Noite: correu 11/11 as 00:40 UTC (25 min, +4 jogos novos)" in txt
+    assert "✅ Noite: correu 11/11 as 00:40 (25 min, +4 jogos novos)" in txt
     assert "✅ Copia de seguranca: 11/11/2026" in txt
     assert "10/11     2 ·      6 ·      5 ·   1" in txt
     assert "Total guardado: 6 jogos · 18 fichas de jogadores · 15 momentos ao vivo" in txt
     assert "✅ O historico esta a crescer." in txt
-    assert "📡 Ultimo momento ao vivo guardado: 10/11 20:00 UTC" in txt
+    assert "📡 Ultimo momento ao vivo guardado: 10/11 20:00" in txt
     assert "Scanner: ultimo ciclo" not in txt                     # ainda sem marca
     assert ontem.jogados == 2
 
@@ -117,7 +123,7 @@ def test_aviso_do_scanner_so_quando_a_noite_falha(tmp_path):
     assert sd.aviso_noite(AGORA, tmp_path) == ""                    # ontem: tudo bem
     sd.gravar_noite(AGORA - timedelta(hours=49), AGORA - timedelta(hours=48), 3, raiz=tmp_path)
     aviso = sd.aviso_noite(AGORA, tmp_path)
-    assert "nao corre desde 09/11 00:40 UTC" in aviso and "RicardoTips_IncrementoDiario" in aviso
+    assert "nao corre desde 09/11 00:40" in aviso and "RicardoTips_IncrementoDiario" in aviso
 
 
 def test_scanner_avisa_no_maximo_de_12_em_12_horas(monkeypatch):
@@ -158,8 +164,16 @@ def test_marca_do_scanner(tmp_path, bd):
     assert sd.ler_scanner_vivo(tmp_path) == AGORA - timedelta(minutes=3)
     with abrir_sessao() as s:
         r = sd.calcular(s, AGORA, enviados=tmp_path / "nada.csv", raiz=tmp_path)
-    assert "✅ Scanner: ultimo ciclo 11/11 00:37 UTC" in sd.formatar(r)
+    assert "✅ Scanner: ultimo ciclo 11/11 00:37" in sd.formatar(r)
     sd.marcar_scanner_vivo(0, AGORA - timedelta(hours=2), raiz=tmp_path)
     with abrir_sessao() as s:
         r = sd.calcular(s, AGORA, enviados=tmp_path / "nada.csv", raiz=tmp_path)
-    assert "⚠ Scanner: ultimo ciclo 10/11 22:40 UTC" in sd.formatar(r)
+    assert "⚠ Scanner: ultimo ciclo 10/11 22:40" in sd.formatar(r)
+
+
+def test_horas_no_relogio_do_pc(monkeypatch, tmp_path):
+    """O PC do Ricardo esta 1 hora a frente de UTC: o aviso mostra a hora dele."""
+    monkeypatch.setattr(sd, "_offset", lambda: timedelta(hours=1))
+    assert sd.local(datetime(2026, 11, 11, 23, 15)) == datetime(2026, 11, 12, 0, 15)
+    sd.gravar_noite(AGORA - timedelta(hours=49), AGORA - timedelta(hours=48), 3, raiz=tmp_path)
+    assert "nao corre desde 09/11 01:40" in sd.aviso_noite(AGORA, tmp_path)
