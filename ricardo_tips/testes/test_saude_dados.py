@@ -71,7 +71,9 @@ def test_conta_o_que_entrou_por_dia_e_o_total(bd, tmp_path):
     assert "✅ Copia de seguranca: 11/11/2026" in txt
     assert "10/11     2 ·      6 ·      5 ·   1" in txt
     assert "Total guardado: 6 jogos · 18 fichas de jogadores · 15 momentos ao vivo" in txt
-    assert "✅ O historico esta a crescer todos os dias." in txt
+    assert "✅ O historico esta a crescer." in txt
+    assert "📡 Scanner: ultimo momento ao vivo guardado 10/11 20:00 UTC" in txt
+    assert ontem.jogados == 2
 
 
 def test_problemas_quando_nada_entra_e_a_noite_falha(bd, tmp_path):
@@ -84,9 +86,28 @@ def test_problemas_quando_nada_entra_e_a_noite_falha(bd, tmp_path):
     probs = r.problemas()
     assert any("nao corre desde 08/11" in p for p in probs)
     assert any("copia de seguranca: a ultima e de nunca" in p for p in probs)
-    assert any("nao guardou nenhum momento" in p for p in probs)
-    assert any("nenhum jogo terminado" in p for p in probs)
     assert "⚠ Noite: correu 08/11" in sd.formatar(r)
+    # ontem sem jogos e sem momentos: pausa (nao e problema do scanner)
+    assert r.sem_jogos_ontem() and not any("scanner" in p for p in probs)
+    assert "ℹ Ontem nao houve jogos das nossas ligas" in sd.formatar(r)
+
+
+def test_scanner_parado_com_jogos_ontem(bd, tmp_path):
+    from apostas.utils.db import abrir_sessao
+    from apostas.utils.schema import EstatisticaEquipaJogo
+    with abrir_sessao() as s:     # 4 jogos de ontem guardados, nenhum momento ao vivo
+        for ev in range(4):
+            for team in (1, 2):
+                s.add(EstatisticaEquipaJogo(sofascore_event_id=500 + ev, sofascore_team_id=team,
+                                            nome_equipa="X", era_casa=team == 1,
+                                            data_jogo=datetime(2026, 11, 10, 20), resultado="D",
+                                            data_ingestao=AGORA))
+    sd.gravar_noite(AGORA - timedelta(minutes=20), AGORA, 4, raiz=tmp_path)
+    with abrir_sessao() as s:
+        r = sd.calcular(s, AGORA, enviados=tmp_path / "nada.csv", raiz=tmp_path)
+    assert any("ontem houve 4 jogos das nossas ligas e o scanner nao guardou" in p
+               for p in r.problemas())
+    assert not r.sem_jogos_ontem()
 
 
 def test_aviso_do_scanner_so_quando_a_noite_falha(tmp_path):

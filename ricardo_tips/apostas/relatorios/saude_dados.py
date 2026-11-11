@@ -19,6 +19,7 @@ from pathlib import Path
 
 DIAS = 7
 HORAS_NOITE_ATRASADA = 30      # a noite corre as 00:15: 30h sem correr = falhou uma
+MIN_JOGOS_DIA = 3              # menos do que isto num dia = dia sem jogos (pausa)
 
 
 @dataclass
@@ -28,6 +29,7 @@ class Dia:
     jogadores: int = 0
     momentos: int = 0
     dicas: int = 0
+    jogados: int = 0      # jogos das nossas ligas jogados NESSE dia que estao na BD
 
 
 @dataclass
@@ -39,6 +41,7 @@ class Saude:
     total_momentos: int = 0
     ultima_noite: dict | None = None
     ultima_copia: date | None = None
+    ultimo_momento: datetime | None = None   # ultimo momento ao vivo que o scanner guardou
 
     def noite_atrasada(self) -> bool:
         fim = _quando(self.ultima_noite)
@@ -55,14 +58,23 @@ class Saude:
         if self.ultima_copia is None or (self.agora.date() - self.ultima_copia).days > 2:
             q = f"{self.ultima_copia:%d/%m}" if self.ultima_copia else "nunca"
             out.append(f"copia de seguranca: a ultima e de {q}")
-        ontem = next((d for d in self.dias if d.data == self.agora.date() - timedelta(days=1)),
-                     None)
-        if ontem is not None:
-            if ontem.momentos == 0:
-                out.append("ontem o scanner nao guardou nenhum momento ao vivo (estava ligado?)")
-            if ontem.jogos == 0:
-                out.append("ontem nao entrou nenhum jogo terminado na BD")
+        ontem = self.ontem()
+        if ontem is not None and ontem.jogados >= MIN_JOGOS_DIA and ontem.momentos == 0:
+            out.append(f"ontem houve {ontem.jogados} jogos das nossas ligas e o scanner nao "
+                       "guardou nenhum momento ao vivo (estava ligado? o PC estava a dormir?)")
+        if (ontem is not None and ontem.jogados == 0 and ontem.momentos > 0
+                and fim is not None and not self.noite_atrasada()):
+            out.append("ontem houve jogos ao vivo mas nenhum ficou guardado na BD")
         return out
+
+    def ontem(self) -> Dia | None:
+        return next((d for d in self.dias if d.data == self.agora.date() - timedelta(days=1)),
+                    None)
+
+    def sem_jogos_ontem(self) -> bool:
+        """Ontem nao houve jogos das nossas ligas (pausa das seleccoes, por ex.)."""
+        o = self.ontem()
+        return o is not None and o.jogados < MIN_JOGOS_DIA and o.momentos == 0
 
 
 def _quando(noite: dict | None) -> datetime | None:
@@ -99,6 +111,8 @@ def calcular(sess, agora: datetime | None = None, dias: int = DIAS,
                      func.count(func.distinct(EEJ.sofascore_event_id)), inicio)
     jogadores = _por_dia(sess, EJJ.data_ingestao, func.count(), inicio)
     momentos = _por_dia(sess, Snap.ts, func.count(), inicio)
+    jogados = _por_dia(sess, EEJ.data_jogo, func.count(func.distinct(EEJ.sofascore_event_id)),
+                       inicio)
     dicas: dict[date, int] = {}
     for r in alertas_enviados.carregar(enviados):
         if r["ts"] >= inicio:
@@ -107,11 +121,12 @@ def calcular(sess, agora: datetime | None = None, dias: int = DIAS,
     for i in range(dias):
         d = (inicio + timedelta(days=i)).date()
         s.dias.append(Dia(d, jogos.get(d, 0), jogadores.get(d, 0), momentos.get(d, 0),
-                          dicas.get(d, 0)))
+                          dicas.get(d, 0), jogados.get(d, 0)))
     s.total_jogos = int(sess.scalar(select(func.count(func.distinct(EEJ.sofascore_event_id))))
                         or 0)
     s.total_jogadores = int(sess.scalar(select(func.count()).select_from(EJJ)) or 0)
     s.total_momentos = int(sess.scalar(select(func.count()).select_from(Snap)) or 0)
+    s.ultimo_momento = sess.scalar(select(func.max(Snap.ts)))
     s.ultima_noite = ler_noite(raiz)
     s.ultima_copia = ultima_copia(raiz)
     return s
@@ -172,6 +187,8 @@ def formatar(s: Saude) -> str:
     if s.ultima_copia is not None:
         icone = "✅" if (s.agora.date() - s.ultima_copia).days <= 2 else "⚠"
         linhas.append(f"{icone} Copia de seguranca: {s.ultima_copia:%d/%m/%Y}")
+    if s.ultimo_momento is not None:
+        linhas.append(f"📡 Scanner: ultimo momento ao vivo guardado {s.ultimo_momento:%d/%m %H:%M} UTC")
     linhas.append("Entrou por dia (jogos · jogadores · momentos ao vivo · dicas):")
     tabela = [f"{d.data:%d/%m}  {d.jogos:>4} · {_mil(d.jogadores):>6} · "
               f"{_mil(d.momentos):>6} · {d.dicas:>3}" for d in s.dias]
@@ -180,10 +197,13 @@ def formatar(s: Saude) -> str:
                   f"{_mil(s.total_jogadores)} fichas de jogadores · "
                   f"{_mil(s.total_momentos)} momentos ao vivo")
     probs = s.problemas()
+    if s.sem_jogos_ontem():
+        linhas.append("ℹ Ontem nao houve jogos das nossas ligas (pausa das seleccoes?): "
+                      "dia parado e normal.")
     if probs:
         linhas += [f"⚠ {p}" for p in probs]
     else:
-        linhas.append("✅ O historico esta a crescer todos os dias.")
+        linhas.append("✅ O historico esta a crescer.")
     return "\n".join(linhas)
 
 

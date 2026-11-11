@@ -225,11 +225,13 @@ def formatar_telegram(r: ResultadoHealthCheck) -> str:
     """Mensagem Telegram-ready — so chamada quando ha problema."""
     if r.tudo_ok:
         return "✅ Sistema OK — todos os checks passaram."
+    # Sem '_' fora do codigo: o Telegram (Markdown) le-o como italico e recusava
+    # a mensagem inteira - o aviso nunca chegava.
     linhas = ["🚨 *Sistema com problemas*", ""]
-    linhas.extend(r.problemas)
+    linhas.extend(p.replace("_", " ") for p in r.problemas)
     if r.detalhes:
         linhas.append("")
         linhas.append("_Detalhes:_")
         for k, v in r.detalhes.items():
-            linhas.append(f"  {k}: `{v}`")
+            linhas.append(f"  {k.replace('_', ' ')}: `{str(v).replace('`', '')}`")
     return "\n".join(linhas)

@@ -76,6 +76,20 @@ def test_formatar_telegram_mostra_problemas():
     assert "42" in t
 
 
+def test_formatar_telegram_sem_traco_baixo_fora_do_codigo():
+    """'minutos_desde_update' fora do codigo: o Telegram lia '_' como italico sem par,
+    recusava a mensagem e o aviso nunca chegava (o HealthCheck acabava com 2)."""
+    import re
+    from apostas.alertas.health_check import ResultadoHealthCheck
+    r = ResultadoHealthCheck(tudo_ok=False,
+                             problemas=["⚠ Fichas: fichas vazias — popular_cerebros nunca correu"],
+                             detalhes={"minutos_desde_update": 42, "csv_mtime": "a_b"})
+    t = formatar_telegram(r)
+    fora_do_codigo = re.sub(r"`[^`]*`", "", t).replace("_Detalhes:_", "")
+    assert "_" not in fora_do_codigo
+    assert "minutos desde update: `42`" in t and "popular cerebros" in t
+
+
 def test_correr_health_check_devolve_resultado(tmp_path, monkeypatch):
     """Smoke test — nao mockamos tudo, mas confirmamos que corre."""
     from apostas.utils import config as config_mod

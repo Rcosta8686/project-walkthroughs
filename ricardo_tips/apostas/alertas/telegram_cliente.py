@@ -49,12 +49,20 @@ class ClienteTelegram:
             return
 
         destino = chat_id if chat_id is not None else self._chat_id()
-        bot = self._criar_bot()
-        asyncio.run(bot.send_message(
-            chat_id=destino,
-            text=texto,
-            parse_mode="Markdown",
-        ))
+        try:
+            asyncio.run(self._criar_bot().send_message(
+                chat_id=destino,
+                text=texto,
+                parse_mode="Markdown",
+            ))
+        except Exception as exc:  # noqa: BLE001
+            if not erro_de_formatacao(exc):
+                raise
+            # Um '_' ou '*' sem par (nome de equipa, texto de erro...) fazia o
+            # Telegram recusar a mensagem inteira: vai em texto simples.
+            log.warning("Telegram recusou a formatacao (%s): vai em texto simples", exc)
+            self._bot = None
+            asyncio.run(self._criar_bot().send_message(chat_id=destino, text=texto))
         log.info("Telegram → chat %s (%d chars)", destino, len(texto))
 
     def enviar_foto(self, png: bytes, legenda: str = "", chat_id: int | None = None) -> None:
@@ -70,13 +78,20 @@ class ClienteTelegram:
             return
 
         destino = chat_id if chat_id is not None else self._chat_id()
-        bot = self._criar_bot()
-        asyncio.run(bot.send_photo(
-            chat_id=destino,
-            photo=png,
-            caption=legenda or None,
-            parse_mode="Markdown",
-        ))
+        try:
+            asyncio.run(self._criar_bot().send_photo(
+                chat_id=destino,
+                photo=png,
+                caption=legenda or None,
+                parse_mode="Markdown",
+            ))
+        except Exception as exc:  # noqa: BLE001
+            if not erro_de_formatacao(exc):
+                raise
+            log.warning("Telegram recusou a formatacao da legenda (%s): texto simples", exc)
+            self._bot = None
+            asyncio.run(self._criar_bot().send_photo(chat_id=destino, photo=png,
+                                                     caption=legenda or None))
         log.info("Telegram → chat %s (foto %d KB)", destino, len(png) // 1024)
 
     def _gravar_mock(self, texto: str, chat_id: int | None) -> None:
@@ -90,6 +105,12 @@ class ClienteTelegram:
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entrada, ensure_ascii=False) + "\n")
         log.debug("[mock] Telegram outbox += %d chars", len(texto))
+
+
+def erro_de_formatacao(exc: Exception) -> bool:
+    """O Telegram recusou o Markdown ("Can't parse entities")?"""
+    m = str(exc).lower()
+    return "parse entities" in m or "can't find end of the entity" in m
 
 
 def cliente(modo: str | None = None) -> ClienteTelegram:

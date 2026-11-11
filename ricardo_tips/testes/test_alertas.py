@@ -268,3 +268,40 @@ def test_comando_apostei_mostra_delta_odd(bd_populada, csv_live_minimo):
     # Odd executada 2.10 vs recomendada 1.95 → +7.7%
     resposta = bot.comando_apostei(["42", "2.10", "1.0"])
     assert "+7.7%" in resposta or "+7.6%" in resposta or "+7.8%" in resposta
+
+
+def test_telegram_recusa_formatacao_vai_em_texto_simples(monkeypatch):
+    """Um '_' sem par fazia o Telegram recusar a mensagem inteira (perdia-se)."""
+    enviados = []
+
+    class _Bot:
+        async def send_message(self, chat_id, text, parse_mode=None):
+            if parse_mode == "Markdown":
+                raise RuntimeError("Bad Request: can't parse entities: can't find end of "
+                                   "the entity starting at byte offset 12")
+            enviados.append((chat_id, text, parse_mode))
+
+        async def send_photo(self, chat_id, photo, caption=None, parse_mode=None):
+            if parse_mode == "Markdown":
+                raise RuntimeError("Bad Request: can't parse entities")
+            enviados.append((chat_id, caption, parse_mode))
+
+    cli = telegram_cliente.ClienteTelegram(modo="producao")
+    monkeypatch.setattr(cli, "_criar_bot", lambda: _Bot())
+    monkeypatch.setattr(cli, "_chat_id", lambda: 7)
+    cli.enviar("minutos_desde_update: 42")
+    cli.enviar_foto(b"png", "legenda_sem_par")
+    assert enviados == [(7, "minutos_desde_update: 42", None), (7, "legenda_sem_par", None)]
+
+
+def test_telegram_outros_erros_nao_sao_escondidos(monkeypatch):
+    class _Bot:
+        async def send_message(self, chat_id, text, parse_mode=None):
+            raise RuntimeError("Timed out")
+
+    cli = telegram_cliente.ClienteTelegram(modo="producao")
+    monkeypatch.setattr(cli, "_criar_bot", lambda: _Bot())
+    monkeypatch.setattr(cli, "_chat_id", lambda: 7)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="Timed out"):
+        cli.enviar("ola")
