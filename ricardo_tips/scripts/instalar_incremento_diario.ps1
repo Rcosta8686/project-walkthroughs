@@ -12,6 +12,8 @@ $Script = Join-Path $ProjectRoot "scripts\incremento_diario.py"
 # 1. Tarefa diaria as 00:15. StartWhenAvailable: se o PC estiver desligado
 #    ou a dormir a essa hora, corre assim que voltar.
 $nome = "RicardoTips_IncrementoDiario"
+$VenvPyW = Join-Path $ProjectRoot "venv\Scripts\pythonw.exe"   # sem janela
+if (Test-Path $VenvPyW) { $VenvPy = $VenvPyW }
 $acao = New-ScheduledTaskAction -Execute $VenvPy -Argument "`"$Script`"" -WorkingDirectory $ProjectRoot
 $quando = New-ScheduledTaskTrigger -Daily -At "00:15"
 $cfg = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `

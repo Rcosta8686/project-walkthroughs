@@ -7,6 +7,7 @@ e o ficheiro de destino vêm do `config.yaml`.
 from __future__ import annotations
 
 import logging
+import sys
 
 from apostas.utils.config import load_config, project_root
 
@@ -28,9 +29,6 @@ def configure_logging() -> None:
     datefmt = "%Y-%m-%d %H:%M:%S"
     formatter = logging.Formatter(fmt, datefmt)
 
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
 
@@ -38,7 +36,11 @@ def configure_logging() -> None:
     root.setLevel(nivel)
     # Evita duplicação se este módulo for reimportado
     root.handlers.clear()
-    root.addHandler(stream_handler)
+    # Sem janela (tarefas com pythonw.exe) nao ha consola: so o ficheiro.
+    if sys.stderr is not None:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        root.addHandler(stream_handler)
     root.addHandler(file_handler)
 
     # Silenciar logs de bibliotecas HTTP que imprimem URLs completas

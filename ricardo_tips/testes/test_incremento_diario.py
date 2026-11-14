@@ -202,3 +202,41 @@ def test_resolver_para_quando_acaba_o_prazo(tmp_path, monkeypatch):
     finally:
         prazo.definir(None)
     assert pedidos == []
+
+
+def test_tarefas_sem_janela():
+    """As tarefas correm com pythonw.exe (sem janela por cima dos outros programas)."""
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent / "scripts"
+    geral = (raiz / "instalar_tasks_windows.ps1").read_text(encoding="utf-8")
+    assert "pythonw.exe" in geral and "-Execute $PyTarefas" in geral
+    assert "pythonw.exe" in (raiz / "instalar_incremento_diario.ps1").read_text(encoding="utf-8")
+    muda = (raiz / "tarefas_sem_janela.ps1").read_text(encoding="utf-8")
+    assert 'Get-ScheduledTask -TaskName "RicardoTips_*"' in muda and "-ComJanela" in muda
+
+
+def test_log_sem_consola_vai_so_para_o_ficheiro(tmp_path, monkeypatch):
+    """Com pythonw.exe nao ha consola (sys.stderr e None): o log continua no ficheiro."""
+    import logging
+    import sys
+    from apostas.utils import logger as lg
+    monkeypatch.setattr(lg, "load_config", lambda: {"log": {"nivel": "INFO",
+                                                            "caminho": "logs/t.log"}})
+    monkeypatch.setattr(lg, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(lg, "_configured", False)
+    monkeypatch.setattr(sys, "stderr", None)
+    raiz = logging.getLogger()
+    antes = list(raiz.handlers)
+    try:
+        lg.configure_logging()
+        assert all(not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler)
+                   for h in raiz.handlers)
+        logging.getLogger("teste").warning("sem janela")
+        for h in raiz.handlers:
+            h.flush()
+        assert "sem janela" in (tmp_path / "logs" / "t.log").read_text(encoding="utf-8")
+    finally:
+        for h in raiz.handlers:
+            h.close()
+        raiz.handlers[:] = antes
+        lg._configured = True

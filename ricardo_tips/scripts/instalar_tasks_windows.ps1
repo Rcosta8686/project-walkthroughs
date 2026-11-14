@@ -33,6 +33,10 @@ if (-not (Test-Path $VenvPy)) {
     Write-Error "Nao encontrei o Python do venv em: $VenvPy"
     exit 1
 }
+# pythonw.exe: o mesmo Python, mas sem janela (as tarefas deixam de aparecer por
+# cima dos outros programas; tudo fica no logs\ricardo_tips.log e no Telegram).
+$VenvPyW = Join-Path $ProjectRoot "venv\Scripts\pythonw.exe"
+$PyTarefas = if (Test-Path $VenvPyW) { $VenvPyW } else { $VenvPy }
 
 # ------------- Lista de tasks -------------
 # Cada entrada:
@@ -212,7 +216,7 @@ foreach ($t in $Tasks) {
     # Argumentos completos: script.py + args
     $argumentList = "`"$scriptPath`" $($t.Args)".Trim()
     $action = New-ScheduledTaskAction `
-        -Execute $VenvPy `
+        -Execute $PyTarefas `
         -Argument $argumentList `
         -WorkingDirectory $ProjectRoot
 
